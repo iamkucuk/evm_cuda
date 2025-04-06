@@ -1,0 +1,79 @@
+Start testing: Apr 06 13:20 +03
+----------------------------------------------------------
+9/9 Testing: GaussianPyramidTest.PipelineStepByStep
+9/9 Test: GaussianPyramidTest.PipelineStepByStep
+Command: "/home/furkan/projects/school/mmi713/evm/evmcpp/build/tests/evm_tests" "--gtest_filter=GaussianPyramidTest.PipelineStepByStep" "--gtest_also_run_disabled_tests"
+Directory: /home/furkan/projects/school/mmi713/evm/evmcpp/build/tests
+"GaussianPyramidTest.PipelineStepByStep" start time: Apr 06 13:20 +03
+Output:
+----------------------------------------------------------
+Running main() from /home/furkan/projects/school/mmi713/evm/evmcpp/build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = GaussianPyramidTest.PipelineStepByStep
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from GaussianPyramidTest
+[ RUN      ] GaussianPyramidTest.PipelineStepByStep
+SetUp: Loading frame_0_rgb.txt...
+SetUp: frame_0_rgb.txt loaded successfully (as CV_32FC3).
+SetUp: Loading frame_1_rgb.txt...
+SetUp: frame_1_rgb.txt loaded successfully (as CV_32FC3).
+SetUp: Loading frame_2_rgb.txt...
+SetUp: frame_2_rgb.txt loaded successfully (as CV_32FC3).
+SetUp: Loading frame_3_rgb.txt...
+SetUp: frame_3_rgb.txt loaded successfully (as CV_32FC3).
+SetUp: Loading frame_4_rgb.txt...
+SetUp: frame_4_rgb.txt loaded successfully (as CV_32FC3).
+TEST LOG: Frame 0: spatial_filtered_upsampled_sequence[i].empty() = false, Size=[528 x 592]
+TEST LOG: Frame 1: spatial_filtered_upsampled_sequence[i].empty() = false, Size=[528 x 592]
+TEST LOG: Frame 2: spatial_filtered_upsampled_sequence[i].empty() = false, Size=[528 x 592]
+TEST LOG: Frame 3: spatial_filtered_upsampled_sequence[i].empty() = false, Size=[528 x 592]
+TEST LOG: Frame 4: spatial_filtered_upsampled_sequence[i].empty() = false, Size=[528 x 592]
+/home/furkan/projects/school/mmi713/evm/evmcpp/tests/test_gaussian.cpp:197: Failure
+Value of: CompareMatrices(original_yiq_sequence[0], ref_step2, float_tolerance)
+  Actual: false (Matrices differ by more than tolerance (9.9999997473787516e-06). Max difference: 3.0517578125e-05 at (0, 80). Values at location: 233.087 vs 233.087)
+Expected: true
+Step 6a Internal YIQ comparison failed.
+
+/home/furkan/projects/school/mmi713/evm/evmcpp/tests/test_gaussian.cpp:207: Failure
+Value of: CompareMatrices(cpp_step6b_combined, ref_step6b, float_tolerance)
+  Actual: false (Matrices differ by more than tolerance (9.9999997473787516e-06). Max difference: 3.0517578125e-05 at (0, 80). Values at location: 233.087 vs 233.087)
+Expected: true
+Step 6b Combined YIQ comparison failed.
+
+/home/furkan/projects/school/mmi713/evm/evmcpp/tests/test_gaussian.cpp:218: Failure
+Value of: CompareMatrices(cpp_step6c_reconstructed, ref_step6c, float_tolerance)
+  Actual: false (Matrices differ by more than tolerance (9.9999997473787516e-06). Max difference: 255 at (188, 19). Values at location: 255 vs 0)
+Expected: true
+Step 6c Reconstructed RGB Float comparison failed.
+
+/home/furkan/projects/school/mmi713/evm/evmcpp/tests/test_gaussian.cpp:228: Failure
+Value of: CompareMatrices(cpp_step6d_clipped, ref_step6d, float_tolerance)
+  Actual: false (Matrices differ by more than tolerance (9.9999997473787516e-06). Max difference: 255 at (188, 19). Values at location: 255 vs 0)
+Expected: true
+Step 6d Clipped RGB Float comparison failed.
+
+/home/furkan/projects/school/mmi713/evm/evmcpp/tests/test_gaussian.cpp:247: Failure
+Value of: CompareMatrices(cpp_step6e_final, ref_step6e_8u, uint8_tolerance)
+  Actual: false (Matrices differ by more than tolerance (1). Max difference: 255 at (188, 19). Values at location: 255 vs 0)
+Expected: true
+Step 6e Final RGB Uint8 comparison failed.
+
+[  FAILED  ] GaussianPyramidTest.PipelineStepByStep (1107 ms)
+[----------] 1 test from GaussianPyramidTest (1107 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (1108 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] GaussianPyramidTest.PipelineStepByStep
+
+ 1 FAILED TEST
+<end of output>
+Test time =   1.12 sec
+----------------------------------------------------------
+Test Failed.
+"GaussianPyramidTest.PipelineStepByStep" end time: Apr 06 13:20 +03
+"GaussianPyramidTest.PipelineStepByStep" time elapsed: 00:00:01
+----------------------------------------------------------
+
+End testing: Apr 06 13:20 +03

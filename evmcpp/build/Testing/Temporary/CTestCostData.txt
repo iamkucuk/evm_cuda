@@ -1,0 +1,16 @@
+ProcessingTest.Rgb2YiqRuns 1 0.00214893
+ProcessingTest.PyrDownRuns 5 0.000394657
+ProcessingTest.PyrUpRuns 5 0.000410069
+ProcessingTest.Rgb2YiqNumerical 64 0.00313598
+ProcessingTest.PyrDownNumerical 63 0.00340086
+ProcessingTest.PyrUpNumerical 63 0.00323502
+LaplacianPyramidTest.GenerateLaplacianPyramidNumerical 39 0
+LaplacianPyramidTest.GetLaplacianPyramidsBatch 37 0
+ButterworthTest.LowPassCoeffs 61 0.000128563
+ButterworthTest.HighPassCoeffs 61 0.000110748
+LaplacianPyramidTest.FilterLaplacianPyramidsNumerical 58 0.0187794
+GaussianPyramidTest.ReconstructImage 3 0.06464
+GaussianPyramidTest.GaussianPipelineIntermediateChecks 0 0
+GaussianPyramidTest.PipelineStepByStep 1 0
+---
+GaussianPyramidTest.PipelineStepByStep
