@@ -106,15 +106,38 @@ The `evmcpp` directory contains a C++ implementation aiming for better performan
 
 ### Key Components
 
-*   **Laplacian Pathway (`laplacian_pyramid.cpp/.hpp`):** Implements Laplacian pyramid construction and reconstruction, suitable for motion magnification.
-*   **Gaussian Pathway (`gaussian_pyramid.cpp/.hpp`):** Implements Gaussian pyramid construction and processing, often used for color magnification (emphasizing spatial pooling).
-*   **Temporal Filtering (`butterworth.cpp/.hpp`, `processing.cpp`):**
-    *   Uses a DFT-based approach (via OpenCV's `cv::dft` and `cv::idft`) within the `processing.cpp` functions.
-    *   Applies an ideal bandpass filter in the frequency domain, effectively similar to the Butterworth filter characteristics described in the paper for isolating the desired frequency band (`fl` to `fh`).
-*   **Shared Processing (`processing.cpp/.hpp`):** Contains common functions for:
-    *   RGB to YIQ/YCbCr color space conversions and back.
-    *   Core pyramid operations (`pyrDown`, `pyrUp` using a standard 5x5 Gaussian kernel).
-    *   Amplification and reconstruction logic.
+*   **Laplacian Pathway (`laplacian_pyramid.cpp/.hpp`):**
+    *   Implements Laplacian pyramid construction (`generateLaplacianPyramid`) using standard OpenCV functions `cv::pyrDown` and `cv::pyrUp` for spatial decomposition.
+    *   Temporal filtering (`filterLaplacianPyramids`) is performed per-level, per-frame using a 1st-order IIR Butterworth filter. The filter coefficients (b, a) are calculated in `butterworth.cpp` (based on analog prototype and bilinear transform) and applied directly in the filtering loop.
+    *   Spatial attenuation is applied during temporal filtering based on the pyramid level and `lambda_cutoff`.
+    *   Reconstruction (`reconstructLaplacianImage`) involves upsampling the filtered levels (using `cv::pyrUp`) and adding them back to the original YIQ image before converting to RGB.
+
+*   **Gaussian Pathway (`gaussian_pyramid.cpp/.hpp`):**
+    *   Implements spatial filtering (`spatiallyFilterGaussian`) by repeatedly applying custom `evmcpp::pyrDown` and `evmcpp::pyrUp` functions (defined in `processing.cpp`, using `cv::filter2D` with a Gaussian kernel) for the specified number of levels. This effectively blurs the image.
+    *   Temporal filtering (`temporalFilterGaussianBatch`) operates on the batch of spatially filtered YIQ frames. It uses an ideal bandpass filter implemented via FFT:
+        *   For each pixel location, the time series across all frames is extracted.
+        *   `cv::dft` computes the Discrete Fourier Transform.
+        *   A frequency mask is created based on `fl` and `fh`, zeroing out frequencies outside the desired band.
+        *   `cv::idft` computes the Inverse Discrete Fourier Transform to get the filtered time series.
+    *   Amplification (`temporalFilterGaussianBatch`) applies `alpha` and `chromAttenuation` to the filtered YIQ signal.
+    *   Reconstruction (`reconstructGaussianVideo`) adds the amplified signal back to the original YIQ frames and converts the result to RGB, clipping values to [0, 255].
+
+*   **Temporal Filtering (`butterworth.cpp/.hpp`, `gaussian_pyramid.cpp`):**
+    *   **Laplacian:** Uses a time-domain IIR Butterworth filter implemented in `laplacian_pyramid.cpp`. Coefficients are calculated in `butterworth.cpp` based on the desired frequency band (`fl`, `fh`) and video `fps`.
+    *   **Gaussian:** Uses a frequency-domain ideal bandpass filter implemented in `gaussian_pyramid.cpp` using `cv::dft` and `cv::idft`. The filter directly selects frequencies between `fl` and `fh`.
+
+*   **Shared Processing (`processing.cpp/.hpp`):**
+    *   Contains common functions for RGB <-> YIQ color space conversions (`rgb2yiq`, `yiq2rgb`) using `cv::transform` with standard conversion matrices.
+    *   Defines custom `pyrDown` and `pyrUp` functions that mimic Python's behavior using `cv::filter2D` with a Gaussian kernel and explicit down/upsampling logic. These are primarily used by the Gaussian pathway for spatial filtering. (Note: The Laplacian pathway uses OpenCV's built-in `cv::pyrDown`/`cv::pyrUp`).
+
+*   **Main Application (`main.cpp`):**
+    *   Parses command-line arguments (`--input`, `--output`, `--alpha`, `--level`, `--fl`, `--fh`, `--lambda_cutoff`, `--chrom_atten`, `--mode`).
+    *   Loads the input video using `cv::VideoCapture`, converting frames from BGR to RGB.
+    *   Based on the selected `--mode`:
+        *   **Laplacian:** Calls `getLaplacianPyramids`, `filterLaplacianPyramids`, and `reconstructLaplacianImage` sequentially, processing frame by frame.
+        *   **Gaussian:** Calls the single batch function `processVideoGaussianBatch` which handles loading, spatial filtering, temporal filtering, and reconstruction internally.
+    *   Saves the resulting magnified frames as an output video using `cv::VideoWriter`, converting frames back from RGB to BGR. Defines the 5x5 Gaussian kernel used by `cv::pyrDown`/`cv::pyrUp` in the Laplacian path.
+
 *   **Build System (`CMakeLists.txt`):** Uses CMake to manage the build process. Requires OpenCV (core, imgproc, videoio) to be installed and findable.
 *   **Testing (`tests/`):**
     *   Uses GoogleTest framework (`gtest`). Configuration in `evmcpp/tests/CMakeLists.txt`.
@@ -173,9 +196,9 @@ The `evmcpp` directory contains a C++ implementation aiming for better performan
 
 While the C++ version offers performance gains over Python, further optimizations are possible:
 
-*   **Memory Management:** Pre-allocate memory where possible, reuse buffers to reduce allocations/deallocations within loops (especially frame processing). Analyze `cv::Mat` copying vs. referencing.
+*   **Memory Management:** Pre-allocate memory where possible, reuse buffers (`cv::Mat`) to reduce allocations/deallocations within loops (especially frame processing). Analyze `cv::Mat` copying vs. referencing.
 *   **Loop Unrolling/Vectorization:** Profile key loops (filtering, pyramid construction) and investigate compiler optimizations or manual vectorization (e.g., using SIMD intrinsics if necessary, though OpenCV often handles this).
-*   **Algorithmic Improvements:** Explore alternative filtering techniques (e.g., IIR filters for potential real-time applications, though DFT is often efficient for batch processing).
+*   **Algorithmic Improvements:** Explore alternative filtering techniques if needed.
 *   **Parallelism (CPU):** Utilize multi-threading (e.g., OpenMP, TBB, `std::thread`) for frame-level parallelism or potentially within pyramid level processing if beneficial.
 
 ### CUDA Implementation
@@ -184,19 +207,26 @@ The EVM algorithm is well-suited for GPU acceleration using CUDA due to its high
 
 **Potential CUDA Kernels:**
 
-1.  **Pyramid Construction (`pyrDown`/`pyrUp`):** These involve convolutions (Gaussian blur) and down/upsampling. Kernels can process pixel blocks in parallel. Libraries like NPP or custom kernels can be used.
-2.  **Color Space Conversion:** RGB <-> YIQ/YCbCr conversions are per-pixel operations, ideal for parallelization in a CUDA kernel.
-3.  **Temporal Filtering (FFT/DFT):** The most computationally intensive part.
-    *   Load pixel time series into GPU memory.
-    *   Use cuFFT library for highly optimized parallel Fast Fourier Transforms on batches of pixel time series.
-    *   Apply the bandpass filter (multiplication in the frequency domain) in a simple kernel.
-    *   Perform inverse FFT using cuFFT.
-4.  **Amplification & Reconstruction:** Simple element-wise addition and multiplication, easily parallelized in kernels.
+1.  **Pyramid Construction (`pyrDown`/`pyrUp`):**
+    *   **Laplacian:** OpenCV's `cv::cuda::pyrDown`/`cv::cuda::pyrUp` could be used directly. These involve Gaussian filtering (convolution) and down/upsampling.
+    *   **Gaussian:** The custom `evmcpp::pyrDown`/`evmcpp::pyrUp` use `cv::filter2D`. A CUDA kernel implementing the 2D convolution with the Gaussian kernel followed by subsampling/upsampling (e.g., using texture memory for interpolation or simple strided access) would be efficient.
+2.  **Color Space Conversion (`rgb2yiq`/`yiq2rgb`):**
+    *   These involve matrix multiplication (`cv::transform`) applied per-pixel. A simple CUDA kernel where each thread processes one pixel, performing the 3x3 matrix multiplication, would be highly effective.
+3.  **Temporal Filtering (DFT - Gaussian):**
+    *   The per-pixel DFT loop in `gaussian_pyramid.cpp` (`idealTemporalBandpassFilter`) is the most computationally intensive part and ideal for CUDA.
+    *   **Strategy:** Load the time series for *all* pixels into GPU memory (e.g., `[Frames x Height x Width x Channels]`). Use the **cuFFT library** to perform batch 1D DFTs along the time dimension for all pixels simultaneously. Apply the frequency mask (element-wise multiplication) in a simple kernel. Perform batch 1D inverse DFTs using cuFFT.
+4.  **Temporal Filtering (IIR - Laplacian):**
+    *   The per-pixel, per-level IIR update loop in `filterLaplacianPyramids` (`laplacian_pyramid.cpp`) is parallelizable.
+    *   **Strategy:** Each thread can handle one pixel (or a small block) at a specific pyramid level. The state update (`output = b0*in + b1*prev_in - a1*prev_out`) is independent per pixel. Requires careful management of state variables (`prev_input`, `prev_output`) across frames on the GPU.
+5.  **Amplification & Reconstruction:**
+    *   Operations like `cv::add`, `cv::subtract`, scalar multiplication, and clipping (`cv::max`/`cv::min` or `saturate_cast`) used in `reconstructGaussianVideo` and `reconstructLaplacianImage` are element-wise.
+    *   **Strategy:** Simple CUDA kernels where each thread processes one pixel, performing the required additions, multiplications, and clipping.
 
 **Integration Strategy:**
 
-*   Minimize Host <-> Device memory transfers. Aim to keep frame data, pyramids, and filtered results on the GPU as much as possible during the core processing loop.
-*   Use CUDA streams for overlapping data transfers and kernel execution.
-*   Manage GPU memory efficiently.
+*   **Minimize Host <-> Device Memory Transfers:** The goal is to upload the video frames to the GPU once, perform all pyramid construction, color conversion, temporal filtering, amplification, and reconstruction steps entirely on the GPU, and download only the final result frames.
+*   **Leverage CUDA Libraries:** Use **cuFFT** for the Gaussian DFT filtering. Consider using **NPP (NVIDIA Performance Primitives)** for optimized image processing operations like filtering or color conversions if applicable.
+*   **Use CUDA Streams:** Overlap memory transfers (Host->Device, Device->Host) with kernel execution where possible to hide latency.
+*   **Memory Management:** Efficiently manage GPU memory allocation and deallocation, potentially using memory pools or reusing buffers.
 
 Implementing these kernels in CUDA could provide significant speedups, especially for high-resolution videos or real-time processing requirements.
