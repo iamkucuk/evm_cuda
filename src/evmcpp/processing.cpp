@@ -234,9 +234,22 @@ namespace evmcpp {
             // a. Convert RGB to YIQ (Float)
             cv::Mat frameYiqFloat = rgb2yiq(frameRgbUint8);
 
-            // b. Spatial Filtering (Downsample then Upsample)
-            cv::Mat blurredYiq = spatiallyFilterGaussian(frameYiqFloat, levels);
+            // b. Spatial Filtering (Downsample then Upsample) - Expects RGB input
+            // Assuming gaussian_kernel is accessible (defined in processing.hpp)
+            cv::Mat blurredYiq = spatiallyFilterGaussian(frameRgbUint8, levels, gaussian_kernel);
+            if (blurredYiq.empty()) {
+                 LOG_PROC("Warning: spatiallyFilterGaussian returned empty frame for frame " + std::to_string(frame_num) + ". Skipping.");
+                 // Need to handle this case - maybe skip adding to batch or add an empty Mat?
+                 // Adding an empty Mat might cause issues later. Let's skip for now.
+                 // Alternatively, store original YIQ? For now, just log and continue.
+                 continue; // Skip to next frame if spatial filtering fails
+            }
             spatially_filtered_batch.push_back(blurredYiq);
+            // Store the original RGB frame corresponding to the successfully filtered frame
+            // We need this later for reconstruction. Let's create a parallel vector.
+            // This logic needs refinement - better to filter originals_rgb_frames later.
+            // Let's adjust the logic: store all originals, filter later.
+            // Reverting this part - keep original_rgb_frames as is.
 
             frame_num++;
             if (frame_num % 100 == 0) {
@@ -253,19 +266,58 @@ namespace evmcpp {
 
         // 4. Temporal Filtering (FFT-based) and Amplification
         LOG_PROC("Applying temporal filter and amplification...");
+        // Ensure spatially_filtered_batch is not empty before proceeding
+        if (spatially_filtered_batch.empty()) {
+             LOG_PROC("No frames were successfully spatially filtered. Cannot perform temporal filtering.");
+             return; // Or throw an exception
+        }
         std::vector<cv::Mat> filtered_amplified_batch = temporalFilterGaussianBatch(
             spatially_filtered_batch,
-            fl, fh, samplingRate,
-            alpha, chromAttenuation
+            static_cast<float>(fps), // Pass fps as float
+            static_cast<float>(fl), static_cast<float>(fh), // Pass frequencies as float
+            static_cast<float>(alpha), static_cast<float>(chromAttenuation) // Pass factors as float
         );
         LOG_PROC("Temporal filtering and amplification complete.");
 
         // 5. Reconstruct Final Video
         LOG_PROC("Reconstructing final video...");
-        std::vector<cv::Mat> output_video = reconstructGaussianVideo(
-            original_rgb_frames,
-            filtered_amplified_batch
-        );
+        // Check if temporal filtering produced output matching input size
+        if (filtered_amplified_batch.size() != original_rgb_frames.size()) {
+             // This indicates an issue, possibly frames skipped during spatial filtering
+             // or temporal filtering failed.
+             // We need a robust way to match original frames to filtered frames.
+             // For now, assume sizes match or throw error.
+             if (filtered_amplified_batch.empty() && !original_rgb_frames.empty()) {
+                  throw std::runtime_error("Temporal filtering failed or produced no output.");
+             } else {
+                  // Log a warning, proceed with potentially mismatched sizes? Risky.
+                  // Best approach: Ensure spatial filtering stores placeholders or
+                  // temporal filtering handles variable batch sizes / returns map.
+                  // For now, let's throw if sizes don't match after filtering.
+                  throw std::runtime_error("Mismatch between number of original frames (" +
+                                           std::to_string(original_rgb_frames.size()) +
+                                           ") and temporally filtered frames (" +
+                                           std::to_string(filtered_amplified_batch.size()) + ").");
+             }
+        }
+
+        std::vector<cv::Mat> output_video;
+        output_video.reserve(original_rgb_frames.size()); // Pre-allocate space
+
+        for (size_t i = 0; i < original_rgb_frames.size(); ++i) {
+             // Check if corresponding filtered frame exists and is valid
+             if (i < filtered_amplified_batch.size() && !filtered_amplified_batch[i].empty()) {
+                 cv::Mat reconstructed_frame = reconstructGaussianFrame(
+                     original_rgb_frames[i],
+                     filtered_amplified_batch[i]
+                 );
+                 output_video.push_back(reconstructed_frame);
+             } else {
+                  LOG_PROC("Warning: Missing or empty filtered frame for original frame index " + std::to_string(i) + ". Skipping reconstruction.");
+                  // Add an empty frame or handle differently? Adding empty for now.
+                  output_video.push_back(cv::Mat());
+             }
+        }
         LOG_PROC("Video reconstruction complete.");
 
 

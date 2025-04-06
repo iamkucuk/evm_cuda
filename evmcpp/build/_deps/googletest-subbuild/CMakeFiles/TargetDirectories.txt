@@ -1,3 +1,0 @@
-/home/furkan/projects/school/mmi713/evm/evmcpp/build/_deps/googletest-subbuild/CMakeFiles/googletest-populate.dir
-/home/furkan/projects/school/mmi713/evm/evmcpp/build/_deps/googletest-subbuild/CMakeFiles/edit_cache.dir
-/home/furkan/projects/school/mmi713/evm/evmcpp/build/_deps/googletest-subbuild/CMakeFiles/rebuild_cache.dir

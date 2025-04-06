@@ -30,11 +30,12 @@ protected:
     void SetUp() override {
         // Load reference data for frame 0
         try {
-            rgb_frame0 = loadMatrixFromTxt("frame_0_rgb.txt", frame_rows, frame_cols, 3);
-            yiq_ref0 = loadMatrixFromTxt("frame_0_yiq.txt", frame_rows, frame_cols, 3);
-            pyrdown_ref0 = loadMatrixFromTxt("frame_0_pyrdown_0.txt", down_rows, down_cols, 3);
+            // Use template version: loadMatrixFromTxt<DataType>(filename, channels)
+            rgb_frame0 = loadMatrixFromTxt<float>("frame_0_rgb.txt", 3);
+            yiq_ref0 = loadMatrixFromTxt<float>("frame_0_yiq.txt", 3);
+            pyrdown_ref0 = loadMatrixFromTxt<float>("frame_0_pyrdown_0.txt", 3);
             // Note: pyrUp output should match the size *before* downsampling
-            pyrup_ref0 = loadMatrixFromTxt("frame_0_pyrup_0.txt", frame_rows, frame_cols, 3);
+            pyrup_ref0 = loadMatrixFromTxt<float>("frame_0_pyrup_0.txt", 3);
         } catch (const std::exception& e) {
             // Fail the test immediately if data loading fails
             GTEST_FAIL() << "Failed to load test data: " << e.what();

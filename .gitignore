@@ -1,0 +1,19 @@
+# C++/CMake Build Artifacts
+evmcpp/build/
+
+# Python Cache
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Python Output/Results
+evmpy/evmpy_output/
+evmpy/results/
+
+# Test Results
+test-results.xml
+
+# IDE/Editor specific
+.vscode/
+*.swp
+*~

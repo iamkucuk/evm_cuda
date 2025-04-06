@@ -1,350 +1,340 @@
-#include "evmcpp/gaussian_pyramid.hpp"
-#include "evmcpp/processing.hpp" // For rgb2yiq, yiq2rgb, pyrDown, pyrUp
+// File: src/evmcpp/gaussian_pyramid.cpp
+// Purpose: Implements functions for the Gaussian EVM pathway.
 
-#include <opencv2/imgproc.hpp> // For pyrDown, pyrUp, resize
-#include <opencv2/core.hpp>
-// #include <opencv2/dft.hpp> // dft/idft should be included via core.hpp when linking core component
+#include "evmcpp/gaussian_pyramid.hpp"
+#include "evmcpp/processing.hpp" // Needs rgb2yiq, yiq2rgb, pyrDown, pyrUp
+#include <opencv2/imgproc.hpp> // For cv::resize, other potential functions
+#include <opencv2/core/hal/interface.h> // For CV types
 #include <vector>
 #include <cmath>
-#include <stdexcept>
-#include <iostream>
-#include <limits> // For numeric_limits
+#include <limits>
+#include <iostream> // For error printing
+
+// Define PRINT_ERROR and PRINT_WARNING macros/functions if not globally available
+#ifndef PRINT_ERROR
+#define PRINT_ERROR(msg) std::cerr << "ERROR: " << msg << std::endl
+#endif
+#ifndef PRINT_WARNING
+#define PRINT_WARNING(msg) std::cout << "WARNING: " << msg << std::endl
+#endif
+
 
 namespace evmcpp {
 
-// Helper to build the Gaussian pyramid down to the specified level
-// Returns only the lowest level.
-// Adapted from the previous implementation.
-cv::Mat buildGaussianPyramidLowestLevel(const cv::Mat& frame, int levels) {
-    cv::Mat current_level;
-    if (frame.type() != CV_32FC3) {
-         frame.convertTo(current_level, CV_32FC3); // Ensure float
-    } else {
-        current_level = frame.clone();
+// --- spatiallyFilterGaussian ---
+// TDD_ANCHOR: test_spatiallyFilterGaussian_matches_python
+cv::Mat spatiallyFilterGaussian(const cv::Mat& inputRgb, int level, const cv::Mat& kernel) {
+    // --- Input Validation ---
+    if (inputRgb.empty() || inputRgb.type() != CV_8UC3 || level < 0 || kernel.empty()) {
+        PRINT_ERROR("spatiallyFilterGaussian: Invalid input.");
+        return cv::Mat();
+    }
+    if (level == 0) {
+        // If level is 0, just convert to YIQ and return
+        return rgb2yiq(inputRgb);
     }
 
-    if (levels < 0) {
-        throw std::invalid_argument("Number of pyramid levels cannot be negative.");
+    // --- 1. Convert RGB to YIQ (float) ---
+    cv::Mat currentFrameYiq;
+    try {
+        currentFrameYiq = rgb2yiq(inputRgb);
+    } catch (const std::exception& e) {
+        PRINT_ERROR("spatiallyFilterGaussian: rgb2yiq failed. Error: " + std::string(e.what()));
+        return cv::Mat();
     }
-    if (levels == 0) {
-        return current_level; // No downsampling needed
+    if (currentFrameYiq.empty()) {
+        PRINT_ERROR("spatiallyFilterGaussian: rgb2yiq returned empty matrix.");
+        return cv::Mat();
     }
 
-    for (int i = 0; i < levels; ++i) {
-        cv::Mat next_level;
-        // Use the pyrDown function potentially defined in processing.cpp
-        // If not defined there, use cv::pyrDown directly.
-        // Assuming evmcpp::pyrDown exists and matches cv::pyrDown behavior for now.
-        next_level = evmcpp::pyrDown(current_level);
-        // cv::pyrDown(current_level, next_level); // Alternative if evmcpp::pyrDown isn't defined
+    // --- Store shapes for pyrUp target ---
+    std::vector<cv::Size> shapes;
+    shapes.push_back(currentFrameYiq.size());
 
-        if (next_level.empty() || next_level.rows < 1 || next_level.cols < 1) {
-            std::cerr << "Warning: Image became too small during pyrDown at level " << i + 1 << ". Using previous level." << std::endl;
-            break; // Stop if image gets too small
+    // --- 2. Downsample 'level' times ---
+    cv::Mat downsampled = currentFrameYiq.clone(); // Start with the YIQ frame
+    PRINT_WARNING("Start Downsampling: Input shape=" + std::to_string(downsampled.cols) + "x" + std::to_string(downsampled.rows) + " Type=" + std::to_string(downsampled.type()));
+    for (int i = 0; i < level; ++i) {
+        cv::Mat tempDown;
+        try {
+            // Use the custom pyrDown from processing.hpp
+            tempDown = evmcpp::pyrDown(downsampled, kernel);
+        } catch (const std::exception& e) {
+             PRINT_ERROR("spatiallyFilterGaussian: pyrDown failed at level " + std::to_string(i) + ". Error: " + std::string(e.what()));
+             return cv::Mat();
         }
-        current_level = next_level;
-    }
-    return current_level;
-}
 
-// Helper function to upsample a pyramid level back towards an original size.
-// Needs the target size for each step. Simulates the Python pyrUp logic more closely.
-// Adapted from the previous implementation.
-cv::Mat upsamplePyramidLevel(const cv::Mat& level_to_upsample, const cv::Size& original_size, int total_levels, int current_level_depth) {
-     if (level_to_upsample.empty()) {
-        throw std::runtime_error("Input level_to_upsample for upsampling is empty.");
-    }
-    if (total_levels < 0) {
-         throw std::runtime_error("Total number of levels cannot be negative.");
-    }
-    if (current_level_depth > total_levels || current_level_depth < 0) {
-         throw std::runtime_error("Current level depth is invalid.");
-    }
-    if (current_level_depth == 0) {
-        // Already at original size (or should be), resize just in case
-        cv::Mat result;
-        if (level_to_upsample.size() != original_size) {
-             cv::resize(level_to_upsample, result, original_size, 0, 0, cv::INTER_LINEAR);
-        } else {
-            result = level_to_upsample.clone();
+        if (tempDown.empty() || tempDown.total() == 0) {
+            PRINT_ERROR("spatiallyFilterGaussian: pyrDown returned empty or zero-sized matrix at level " + std::to_string(i));
+            return cv::Mat();
         }
-        return result;
+        downsampled = tempDown;
+        shapes.push_back(downsampled.size());
+        PRINT_WARNING("Downsample Level " + std::to_string(i) + ": Output shape=" + std::to_string(downsampled.cols) + "x" + std::to_string(downsampled.rows) + " Type=" + std::to_string(downsampled.type()));
     }
 
-    cv::Mat current_level = level_to_upsample.clone();
-    cv::Mat temp_size_ref = cv::Mat::zeros(original_size, level_to_upsample.type()); // Reference for size calculation
-
-    // Upsample step by step
-    for (int i = 0; i < current_level_depth; ++i) {
-        cv::Mat temp_up;
-        // Calculate the target size for this specific pyrUp step
-        cv::Mat target_size_ref = temp_size_ref;
-        int downs_needed = current_level_depth - 1 - i; // How many downs from original to get target size
-         for(int j = 0; j < downs_needed; ++j) {
-            cv::Mat next_down;
-            // Use evmcpp::pyrDown or cv::pyrDown
-            next_down = evmcpp::pyrDown(target_size_ref);
-            // cv::pyrDown(target_size_ref, next_down);
-             if (next_down.empty() || next_down.rows < 1 || next_down.cols < 1) {
-                 throw std::runtime_error("Intermediate downsampling failed while calculating target size for pyrUp.");
-             }
-            target_size_ref = next_down;
+    // --- 3. Upsample 'level' times ---
+    cv::Mat reconstructed = downsampled.clone(); // Start with the smallest level
+    PRINT_WARNING("Start Upsampling: Input shape=" + std::to_string(reconstructed.cols) + "x" + std::to_string(reconstructed.rows) + " Type=" + std::to_string(reconstructed.type()));
+    for (int i = 0; i < level; ++i) {
+        // Target shape is from the corresponding downsampling step
+        // shapes[0] = original, shapes[1] = level 0 down, ..., shapes[level] = final down
+        // For upsampling level i (0 to level-1), target is shapes[level - 1 - i]
+        cv::Size targetShape = shapes[level - 1 - i];
+        cv::Mat tempUp;
+        try {
+             // Use the custom pyrUp from processing.hpp
+             tempUp = evmcpp::pyrUp(reconstructed, kernel, targetShape);
+        } catch (const std::exception& e) {
+             PRINT_ERROR("spatiallyFilterGaussian: pyrUp failed at level " + std::to_string(i) + ". Error: " + std::string(e.what()));
+             return cv::Mat();
         }
-        cv::Size target_size = target_size_ref.size();
 
-        // Perform the upsampling using evmcpp::pyrUp or cv::pyrUp
-        // Assuming evmcpp::pyrUp exists and matches Python logic (handles dst_shape)
-        temp_up = evmcpp::pyrUp(current_level, target_size);
-        // cv::pyrUp(current_level, temp_up, target_size); // Alternative
-
-        // OpenCV's pyrUp might not perfectly match the target size, resize if needed
-        if (temp_up.size() != target_size) {
-            cv::resize(temp_up, temp_up, target_size, 0, 0, cv::INTER_LINEAR);
+        if (tempUp.empty()) {
+            PRINT_ERROR("spatiallyFilterGaussian: pyrUp returned empty matrix at level " + std::to_string(i));
+            return cv::Mat();
         }
-        current_level = temp_up;
+        reconstructed = tempUp;
     }
 
-     // Final resize to ensure it matches original frame size exactly
-     if (current_level.size() != original_size) {
-        cv::resize(current_level, current_level, original_size, 0, 0, cv::INTER_LINEAR);
-     }
+    // --- 4. Final shape check (as per Python code) ---
+    if (reconstructed.size() != shapes[0]) {
+        PRINT_WARNING("spatiallyFilterGaussian: Final shape " + std::to_string(reconstructed.cols) + "x" + std::to_string(reconstructed.rows) +
+                      " mismatch. Resizing to original YIQ frame size " + std::to_string(shapes[0].width) + "x" + std::to_string(shapes[0].height) + ".");
+        try {
+            cv::resize(reconstructed, reconstructed, shapes[0], 0, 0, cv::INTER_LINEAR); // Use linear interpolation for resize
+        } catch (const cv::Exception& e) {
+             PRINT_ERROR("spatiallyFilterGaussian: cv::resize failed during final shape correction. Error: " + std::string(e.what()));
+             return cv::Mat(); // Return empty if resize fails
+        }
+    }
 
-    return current_level;
+    return reconstructed; // Return the spatially filtered YIQ frame (CV_32FC3)
 }
 
 
-// Spatially filters a single YIQ frame by downsampling then upsampling 'levels' times.
-cv::Mat spatiallyFilterGaussian(const cv::Mat& yiq_frame, int levels) {
-    if (yiq_frame.empty()) {
-        throw std::invalid_argument("Input YIQ frame for spatial filtering is empty.");
-    }
-    if (yiq_frame.type() != CV_32FC3) {
-         throw std::invalid_argument("Input YIQ frame must be CV_32FC3 for spatial filtering.");
-    }
-    if (levels < 0) {
-        throw std::invalid_argument("Number of levels cannot be negative.");
-    }
-    if (levels == 0) {
-        return yiq_frame.clone(); // No filtering needed
-    }
-
-    // 1. Downsample 'levels' times
-    cv::Mat lowest_level = buildGaussianPyramidLowestLevel(yiq_frame, levels);
-
-    // 2. Upsample back 'levels' times to original size
-    cv::Mat reconstructed = upsamplePyramidLevel(lowest_level, yiq_frame.size(), levels, levels);
-
-    return reconstructed;
-}
-
-
-// Helper function for FFT-based temporal bandpass filter (adapted from previous implementation)
-std::vector<cv::Mat> idealTemporalBandpassFilter(
-    const std::vector<cv::Mat>& images,
-    double fl, double fh, double samplingRate)
-{
-    if (images.empty()) {
-        throw std::runtime_error("Input sequence for FFT filtering is empty.");
-    }
-
-    int num_frames = static_cast<int>(images.size());
-    if (num_frames <= 1) {
-         std::cerr << "Warning: FFT filtering requires more than one frame. Returning input sequence." << std::endl;
-         return images; // Cannot filter with <= 1 frame
-    }
-
-    cv::Size frame_size = images[0].size();
-    int frame_type = images[0].type();
-    int channels = images[0].channels();
-
-    // Validate input consistency
-    for (const auto& frame : images) {
-        if (frame.size() != frame_size || frame.type() != frame_type) {
-            throw std::runtime_error("Inconsistent frame size or type in input sequence for FFT filtering.");
-        }
-        if (frame.depth() != CV_32F) {
-             throw std::runtime_error("FFT filtering currently requires CV_32F input frames.");
-        }
-         if (channels != 3) {
-             throw std::runtime_error("FFT filtering currently requires 3-channel (YIQ) input frames.");
-        }
-    }
-
-    // Prepare output sequence
-    std::vector<cv::Mat> filtered_sequence(num_frames);
-    for (int i = 0; i < num_frames; ++i) {
-        filtered_sequence[i] = cv::Mat::zeros(frame_size, frame_type);
-    }
-
-    // Process each pixel location independently
-    for (int r = 0; r < frame_size.height; ++r) {
-        for (int c = 0; c < frame_size.width; ++c) {
-            for (int ch = 0; ch < channels; ++ch) {
-                // 1. Extract time series for this pixel/channel
-                cv::Mat pixel_timeseries_mat(num_frames, 1, CV_32F);
-                for (int t = 0; t < num_frames; ++t) {
-                    pixel_timeseries_mat.at<float>(t, 0) = images[t].at<cv::Vec3f>(r, c)[ch];
-                }
-
-                // 2. Perform forward DFT
-                cv::Mat dft_result;
-                cv::dft(pixel_timeseries_mat, dft_result, cv::DFT_COMPLEX_OUTPUT);
-
-                // 3. Create and apply frequency mask (mimicking numpy.fft.fftfreq and slicing)
-                int N = num_frames;
-                std::vector<double> frequencies(N);
-                // Calculate frequencies corresponding to DFT output bins
-                for(int i = 0; i < N; ++i) {
-                    frequencies[i] = static_cast<double>(i) / N * samplingRate;
-                }
-
-                // Find indices corresponding to frequency range [fl, fh]
-                // Note: Python uses closest frequency, this uses a simple range check.
-                // Adjust if exact Python behavior is critical.
-                std::vector<bool> mask(N, false);
-                int low_idx = -1, high_idx = -1;
-
-                for(int i = 0; i < N; ++i) {
-                    double freq = frequencies[i];
-                    // Handle Nyquist frequency and negative frequencies implicitly represented
-                    double effective_freq = (i <= N / 2) ? freq : freq - samplingRate;
-                    if (std::abs(effective_freq) >= fl && std::abs(effective_freq) <= fh) {
-                         mask[i] = true;
-                         if (low_idx == -1) low_idx = i; // First index in band
-                         high_idx = i; // Last index in band
-                    }
-                }
-
-
-                // Zero out frequencies outside the bandpass mask
-                // dft_result has N rows, 1 col, 2 channels (complex: CV_32FC2)
-                for (int k = 0; k < N; ++k) {
-                    if (!mask[k]) {
-                        dft_result.at<cv::Vec2f>(k, 0) = cv::Vec2f(0.0f, 0.0f);
-                    }
-                }
-
-
-                // 4. Perform inverse DFT
-                cv::Mat idft_result;
-                // Use DFT_REAL_OUTPUT (output is real) and DFT_SCALE (scale by 1/N) to match numpy.fft.ifft
-                cv::idft(dft_result, idft_result, cv::DFT_REAL_OUTPUT | cv::DFT_SCALE);
-
-                // 5. Store the temporally filtered time series for this pixel/channel
-                for (int t = 0; t < num_frames; ++t) {
-                     filtered_sequence[t].at<cv::Vec3f>(r, c)[ch] = idft_result.at<float>(t, 0);
-                }
-            } // end channel loop
-        } // end col loop
-    } // end row loop
-
-    return filtered_sequence;
-}
-
-
-// Applies FFT-based temporal filtering and amplification to a batch of spatially filtered YIQ frames.
+// --- temporalFilterGaussianBatch ---
+// TDD_ANCHOR: test_temporalFilterGaussianBatch_matches_python
 std::vector<cv::Mat> temporalFilterGaussianBatch(
-    const std::vector<cv::Mat>& spatially_filtered_batch,
-    double fl,
-    double fh,
-    double samplingRate,
-    double alpha,
-    double chromAttenuation)
-{
-    if (spatially_filtered_batch.empty()) {
-        throw std::invalid_argument("Input batch for temporal filtering is empty.");
+    const std::vector<cv::Mat>& spatiallyFilteredBatch,
+    float fps,
+    float fl,
+    float fh,
+    float alpha,
+    float chromAttenuation
+) {
+    // --- Input Validation ---
+    if (spatiallyFilteredBatch.empty()) {
+        PRINT_ERROR("temporalFilterGaussianBatch: Input batch is empty.");
+        return {};
+    }
+    int numFrames = static_cast<int>(spatiallyFilteredBatch.size());
+    if (numFrames <= 1) {
+         PRINT_WARNING("temporalFilterGaussianBatch: Cannot perform temporal filtering with <= 1 frame. Returning empty vector.");
+         return {}; // Need multiple frames for FFT
+    }
+    if (fps <= 0 || fl < 0 || fh <= fl) { // Allow alpha == 0 (just filtering)
+        PRINT_ERROR("temporalFilterGaussianBatch: Invalid parameters (fps, freq range).");
+        return {};
+    }
+    cv::Size frameSize = spatiallyFilteredBatch[0].size();
+    int frameType = spatiallyFilteredBatch[0].type();
+    if (frameType != CV_32FC3) {
+         PRINT_ERROR("temporalFilterGaussianBatch: Input frames must be CV_32FC3.");
+         return {};
+    }
+    // Check consistency of size/type across frames (optional but good practice)
+    for(size_t i = 1; i < spatiallyFilteredBatch.size(); ++i) {
+        if (spatiallyFilteredBatch[i].size() != frameSize || spatiallyFilteredBatch[i].type() != frameType) {
+             PRINT_ERROR("temporalFilterGaussianBatch: Inconsistent frame size or type in input batch.");
+             return {};
+        }
     }
 
-    // 1. Apply ideal temporal bandpass filter
-    std::vector<cv::Mat> filtered_batch = idealTemporalBandpassFilter(spatially_filtered_batch, fl, fh, samplingRate);
+    int rows = frameSize.height;
+    int cols = frameSize.width;
+    int channels = 3; // YIQ
 
-    // 2. Apply amplification and chrominance attenuation
-    std::vector<cv::Mat> amplified_batch = filtered_batch; // Work on a copy or modify in place if desired
+    // --- Prepare output vector ---
+    std::vector<cv::Mat> filteredBatch(numFrames);
+    for (int t = 0; t < numFrames; ++t) {
+        filteredBatch[t] = cv::Mat::zeros(frameSize, frameType);
+    }
 
-    for (cv::Mat& frame : amplified_batch) {
-        if (frame.empty()) continue; // Should not happen if filtering worked
-
-        std::vector<cv::Mat> channels;
-        cv::split(frame, channels);
-
-        if (channels.size() == 3) {
-            channels[0] *= alpha; // Y channel
-            channels[1] *= alpha * chromAttenuation; // I channel
-            channels[2] *= alpha * chromAttenuation; // Q channel
-            cv::merge(channels, frame);
+    // --- Calculate frequency bins (like np.fft.fftfreq) ---
+    std::vector<float> frequencies(numFrames);
+    float freqStep = fps / static_cast<float>(numFrames);
+    // Correct fftfreq logic: 0, 1*step, 2*step, ..., N/2*step, -(N/2-1)*step, ..., -1*step
+    int n_over_2_ceil = (numFrames + 1) / 2; // Ceiling division for Nyquist handling
+    for (int i = 0; i < numFrames; ++i) {
+        if (i < n_over_2_ceil) {
+            frequencies[i] = static_cast<float>(i) * freqStep;
         } else {
-             // Handle unexpected channel count if necessary
-             std::cerr << "Warning: Unexpected channel count (" << channels.size() << ") during amplification." << std::endl;
-             frame *= alpha; // Apply alpha uniformly as a fallback
+            frequencies[i] = static_cast<float>(i - numFrames) * freqStep;
         }
     }
 
-    return amplified_batch;
-}
-
-
-// Reconstructs the final video by adding the filtered/amplified signal back to the original frames.
-std::vector<cv::Mat> reconstructGaussianVideo(
-    const std::vector<cv::Mat>& original_rgb_frames,
-    const std::vector<cv::Mat>& filtered_amplified_batch)
-{
-    if (original_rgb_frames.size() != filtered_amplified_batch.size()) {
-        throw std::invalid_argument("Original frame count and filtered batch count must match for reconstruction.");
-    }
-    if (original_rgb_frames.empty()) {
-        return {}; // Return empty vector if input is empty
-    }
-
-    size_t num_frames = original_rgb_frames.size();
-    std::vector<cv::Mat> output_video(num_frames);
-
-    for (size_t i = 0; i < num_frames; ++i) {
-        const cv::Mat& original_rgb = original_rgb_frames[i];
-        const cv::Mat& filtered_yiq = filtered_amplified_batch[i];
-
-        if (original_rgb.empty() || filtered_yiq.empty()) {
-            std::cerr << "Warning: Empty frame encountered during reconstruction at index " << i << ". Skipping." << std::endl;
-            // Create an empty placeholder or handle as appropriate
-            output_video[i] = cv::Mat(); // Or maybe a black frame?
-            continue;
+    // --- Find indices closest to fl and fh ---
+    int lowIdx = 0;
+    int highIdx = 0;
+    float minLowDiff = std::numeric_limits<float>::max();
+    float minHighDiff = std::numeric_limits<float>::max();
+    // Find index for low cutoff (fl)
+    for (int i = 0; i < numFrames; ++i) {
+        float diffLow = std::abs(frequencies[i] - fl);
+        if (diffLow < minLowDiff) {
+            minLowDiff = diffLow;
+            lowIdx = i;
         }
-         if (original_rgb.size() != filtered_yiq.size()) {
-             std::cerr << "Warning: Size mismatch between original frame and filtered signal at index " << i << ". Skipping reconstruction for this frame." << std::endl;
-             output_video[i] = original_rgb.clone(); // Or handle differently
-             continue;
-         }
-         if (filtered_yiq.type() != CV_32FC3) {
-              std::cerr << "Warning: Filtered signal is not CV_32FC3 at index " << i << ". Skipping reconstruction." << std::endl;
-              output_video[i] = original_rgb.clone();
-              continue;
-         }
-
-
-        // 1. Convert original RGB to YIQ (float)
-        cv::Mat original_yiq = rgb2yiq(original_rgb); // Assumes rgb2yiq handles conversion to float
-
-        // 2. Add filtered signal
-        cv::Mat combined_yiq = original_yiq + filtered_yiq;
-
-        // 3. Convert combined YIQ back to RGB (float)
-        cv::Mat reconstructed_rgb_float = yiq2rgb(combined_yiq);
-
-        // 4. Clip values to [0, 255]
-        cv::Mat clipped_rgb_float;
-        // Use cv::max/min correctly for element-wise operation
-        cv::max(reconstructed_rgb_float, cv::Scalar(0.0, 0.0, 0.0), reconstructed_rgb_float); // Lower bound
-        cv::min(reconstructed_rgb_float, cv::Scalar(255.0, 255.0, 255.0), clipped_rgb_float);   // Upper bound
-
-
-        // 5. Convert to uint8
-        cv::Mat final_rgb_uint8;
-        clipped_rgb_float.convertTo(final_rgb_uint8, CV_8UC3);
-
-        output_video[i] = final_rgb_uint8;
+    }
+    // Find index for high cutoff (fh)
+    for (int i = 0; i < numFrames; ++i) {
+         float diffHigh = std::abs(frequencies[i] - fh);
+         if (diffHigh < minHighDiff) {
+            minHighDiff = diffHigh;
+            highIdx = i;
+        }
+    }
+    // Ensure lowIdx corresponds to the lower frequency magnitude if indices are the same
+    if (lowIdx == highIdx && std::abs(fl) > std::abs(fh)) {
+        std::swap(lowIdx, highIdx);
+    } else if (std::abs(frequencies[lowIdx]) > std::abs(frequencies[highIdx])) {
+         // If indices are different, ensure lowIdx corresponds to the frequency closer to 0
+         std::swap(lowIdx, highIdx);
     }
 
-    return output_video;
+
+    // --- Create frequency mask ---
+    // Mask should be complex (CV_32FC2)
+    cv::Mat complexMask = cv::Mat::zeros(numFrames, 1, CV_32FC2); // numFrames rows, 1 col, 2 channels (real, imag)
+    // Python zeros out [:low] and [high:]. This keeps the range [low:high].
+    // Need to map Python indices (potentially negative) to DFT indices (0 to N-1).
+    // The frequencies vector already maps DFT index i to its corresponding frequency.
+    // We want to keep frequencies f such that fl <= abs(f) <= fh.
+    for (int i = 0; i < numFrames; ++i) {
+        if (std::abs(frequencies[i]) >= fl && std::abs(frequencies[i]) <= fh) {
+            complexMask.at<cv::Vec2f>(i, 0) = cv::Vec2f(1.0f, 0.0f); // Keep this frequency
+        }
+        // else: leave as zero (0.0f, 0.0f)
+    }
+
+
+    // --- Process each pixel's time series ---
+    cv::Mat timeSeries(numFrames, 1, CV_32F); // Reusable buffer for pixel time series
+    cv::Mat complexTimeSeries; // Reusable buffer for DFT result
+    cv::Mat filteredTimeSeriesReal; // Reusable buffer for IDFT result
+
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            for (int ch = 0; ch < channels; ++ch) {
+                // 1. Extract time series for (r, c, ch)
+                for (int t = 0; t < numFrames; ++t) {
+                    // Assuming CV_32FC3 input
+                    timeSeries.at<float>(t, 0) = spatiallyFilteredBatch[t].at<cv::Vec3f>(r, c)[ch];
+                }
+
+                // 2. Perform 1D Forward DFT
+                cv::dft(timeSeries, complexTimeSeries, cv::DFT_COMPLEX_OUTPUT); // Output: numFrames x 1, CV_32FC2
+
+                // 3. Apply frequency mask
+                // Ensure mask dimensions match complexTimeSeries (should be numFrames x 1, CV_32FC2)
+                if (complexMask.rows != complexTimeSeries.rows) {
+                     PRINT_ERROR("temporalFilterGaussianBatch: Mask dimension mismatch during DFT processing.");
+                     return {}; // Should not happen if logic is correct
+                }
+                cv::multiply(complexTimeSeries, complexMask, complexTimeSeries); // Element-wise multiplication
+
+                // 4. Perform 1D Inverse DFT
+                // Use DFT_REAL_OUTPUT because input to forward DFT was real
+                // Use DFT_SCALE to normalize by numFrames
+                cv::idft(complexTimeSeries, filteredTimeSeriesReal, cv::DFT_SCALE | cv::DFT_REAL_OUTPUT); // Output: numFrames x 1, CV_32F
+
+                // 5. Apply amplification and attenuation
+                float currentAlpha = alpha;
+                if (ch > 0) { // Attenuate I and Q channels (indices 1 and 2)
+                    currentAlpha *= chromAttenuation;
+                }
+
+                // 6. Store result back into output batch
+                for (int t = 0; t < numFrames; ++t) {
+                    // Multiply the real filtered time series by currentAlpha before storing
+                    filteredBatch[t].at<cv::Vec3f>(r, c)[ch] = filteredTimeSeriesReal.at<float>(t, 0) * currentAlpha;
+                }
+            } // channels
+        } // cols
+    } // rows
+
+    return filteredBatch;
 }
 
+
+// --- reconstructGaussianFrame ---
+// TDD_ANCHOR: test_reconstructGaussianFrame_matches_python
+cv::Mat reconstructGaussianFrame(
+    const cv::Mat& originalRgb,
+    const cv::Mat& filteredYiqSignal
+) {
+    // --- Input Validation ---
+    if (originalRgb.empty() || originalRgb.type() != CV_8UC3 ||
+       filteredYiqSignal.empty() || filteredYiqSignal.type() != CV_32FC3 ||
+       originalRgb.size() != filteredYiqSignal.size()) {
+        PRINT_ERROR("reconstructGaussianFrame: Invalid input.");
+        return cv::Mat();
+    }
+
+    // --- 1. Convert original RGB to YIQ (float) ---
+    cv::Mat originalYiq;
+    try {
+        originalYiq = rgb2yiq(originalRgb);
+    } catch (const std::exception& e) {
+        PRINT_ERROR("reconstructGaussianFrame: rgb2yiq failed. Error: " + std::string(e.what()));
+        return cv::Mat();
+    }
+     if (originalYiq.empty()) {
+        PRINT_ERROR("reconstructGaussianFrame: rgb2yiq returned empty matrix.");
+        return cv::Mat();
+    }
+
+    // --- 2. Add filtered signal to original YIQ ---
+    cv::Mat combinedYiq;
+    try {
+        cv::add(originalYiq, filteredYiqSignal, combinedYiq); // Element-wise addition
+    } catch (const cv::Exception& e) {
+        PRINT_ERROR("reconstructGaussianFrame: cv::add failed. Error: " + std::string(e.what()));
+        return cv::Mat();
+    }
+
+    // --- 3. Convert combined YIQ back to RGB (float) ---
+    cv::Mat reconstructedRgbFloat;
+    try {
+        reconstructedRgbFloat = yiq2rgb(combinedYiq);
+    } catch (const std::exception& e) {
+        PRINT_ERROR("reconstructGaussianFrame: yiq2rgb failed. Error: " + std::string(e.what()));
+        return cv::Mat();
+    }
+     if (reconstructedRgbFloat.empty()) {
+        PRINT_ERROR("reconstructGaussianFrame: yiq2rgb returned empty matrix.");
+        return cv::Mat();
+    }
+
+    // --- 4. Clip values to [0, 255] ---
+    // Use cv::max and cv::min for element-wise clipping
+    // Note: OpenCV's convertTo also performs saturation, but explicit clipping matches Python better.
+    cv::Mat lowerBound = cv::Mat::zeros(reconstructedRgbFloat.size(), reconstructedRgbFloat.type());
+    cv::Mat upperBound = cv::Mat(reconstructedRgbFloat.size(), reconstructedRgbFloat.type(), cv::Scalar::all(255.0f));
+    cv::max(reconstructedRgbFloat, lowerBound, reconstructedRgbFloat); // reconstructed = max(reconstructed, 0)
+    cv::min(reconstructedRgbFloat, upperBound, reconstructedRgbFloat); // reconstructed = min(reconstructed, 255)
+
+    // --- 5. Convert to uint8 (CV_8UC3) ---
+    cv::Mat reconstructedRgbUint8;
+    try {
+        reconstructedRgbFloat.convertTo(reconstructedRgbUint8, CV_8UC3); // Handles rounding and saturation
+    } catch (const cv::Exception& e) {
+        PRINT_ERROR("reconstructGaussianFrame: convertTo CV_8UC3 failed. Error: " + std::string(e.what()));
+        return cv::Mat();
+    }
+
+    return reconstructedRgbUint8;
+}
 
 } // namespace evmcpp

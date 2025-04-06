@@ -9,61 +9,10 @@
 #include <stdexcept>
 #include <iostream> // For error messages in helpers
 
-// Function to load a matrix from a CSV text file saved by numpy.savetxt
-cv::Mat loadMatrixFromTxt(const std::string& filename, int expected_rows, int expected_cols, int expected_channels) {
-    // Construct the full path using the compile definition
-    std::string full_path = std::string(TEST_DATA_DIR) + "/" + filename;
-    std::ifstream file(full_path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open test data file: " + full_path + " (Original filename: " + filename + ")");
-    }
-
-    std::vector<float> data;
-    std::string line;
-    int rows = 0;
-    int cols_file = -1;
-
-    while (std::getline(file, line)) {
-        rows++;
-        std::stringstream ss(line);
-        std::string value_str;
-        int current_cols = 0;
-        while (std::getline(ss, value_str, ',')) {
-            try {
-                data.push_back(std::stof(value_str));
-                current_cols++;
-            } catch (const std::invalid_argument& e) {
-                throw std::runtime_error("Invalid number format in file " + filename + ": " + value_str);
-            } catch (const std::out_of_range& e) {
-                 throw std::runtime_error("Number out of range in file " + filename + ": " + value_str);
-            }
-        }
-        if (cols_file == -1) {
-            cols_file = current_cols;
-        } else if (cols_file != current_cols) {
-            throw std::runtime_error("Inconsistent number of columns in file: " + filename);
-        }
-    }
-
-    if (rows == 0 || cols_file <= 0) {
-         throw std::runtime_error("No data loaded or zero columns found in file: " + filename);
-    }
-
-    // Reshape based on expected channels
-    int mat_type = (expected_channels == 1) ? CV_32FC1 : CV_32FC3;
-    if (rows != expected_rows || cols_file != (expected_cols * expected_channels)) {
-         throw std::runtime_error("Loaded data dimensions (" + std::to_string(rows) + "x" + std::to_string(cols_file) +
-                                  ") do not match expected (" + std::to_string(expected_rows) + "x" + std::to_string(expected_cols * expected_channels) + ") for file " + filename);
-    }
-
-    // Create Mat from vector data, then reshape
-    // Use data.data() directly if vector guarantees contiguous storage (C++11 onwards)
-    cv::Mat flat_mat(rows, cols_file, CV_32F, data.data());
-    return flat_mat.reshape(expected_channels, expected_rows).clone(); // Clone to ensure data ownership
-}
+// Definition of loadMatrixFromTxt moved to test_helpers.hpp as it's a template function.
 
 // Function to compare two float matrices element-wise with tolerance
-::testing::AssertionResult CompareMatrices(const cv::Mat& mat1, const cv::Mat& mat2, float tolerance) {
+::testing::AssertionResult CompareMatrices(const cv::Mat& mat1, const cv::Mat& mat2, double tolerance) { // Changed float to double
     if (mat1.size() != mat2.size()) {
         return ::testing::AssertionFailure() << "Matrix dimensions mismatch: "
                << mat1.rows << "x" << mat1.cols << " vs " << mat2.rows << "x" << mat2.cols;

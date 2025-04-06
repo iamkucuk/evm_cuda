@@ -94,7 +94,7 @@ The `evmpy` directory contains a reference implementation written in Python usin
 
 ## C++ Implementation (`evmcpp`)
 
-The `evmcpp` directory contains a C++ implementation aiming for better performance, built using CMake and OpenCV.
+The `evmcpp` directory contains a C++ implementation of both Laplacian and Gaussian EVM pathways, aiming for better performance than the Python reference. It is built using CMake and OpenCV.
 
 ### Architecture
 
@@ -113,35 +113,34 @@ The `evmcpp` directory contains a C++ implementation aiming for better performan
     *   Reconstruction (`reconstructLaplacianImage`) involves upsampling the filtered levels (using `cv::pyrUp`) and adding them back to the original YIQ image before converting to RGB.
 
 *   **Gaussian Pathway (`gaussian_pyramid.cpp/.hpp`):**
-    *   Implements spatial filtering (`spatiallyFilterGaussian`) by repeatedly applying custom `evmcpp::pyrDown` and `evmcpp::pyrUp` functions (defined in `processing.cpp`, using `cv::filter2D` with a Gaussian kernel) for the specified number of levels. This effectively blurs the image.
-    *   Temporal filtering (`temporalFilterGaussianBatch`) operates on the batch of spatially filtered YIQ frames. It uses an ideal bandpass filter implemented via FFT:
-        *   For each pixel location, the time series across all frames is extracted.
-        *   `cv::dft` computes the Discrete Fourier Transform.
-        *   A frequency mask is created based on `fl` and `fh`, zeroing out frequencies outside the desired band.
-        *   `cv::idft` computes the Inverse Discrete Fourier Transform to get the filtered time series.
-    *   Amplification (`temporalFilterGaussianBatch`) applies `alpha` and `chromAttenuation` to the filtered YIQ signal.
-    *   Reconstruction (`reconstructGaussianVideo`) adds the amplified signal back to the original YIQ frames and converts the result to RGB, clipping values to [0, 255].
+    *   Implements spatial filtering (`spatiallyFilterGaussian`) by converting the input RGB frame to YIQ, then repeatedly applying the custom `evmcpp::pyrDown` and `evmcpp::pyrUp` functions (defined in `processing.cpp`) for the specified number of levels. This produces a spatially blurred YIQ frame.
+    *   Temporal filtering and amplification (`temporalFilterGaussianBatch`) operates on a batch of these spatially filtered YIQ frames. It uses an ideal bandpass filter implemented via FFT for each pixel's time series:
+        *   `cv::dft` computes the Discrete Fourier Transform along the time axis.
+        *   A frequency mask based on `fl` and `fh` selects the desired band.
+        *   `cv::idft` computes the Inverse Discrete Fourier Transform.
+        *   The resulting filtered signal is amplified by `alpha`, with chrominance channels attenuated by `chromAttenuation`.
+    *   Frame reconstruction (`reconstructGaussianFrame`) takes the original RGB frame and the corresponding filtered/amplified YIQ signal. It converts the original frame to YIQ, adds the filtered signal, converts the result back to RGB (float), clips values to [0, 255], and converts to the final `uint8` format.
 
 *   **Temporal Filtering (`butterworth.cpp/.hpp`, `gaussian_pyramid.cpp`):**
     *   **Laplacian:** Uses a time-domain IIR Butterworth filter implemented in `laplacian_pyramid.cpp`. Coefficients are calculated in `butterworth.cpp` based on the desired frequency band (`fl`, `fh`) and video `fps`.
-    *   **Gaussian:** Uses a frequency-domain ideal bandpass filter implemented in `gaussian_pyramid.cpp` using `cv::dft` and `cv::idft`. The filter directly selects frequencies between `fl` and `fh`.
+    *   **Gaussian:** Uses a frequency-domain ideal bandpass filter implemented within `temporalFilterGaussianBatch` (in `gaussian_pyramid.cpp`) using `cv::dft` and `cv::idft`. The filter directly selects frequencies between `fl` and `fh`.
 
 *   **Shared Processing (`processing.cpp/.hpp`):**
     *   Contains common functions for RGB <-> YIQ color space conversions (`rgb2yiq`, `yiq2rgb`) using `cv::transform` with standard conversion matrices.
-    *   Defines custom `pyrDown` and `pyrUp` functions that mimic Python's behavior using `cv::filter2D` with a Gaussian kernel and explicit down/upsampling logic. These are primarily used by the Gaussian pathway for spatial filtering. (Note: The Laplacian pathway uses OpenCV's built-in `cv::pyrDown`/`cv::pyrUp`).
+    *   Defines custom `pyrDown` and `pyrUp` functions that mimic Python's behavior using `cv::filter2D` with a Gaussian kernel and explicit down/upsampling logic. These are used by the Gaussian pathway's `spatiallyFilterGaussian` function. (Note: The C++ Laplacian pathway implementation was updated to also use these custom functions for consistency, although the original README stated it used OpenCV's built-ins).
 
 *   **Main Application (`main.cpp`):**
     *   Parses command-line arguments (`--input`, `--output`, `--alpha`, `--level`, `--fl`, `--fh`, `--lambda_cutoff`, `--chrom_atten`, `--mode`).
     *   Loads the input video using `cv::VideoCapture`, converting frames from BGR to RGB.
     *   Based on the selected `--mode`:
         *   **Laplacian:** Calls `getLaplacianPyramids`, `filterLaplacianPyramids`, and `reconstructLaplacianImage` sequentially, processing frame by frame.
-        *   **Gaussian:** Calls the single batch function `processVideoGaussianBatch` which handles loading, spatial filtering, temporal filtering, and reconstruction internally.
+        *   **Gaussian:** Calls the batch function `processVideoGaussianBatch` (defined in `processing.cpp`) which handles loading frames, calling `spatiallyFilterGaussian` for each, calling `temporalFilterGaussianBatch` on the results, and then calling `reconstructGaussianFrame` frame-by-frame.
     *   Saves the resulting magnified frames as an output video using `cv::VideoWriter`, converting frames back from RGB to BGR. Defines the 5x5 Gaussian kernel used by `cv::pyrDown`/`cv::pyrUp` in the Laplacian path.
 
 *   **Build System (`CMakeLists.txt`):** Uses CMake to manage the build process. Requires OpenCV (core, imgproc, videoio) to be installed and findable.
 *   **Testing (`tests/`):**
     *   Uses GoogleTest framework (`gtest`). Configuration in `evmcpp/tests/CMakeLists.txt`.
-    *   Includes unit tests for individual components (processing, pyramids, filtering).
+    *   Includes unit tests for individual components (processing helpers, Butterworth filter, Laplacian pathway, Gaussian pathway). Test files include `test_processing.cpp`, `test_butterworth.cpp`, `test_laplacian.cpp`, and `test_gaussian.cpp`.
     *   Compares results against pre-computed data generated by the Python implementation (`evmpy/generate_test_data.py`) stored in `evmcpp/tests/data/` to ensure correctness and consistency.
 
 ### Build and Run

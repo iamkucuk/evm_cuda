@@ -1,2 +1,0 @@
-/home/furkan/miniconda3/envs/cuda_class/bin/x86_64-conda-linux-gnu-ar qc ../../../lib/libgtest.a "CMakeFiles/gtest.dir/src/gtest-all.cc.o"
-/home/furkan/miniconda3/envs/cuda_class/bin/x86_64-conda-linux-gnu-ranlib ../../../lib/libgtest.a

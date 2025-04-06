@@ -1,2 +1,0 @@
-/home/furkan/miniconda3/envs/cuda_class/bin/x86_64-conda-linux-gnu-ar qc libevm_core.a CMakeFiles/evm_core.dir/home/furkan/projects/school/mmi713/evm/src/evmcpp/laplacian_pyramid.cpp.o CMakeFiles/evm_core.dir/home/furkan/projects/school/mmi713/evm/src/evmcpp/processing.cpp.o CMakeFiles/evm_core.dir/home/furkan/projects/school/mmi713/evm/src/evmcpp/butterworth.cpp.o CMakeFiles/evm_core.dir/home/furkan/projects/school/mmi713/evm/src/evmcpp/gaussian_pyramid.cpp.o
-/home/furkan/miniconda3/envs/cuda_class/bin/x86_64-conda-linux-gnu-ranlib libevm_core.a
