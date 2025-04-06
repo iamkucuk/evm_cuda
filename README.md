@@ -211,22 +211,34 @@ The EVM algorithm is well-suited for GPU acceleration using CUDA due to its high
     *   **Laplacian:** OpenCV's `cv::cuda::pyrDown`/`cv::cuda::pyrUp` could be used directly. These involve Gaussian filtering (convolution) and down/upsampling.
     *   **Gaussian:** The custom `evmcpp::pyrDown`/`evmcpp::pyrUp` use `cv::filter2D`. A CUDA kernel implementing the 2D convolution with the Gaussian kernel followed by subsampling/upsampling (e.g., using texture memory for interpolation or simple strided access) would be efficient.
 2.  **Color Space Conversion (`rgb2yiq`/`yiq2rgb`):**
-    *   These involve matrix multiplication (`cv::transform`) applied per-pixel. A simple CUDA kernel where each thread processes one pixel, performing the 3x3 matrix multiplication, would be highly effective.
-3.  **Temporal Filtering (DFT - Gaussian):**
-    *   The per-pixel DFT loop in `gaussian_pyramid.cpp` (`idealTemporalBandpassFilter`) is the most computationally intensive part and ideal for CUDA.
-    *   **Strategy:** Load the time series for *all* pixels into GPU memory (e.g., `[Frames x Height x Width x Channels]`). Use the **cuFFT library** to perform batch 1D DFTs along the time dimension for all pixels simultaneously. Apply the frequency mask (element-wise multiplication) in a simple kernel. Perform batch 1D inverse DFTs using cuFFT.
+    *   These involve matrix multiplication (`cv::transform`) applied per-pixel. A simple CUDA kernel where each thread processes one pixel, performing the 3x3 matrix multiplication, would be highly effective. Alternatively, NVIDIA Performance Primitives (NPP) likely offer highly optimized functions for standard color space conversions (`nppiColorConvert_...`).
+3.  **Temporal Filtering (DFT - Gaussian Pathway):**
+    *   The core logic resides in `idealTemporalBandpassFilter` called by `temporalFilterGaussianBatch`. It involves per-pixel DFT, masking, and IDFT.
+    *   **CUDA Strategy:** This is a prime candidate for the **cuFFT library**.
+        *   Load the batch of spatially filtered YIQ frames (`spatially_filtered_batch`) to the GPU.
+        *   Perform batch 1D DFTs along the time dimension for all pixels using `cuFFT`.
+        *   Apply the frequency mask (selecting frequencies between `fl` and `fh`) using a simple element-wise CUDA kernel.
+        *   Perform batch 1D inverse DFTs using `cuFFT` to get the temporally filtered signal on the GPU.
 4.  **Temporal Filtering (IIR - Laplacian):**
     *   The per-pixel, per-level IIR update loop in `filterLaplacianPyramids` (`laplacian_pyramid.cpp`) is parallelizable.
-    *   **Strategy:** Each thread can handle one pixel (or a small block) at a specific pyramid level. The state update (`output = b0*in + b1*prev_in - a1*prev_out`) is independent per pixel. Requires careful management of state variables (`prev_input`, `prev_output`) across frames on the GPU.
-5.  **Amplification & Reconstruction:**
-    *   Operations like `cv::add`, `cv::subtract`, scalar multiplication, and clipping (`cv::max`/`cv::min` or `saturate_cast`) used in `reconstructGaussianVideo` and `reconstructLaplacianImage` are element-wise.
-    *   **Strategy:** Simple CUDA kernels where each thread processes one pixel, performing the required additions, multiplications, and clipping.
+    *   **Strategy:** Each thread can handle one pixel (or a small block) at a specific pyramid level. The state update (`output = b0*in + b1*prev_in - a1*prev_out`) is independent per pixel. Requires careful management of state variables (`prev_input`, `prev_output`) across frames on the GPU. This is less critical than the DFT optimization for Gaussian.
+5.  **Amplification & Reconstruction (Gaussian Pathway Specifics):**
+    *   **Amplification:** The scaling by `alpha` and `chromAttenuation` within `temporalFilterGaussianBatch` (after filtering) is element-wise multiplication, suitable for a simple CUDA kernel.
+    *   **Reconstruction (`reconstructGaussianVideo`):** The addition of the filtered signal back to the original (`original_yiq + filtered_yiq`), and the final clipping (`cv::max`/`cv::min`) are element-wise operations. These can be implemented efficiently in custom CUDA kernels operating per-pixel on the GPU, minimizing data movement back to the CPU until the final frame is ready. (Color conversions `rgb2yiq`/`yiq2rgb` within this function are also parallelizable as mentioned previously).
+6.  **General Element-wise Operations (Laplacian & Gaussian):**
+    *   Many other operations like `cv::add`, `cv::subtract`, scalar multiplication used in both pathways are element-wise.
+    *   **Strategy:** Simple CUDA kernels where each thread processes one pixel, performing the required additions, multiplications, and clipping. Utilize `cv::cuda::add`, `cv::cuda::subtract`, etc., where available.
 
-**Integration Strategy:**
+**Integration Strategy & Main Application Flow:**
 
-*   **Minimize Host <-> Device Memory Transfers:** The goal is to upload the video frames to the GPU once, perform all pyramid construction, color conversion, temporal filtering, amplification, and reconstruction steps entirely on the GPU, and download only the final result frames.
+*   **GPU-Accelerated Video I/O:**
+    *   **Decoding:** Replace `cv::VideoCapture` in `main.cpp` (`loadVideoFrames`) with GPU-accelerated decoding (e.g., `cv::cudacodec::VideoReader` or the NVIDIA Video Codec SDK). This allows reading frames directly into GPU memory (`cv::cuda::GpuMat`), bypassing the CPU bottleneck and avoiding explicit Host-to-Device transfers for initial frames.
+    *   **Encoding:** Replace `cv::VideoWriter` in `main.cpp` (`saveVideoFrames`) with GPU-accelerated encoding (e.g., `cv::cudacodec::VideoWriter` or NVIDIA Video Codec SDK). If processed frames reside on the GPU, this avoids costly Device-to-Host transfers before writing the output video.
+*   **Pipeline Optimization & Data Flow:**
+    *   **Minimize Transfers:** Combine GPU I/O with the previously mentioned GPU kernels (pyramids, filtering, color conversion) to keep data resident on the GPU (`cv::cuda::GpuMat`) throughout the entire pipeline (Read -> Process -> Write). Only download data when absolutely necessary (e.g., for debugging or specific CPU-only steps).
+    *   **Asynchronous Execution (CUDA Streams):** Overlap GPU operations (kernel execution) with memory transfers (potentially needed for intermediate steps or final output if GPU encoding isn't used) and potentially with GPU decoding/encoding using CUDA streams to hide latency and improve throughput, especially if the processing loop in `main.cpp` were restructured for concurrent I/O and processing.
+*   **Color Conversion on GPU:** Perform the BGR <-> RGB conversions (currently done in `loadVideoFrames` and `saveVideoFrames` on the CPU) on the GPU using `cv::cuda::cvtColor` or NPP functions, ideally integrated into the I/O or initial/final processing kernels operating on `cv::cuda::GpuMat`.
 *   **Leverage CUDA Libraries:** Use **cuFFT** for the Gaussian DFT filtering. Consider using **NPP (NVIDIA Performance Primitives)** for optimized image processing operations like filtering or color conversions if applicable.
-*   **Use CUDA Streams:** Overlap memory transfers (Host->Device, Device->Host) with kernel execution where possible to hide latency.
-*   **Memory Management:** Efficiently manage GPU memory allocation and deallocation, potentially using memory pools or reusing buffers.
+*   **Memory Management:** Efficiently manage GPU memory allocation and deallocation (`cv::cuda::GpuMat`), potentially using memory pools or reusing buffers.
 
-Implementing these kernels in CUDA could provide significant speedups, especially for high-resolution videos or real-time processing requirements.
+Implementing these strategies, particularly focusing on keeping data on the GPU from input to output, could provide significant speedups, especially for high-resolution videos or real-time processing requirements.
