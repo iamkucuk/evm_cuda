@@ -31,9 +31,14 @@ add_executable(evm_tests
     test_butterworth.cpp
     test_gaussian.cpp # Added Gaussian pyramid tests
     test_helpers.cpp  # Added common test helper functions
-    # test_laplacian.cpp # Add later
+    test_cuda_color.cpp # Added CUDA color conversion tests
+    test_cpu_color.cpp # Added CPU color conversion tests
+    # test_cuda_pyramid.cpp # Removed - Abandoned custom kernel tests
+    test_cuda_temporal.cpp # Added CUDA temporal filter tests
+    test_cpu_pyramid.cpp # Added CPU pyramid tests
+    test_cpu_temporal.cpp # Added CPU temporal filter tests
+    test_cuda_reconstruction.cpp # Added CUDA reconstruction tests
 )
-
 # Define the path to the source data directory for the tests
 target_compile_definitions(evm_tests PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/data")
 
@@ -43,7 +48,7 @@ target_link_libraries(evm_tests PRIVATE gtest_main)
 
 # Link against our core library (evm_core defined in parent CMakeLists.txt)
 # We need access to the functions we want to test
-target_link_libraries(evm_tests PRIVATE evm_core)
+target_link_libraries(evm_tests PRIVATE evm_core evm_cuda evmcpu ${OpenCV_LIBS}) # Link against evm_cuda, evmcpu and OpenCV
 
 # Include directories needed for tests (parent include and OpenCV)
 # Note: OpenCV includes should be inherited from evm_core linking if set up correctly

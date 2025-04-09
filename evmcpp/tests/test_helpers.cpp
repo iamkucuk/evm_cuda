@@ -12,7 +12,7 @@
 // Definition of loadMatrixFromTxt moved to test_helpers.hpp as it's a template function.
 
 // Function to compare two float matrices element-wise with tolerance
-::testing::AssertionResult CompareMatrices(const cv::Mat& mat1, const cv::Mat& mat2, double tolerance) { // Changed float to double
+::testing::AssertionResult CompareMatrices(const cv::Mat& mat1, const cv::Mat& mat2, double tolerance) {
     if (mat1.size() != mat2.size()) {
         return ::testing::AssertionFailure() << "Matrix dimensions mismatch: "
                << mat1.rows << "x" << mat1.cols << " vs " << mat2.rows << "x" << mat2.cols;
@@ -21,77 +21,62 @@
         return ::testing::AssertionFailure() << "Matrix types mismatch: "
                << mat1.type() << " vs " << mat2.type();
     }
-    // Remove the explicit check for CV_32F to allow other types
-    // if (mat1.depth() != CV_32F) { // Assuming float comparison
-    //      return ::testing::AssertionFailure() << "CompareMatrices currently only supports CV_32F";
-    // }
 
-    cv::Mat diff;
-    cv::absdiff(mat1, mat2, diff);
+    double overall_max_diff = -1.0;
+    cv::Point overall_max_loc(-1, -1);
+    int overall_max_channel = -1;
 
-    double min_diff = 0, max_diff = 0;
-    cv::Point min_loc, max_loc;
+    std::vector<cv::Mat> channels1, channels2;
+    cv::split(mat1, channels1);
+    cv::split(mat2, channels2);
 
-    // Find the overall max difference value first (works for multi-channel)
-    cv::minMaxLoc(diff, &min_diff, &max_diff);
+    for (int i = 0; i < mat1.channels(); ++i) {
+        cv::Mat channel_diff;
+        cv::absdiff(channels1[i], channels2[i], channel_diff);
 
-    if (max_diff > tolerance) {
-        int max_channel = -1; // Declare max_channel here, initialize to -1
-        // If difference exceeds tolerance, find the specific location.
-        // For multi-channel, we need to check each channel.
-        if (diff.channels() > 1) {
-            std::vector<cv::Mat> channels;
-            cv::split(diff, channels);
-            double current_max = -1.0;
-            cv::Point current_max_loc;
-            // int max_channel = -1; // Remove declaration from here
-            int max_channel = -1;
+        double channel_min_diff, channel_max_diff;
+        cv::Point channel_min_loc, channel_max_loc;
+        cv::minMaxLoc(channel_diff, &channel_min_diff, &channel_max_diff, &channel_min_loc, &channel_max_loc);
 
-            for (int i = 0; i < diff.channels(); ++i) {
-                double channel_min, channel_max;
-                cv::Point channel_min_loc, channel_max_loc;
-                cv::minMaxLoc(channels[i], &channel_min, &channel_max, &channel_min_loc, &channel_max_loc);
-                if (channel_max > current_max) {
-                    current_max = channel_max;
-                    current_max_loc = channel_max_loc;
-                    max_channel = i;
-                }
-            }
-            max_loc = current_max_loc; // Location of the max diff in any channel
-            // max_diff is already the overall max from the first minMaxLoc call
-        } else { // Single channel case
-            // Single channel, the first minMaxLoc already gave the location
-            cv::minMaxLoc(diff, &min_diff, &max_diff, &min_loc, &max_loc);
-            // max_channel remains -1 as initialized above
+        if (channel_max_diff > overall_max_diff) {
+            overall_max_diff = channel_max_diff;
+            overall_max_loc = channel_max_loc;
+            overall_max_channel = i;
         }
+    }
 
-        // Get original values at the location of max difference, handling different types
+    if (overall_max_diff > tolerance) {
+        // Get original values at the location of max difference
         std::stringstream ss_val1, ss_val2;
-        int mat_type = mat1.type();
+        int mat_type = mat1.type(); // Use the original matrix type
 
-        if (mat_type == CV_32FC3) {
-            int channel_idx = (max_channel >= 0) ? max_channel : 0;
-            ss_val1 << mat1.at<cv::Vec3f>(max_loc)[channel_idx];
-            ss_val2 << mat2.at<cv::Vec3f>(max_loc)[channel_idx];
-        } else if (mat_type == CV_32FC1) {
-            ss_val1 << mat1.at<float>(max_loc);
-            ss_val2 << mat2.at<float>(max_loc);
-        } else if (mat_type == CV_8UC3) {
-            int channel_idx = (max_channel >= 0) ? max_channel : 0;
-            // Cast uchar to int for printing
-            ss_val1 << static_cast<int>(mat1.at<cv::Vec3b>(max_loc)[channel_idx]);
-            ss_val2 << static_cast<int>(mat2.at<cv::Vec3b>(max_loc)[channel_idx]);
-        } else if (mat_type == CV_8UC1) {
-            ss_val1 << static_cast<int>(mat1.at<uchar>(max_loc));
-            ss_val2 << static_cast<int>(mat2.at<uchar>(max_loc));
+        // Use overall_max_loc and overall_max_channel found consistently
+        if (mat_type == CV_32FC3 || mat_type == CV_32FC1) {
+             ss_val1 << channels1[overall_max_channel].at<float>(overall_max_loc);
+             ss_val2 << channels2[overall_max_channel].at<float>(overall_max_loc);
+        } else if (mat_type == CV_64FC3 || mat_type == CV_64FC1) {
+             ss_val1 << channels1[overall_max_channel].at<double>(overall_max_loc);
+             ss_val2 << channels2[overall_max_channel].at<double>(overall_max_loc);
+        } else if (mat_type == CV_8UC3 || mat_type == CV_8UC1) {
+             ss_val1 << static_cast<int>(channels1[overall_max_channel].at<uchar>(overall_max_loc));
+             ss_val2 << static_cast<int>(channels2[overall_max_channel].at<uchar>(overall_max_loc));
+        } else if (mat_type == CV_16UC3 || mat_type == CV_16UC1) {
+             ss_val1 << channels1[overall_max_channel].at<ushort>(overall_max_loc);
+             ss_val2 << channels2[overall_max_channel].at<ushort>(overall_max_loc);
+        } else if (mat_type == CV_16SC3 || mat_type == CV_16SC1) {
+             ss_val1 << channels1[overall_max_channel].at<short>(overall_max_loc);
+             ss_val2 << channels2[overall_max_channel].at<short>(overall_max_loc);
+        } else if (mat_type == CV_32SC3 || mat_type == CV_32SC1) {
+             ss_val1 << channels1[overall_max_channel].at<int>(overall_max_loc);
+             ss_val2 << channels2[overall_max_channel].at<int>(overall_max_loc);
         } else {
             ss_val1 << "[Unsupported Type]";
             ss_val2 << "[Unsupported Type]";
         }
 
         return ::testing::AssertionFailure() << "Matrices differ by more than tolerance (" << tolerance
-               << "). Max difference: " << max_diff << " at (" << max_loc.y << ", " << max_loc.x << ")"
-               << (max_channel >= 0 ? " in channel " + std::to_string(max_channel) : "") // Report channel if multi-channel
+               << "). Max difference: " << overall_max_diff << " at (" << overall_max_loc.y << ", " << overall_max_loc.x << ")"
+               << (mat1.channels() > 1 ? " in channel " + std::to_string(overall_max_channel) : "")
                << ". Values at location: " << ss_val1.str() << " vs " << ss_val2.str();
     }
 
