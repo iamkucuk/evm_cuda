@@ -1,14 +1,17 @@
 # C++/CMake Build Artifacts
-evmcpp/build/
+/build/
+/cpp/evmcpp/tests/evmcpp/build/
+/cpp/evmcpp/build/
+/cpp/build/
+/cpp/Testing/
 
 # Python Cache
-**/__pycache__/
-*.py[cod]
-*$py.class
+/python/src/__pycache__/
+*.pyc
 
 # Python Output/Results
-evmpy/evmpy_output/
-evmpy/results/
+/python/evmpy_output/
+/python/results/
 
 # Test Results
 test-results.xml
@@ -17,3 +20,12 @@ test-results.xml
 .vscode/
 *.swp
 *~
+
+# Other build artifacts and outputs
+/cpp/evmcpp/tests/data/
+/output_*.avi
+*.o
+*.obj
+*.exe
+*.out
+*.log

@@ -1,6 +1,96 @@
-# Eulerian Video Magnification (EVM) - C++ and Python Implementation
+# Eulerian Video Magnification (EVM) - Multi-Language Implementation
 
-This repository contains implementations of the Eulerian Video Magnification (EVM) technique, primarily focusing on a C++ version (`evmcpp`) with a reference Python implementation (`evmpy`). EVM allows for the visualization of subtle temporal variations (motion or color changes) in standard video sequences.
+This repository provides comprehensive C++ and Python implementations of the Eulerian Video Magnification (EVM) technique, as described in the MIT EVM paper. The project is designed for both research and high-performance real-world applications, featuring:
+
+- **C++ Implementation**: High-performance, modular design with unit tests and optional CUDA acceleration.
+- **Python Implementation**: Reference code for rapid prototyping and experimentation.
+- **Reproducible Results**: Sample data, scripts, and outputs included.
+
+## Project Structure
+
+```
+ev m/
+├── cpp/        # C++ implementation (src, include, tests, CMake)
+│   ├── src/            # All .cpp files (including main.cpp, core modules)
+│   ├── include/        # All .hpp header files
+│   ├── tests/          # All test files and test data
+│   ├── CMakeLists.txt  # CMake build configuration
+│   └── README.md       # C++-specific notes
+├── python/     # Python implementation (src, data, results, scripts)
+│   ├── src/            # Python source code
+│   ├── data/           # Sample input videos
+│   ├── results/        # Output results
+│   ├── requirements.txt# Python dependencies
+│   └── README.md       # Python-specific notes
+├── data/       # Shared sample videos for both implementations
+├── Dockerfile  # For containerized builds and runs
+├── README.md   # (This file) Project-wide documentation
+```
+
+- All C++-related files are under `cpp/`.
+- All Python-related files are under `python/`.
+- Shared video/data files are under `data/`.
+- The root contains only project-level files.
+
+## Installation & Build Instructions
+
+### Prerequisites
+
+- **C++ Implementation:**
+  - C++17 compatible compiler (e.g., g++, clang++)
+  - CMake ≥ 3.10
+  - OpenCV (tested with 4.x)
+  - [Optional] CUDA Toolkit (for CUDA acceleration)
+- **Python Implementation:**
+  - Python 3.7+
+  - pip (Python package manager)
+  - See `python/requirements.txt` for dependencies
+- **General:**
+  - Sample videos are in the `data/` directory
+  - [Optional] Docker (for containerized builds/runs)
+
+### Building & Running the C++ Implementation
+
+```bash
+cd cpp
+# Clean build (optional)
+rm -rf build
+cmake -S . -B build
+cmake --build build
+
+# Run the pipeline (example: Laplacian mode)
+cd build
+./evmpipeline --input ../../data/face.mp4 --output face_cpp.avi --mode laplacian --alpha 50 --level 4 --fl 0.8333 --fh 1 --lambda_cutoff 16
+
+# Run the pipeline (example: Gaussian mode)
+./evmpipeline --input ../../data/face.mp4 --output face_cpp_gaussian.avi --mode gaussian --alpha 50 --level 4 --fl 0.8333 --fh 1 --lambda_cutoff 16
+```
+
+### Running Tests (C++)
+
+```bash
+cd cpp
+cmake -S . -B build
+cmake --build build
+cd build
+ctest --output-on-failure
+```
+
+### Setting Up the Python Implementation
+
+```bash
+cd python
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Example usage:
+python src/evm.py --input ../data/face.mp4 --output face_py.avi --mode laplacian --alpha 50 --level 4 --fl 0.8333 --fh 1 --lambda_cutoff 16
+```
+
+### Using Docker (Optional)
+
+A Dockerfile is provided for reproducible builds and runs. See the Dockerfile for usage instructions and supported features.
 
 ## EVM Paper Explanation
 
@@ -78,175 +168,187 @@ The same pipeline applies to color changes (e.g., pulse detection):
 *   **Color Space:** RGB, YIQ, YCbCr.
 *   **Chrominance Attenuation:** Factor to reduce amplification of color channels relative to luminance.
 
-## Python Implementation (`evmpy`)
+## Usage Examples
 
-The `evmpy` directory contains a reference implementation written in Python using libraries like NumPy and OpenCV.
+### C++ Implementation
 
-*   **Purpose:** Serves as a baseline and for generating test data.
-*   **Structure:**
-    *   `src/`: Contains the core logic.
-        *   `evm.py`: Main script orchestrating the EVM process.
-        *   `laplacian_pyramid.py`: Laplacian pyramid construction.
-        *   `gaussian_pyramid.py`: Gaussian pyramid construction.
-        *   `processing.py`: Filtering, amplification, reconstruction logic.
-    *   `data/`: Sample input videos.
-    *   `generate_test_data.py`: Script used to create intermediate data files for verifying the C++ implementation.
+**Laplacian Mode (Motion/Color Magnification):**
+```bash
+./evmpipeline --input ../../data/face.mp4 --output face_cpp.avi --mode laplacian --alpha 50 --level 4 --fl 0.8333 --fh 1 --lambda_cutoff 16
+```
 
-## C++ Implementation (`evmcpp`)
+**Gaussian Mode:**
+```bash
+./evmpipeline --input ../../data/face.mp4 --output face_cpp_gaussian.avi --mode gaussian --alpha 50 --level 4 --fl 0.8333 --fh 1 --lambda_cutoff 16
+```
 
-The `evmcpp` directory contains a C++ implementation of both Laplacian and Gaussian EVM pathways, aiming for better performance than the Python reference. It is built using CMake and OpenCV.
+- The output video will be saved in the current directory (usually `cpp/build/`).
+- You can change the input/output paths, magnification factor, frequency bands, and mode as needed.
 
-### Architecture
+### Python Implementation
 
-*   **`evm_core` (Static Library):** Encapsulates the core EVM algorithms (pyramids, filtering, processing). Defined in `evmcpp/CMakeLists.txt`.
-    *   Headers: `include/evmcpp/`
-    *   Sources: `src/evmcpp/`
-*   **`evm_app` (Executable):** A command-line application that uses `evm_core` to process videos.
-    *   Source: `src/main.cpp`
+**Laplacian Mode:**
+```bash
+python src/evm.py --input ../data/face.mp4 --output face_py.avi --mode laplacian --alpha 50 --level 4 --fl 0.8333 --fh 1 --lambda_cutoff 16
+```
 
-### Key Components
+**Gaussian Mode:**
+```bash
+python src/evm.py --input ../data/face.mp4 --output face_py_gaussian.avi --mode gaussian --alpha 50 --level 4 --fl 0.8333 --fh 1 --lambda_cutoff 16
+```
 
-*   **Laplacian Pathway (`laplacian_pyramid.cpp/.hpp`):**
-    *   Implements Laplacian pyramid construction (`generateLaplacianPyramid`) using standard OpenCV functions `cv::pyrDown` and `cv::pyrUp` for spatial decomposition.
-    *   Temporal filtering (`filterLaplacianPyramids`) is performed per-level, per-frame using a 1st-order IIR Butterworth filter. The filter coefficients (b, a) are calculated in `butterworth.cpp` (based on analog prototype and bilinear transform) and applied directly in the filtering loop.
-    *   Spatial attenuation is applied during temporal filtering based on the pyramid level and `lambda_cutoff`.
-    *   Reconstruction (`reconstructLaplacianImage`) involves upsampling the filtered levels (using `cv::pyrUp`) and adding them back to the original YIQ image before converting to RGB.
+- The output video will be saved in the specified path (relative to the `python/` directory).
+- All arguments are analogous to the C++ implementation.
 
-*   **Gaussian Pathway (`gaussian_pyramid.cpp/.hpp`):**
-    *   Implements spatial filtering (`spatiallyFilterGaussian`) by converting the input RGB frame to YIQ, then repeatedly applying the custom `evmcpp::pyrDown` and `evmcpp::pyrUp` functions (defined in `processing.cpp`) for the specified number of levels. This produces a spatially blurred YIQ frame.
-    *   Temporal filtering and amplification (`temporalFilterGaussianBatch`) operates on a batch of these spatially filtered YIQ frames. It uses an ideal bandpass filter implemented via FFT for each pixel's time series:
-        *   `cv::dft` computes the Discrete Fourier Transform along the time axis.
-        *   A frequency mask based on `fl` and `fh` selects the desired band.
-        *   `cv::idft` computes the Inverse Discrete Fourier Transform.
-        *   The resulting filtered signal is amplified by `alpha`, with chrominance channels attenuated by `chromAttenuation`.
-    *   Frame reconstruction (`reconstructGaussianFrame`) takes the original RGB frame and the corresponding filtered/amplified YIQ signal. It converts the original frame to YIQ, adds the filtered signal, converts the result back to RGB (float), clips values to [0, 255], and converts to the final `uint8` format.
+**Example (Motion Magnification - Baby, C++):**
+```bash
+./evmpipeline --input ../../data/baby.mp4 --output baby_motion.avi --mode laplacian --alpha 20 --level 4 --fl 0.4 --fh 3.0 --lambda_cutoff 10
+```
 
-*   **Temporal Filtering (`butterworth.cpp/.hpp`, `gaussian_pyramid.cpp`):**
-    *   **Laplacian:** Uses a time-domain IIR Butterworth filter implemented in `laplacian_pyramid.cpp`. Coefficients are calculated in `butterworth.cpp` based on the desired frequency band (`fl`, `fh`) and video `fps`.
-    *   **Gaussian:** Uses a frequency-domain ideal bandpass filter implemented within `temporalFilterGaussianBatch` (in `gaussian_pyramid.cpp`) using `cv::dft` and `cv::idft`. The filter directly selects frequencies between `fl` and `fh`.
+## C++ Implementation Details (`cpp/`)
 
-*   **Shared Processing (`processing.cpp/.hpp`):**
-    *   Contains common functions for RGB <-> YIQ color space conversions (`rgb2yiq`, `yiq2rgb`) using `cv::transform` with standard conversion matrices.
-    *   Defines custom `pyrDown` and `pyrUp` functions that mimic Python's behavior using `cv::filter2D` with a Gaussian kernel and explicit down/upsampling logic. These are used by the Gaussian pathway's `spatiallyFilterGaussian` function. (Note: The C++ Laplacian pathway implementation was updated to also use these custom functions for consistency, although the original README stated it used OpenCV's built-ins).
+### Architecture Overview
 
-*   **Main Application (`main.cpp`):**
-    *   Parses command-line arguments (`--input`, `--output`, `--alpha`, `--level`, `--fl`, `--fh`, `--lambda_cutoff`, `--chrom_atten`, `--mode`).
-    *   Loads the input video using `cv::VideoCapture`, converting frames from BGR to RGB.
-    *   Based on the selected `--mode`:
-        *   **Laplacian:** Calls `getLaplacianPyramids`, `filterLaplacianPyramids`, and `reconstructLaplacianImage` sequentially, processing frame by frame.
-        *   **Gaussian:** Calls the batch function `processVideoGaussianBatch` (defined in `processing.cpp`) which handles loading frames, calling `spatiallyFilterGaussian` for each, calling `temporalFilterGaussianBatch` on the results, and then calling `reconstructGaussianFrame` frame-by-frame.
-    *   Saves the resulting magnified frames as an output video using `cv::VideoWriter`, converting frames back from RGB to BGR. Defines the 5x5 Gaussian kernel used by `cv::pyrDown`/`cv::pyrUp` in the Laplacian path.
+The C++ implementation is modular, high-performance, and designed for extensibility. It is organized into:
+- **Core Library** (`evm_core`): Implements all EVM algorithms and utilities as a static library.
+- **Main Application** (`evmpipeline`): Command-line tool for running EVM on videos, built on top of the core library.
+- **Unit Tests**: Comprehensive GoogleTest-based tests for all modules.
 
-*   **Build System (`CMakeLists.txt`):** Uses CMake to manage the build process. Requires OpenCV (core, imgproc, videoio) to be installed and findable.
-*   **Testing (`tests/`):**
-    *   Uses GoogleTest framework (`gtest`). Configuration in `evmcpp/tests/CMakeLists.txt`.
-    *   Includes unit tests for individual components (processing helpers, Butterworth filter, Laplacian pathway, Gaussian pathway). Test files include `test_processing.cpp`, `test_butterworth.cpp`, `test_laplacian.cpp`, and `test_gaussian.cpp`.
-    *   Compares results against pre-computed data generated by the Python implementation (`evmpy/generate_test_data.py`) stored in `evmcpp/tests/data/` to ensure correctness and consistency.
+### Directory Structure
 
-### Build and Run
+```
+cpp/
+├── src/         # All .cpp files (core modules and main.cpp)
+├── include/     # All .hpp header files (public API, internal headers)
+├── tests/       # GoogleTest unit tests
+├── CMakeLists.txt
+└── README.md
+```
 
-1.  **Prerequisites:**
-    *   CMake (>= 3.10)
-    *   A C++17 compliant compiler (GCC, Clang, MSVC)
-    *   OpenCV (>= 4.x recommended) installed and configured (you might need to set the `OpenCV_DIR` environment variable).
+### Key Modules & Responsibilities
 
-2.  **Build Steps:**
+- **main.cpp**: Entry point, parses arguments, orchestrates pipeline selection and execution.
+- **pyramid.hpp/cpp**: Base classes and functions for pyramid construction.
+- **laplacian_pyramid.hpp/cpp**: Implements Laplacian pyramid decomposition, temporal filtering, and reconstruction for motion magnification.
+- **gaussian_pyramid.hpp/cpp**: Implements Gaussian pyramid, frequency-domain temporal filtering, and reconstruction for color magnification.
+- **butterworth.hpp/cpp**: Designs and applies IIR Butterworth filters for temporal processing.
+- **processing.hpp/cpp**: Shared helpers (color conversion, custom pyrDown/pyrUp, etc.).
+- **color_conversion.hpp/cpp**: RGB <-> YIQ color space transforms.
+
+### Main Application Flow (evmpipeline)
+1. **Argument Parsing**: Reads command-line arguments for input/output, mode, alpha, levels, frequency bands, etc.
+2. **Video Loading**: Opens input video using OpenCV (`cv::VideoCapture`). Converts frames from BGR to RGB.
+3. **Pipeline Selection**:
+   - **Laplacian**: Calls Laplacian pyramid build, temporal filter, and reconstruct functions per frame.
+   - **Gaussian**: Loads all frames, applies spatial Gaussian, runs frequency-domain filter (FFT), amplifies, and reconstructs.
+4. **Saving Output**: Writes processed frames to output video using OpenCV (`cv::VideoWriter`).
+5. **Logging**: Prints progress and configuration to the console.
+
+### Extending the C++ Codebase
+- **Add a new pyramid type**: Create new `pyramid_x.hpp/cpp` and register in main.
+- **Add new filters**: Implement in `butterworth.cpp` or as new modules.
+- **Change color spaces**: Extend `color_conversion.hpp/cpp`.
+- **GPU Acceleration**: Add CUDA kernels in `src/evmcuda/` and headers in `include/evmcuda/` (see CUDA section).
+
+### Build System (CMake)
+- Automatically finds all source and header files.
+- Links against OpenCV (and CUDA if available).
+- Builds both library and application, plus unit tests.
+- Supports out-of-source builds for cleanliness.
+
+### Testing
+- All major modules are covered by GoogleTest-based tests under `cpp/tests/`.
+- Tests are run via `ctest` after building.
+- Test data (e.g., sample videos) is expected in the top-level `data/` directory.
+
+## Testing & Validation
+
+### C++ Implementation
+
+- **Unit Tests:**
+  - All C++ modules are covered by GoogleTest-based unit tests.
+  - To run all tests:
     ```bash
-    cd evmcpp
-    mkdir build
+    cd cpp
+    cmake -S . -B build
+    cmake --build build
     cd build
-    cmake ..
-    make # Or your specific build system generator command (e.g., ninja)
+    ctest --output-on-failure
     ```
-    This will create the `libevm_core.a` library and the `evm_app` executable inside the `build` directory.
+  - Tests cover pyramid construction, temporal filtering, color conversion, and more.
+  - Test video data is expected in the `data/` directory.
 
-3.  **Running the Application:**
-    Execute `evm_app` from the `build` directory.
+### Python Implementation
 
-    ```bash
-    ./evm_app [options]
-    ```
+- **Reference Output:**
+  - The Python code can be used to generate reference outputs for comparison.
+  - (If available) Run any provided test scripts or use the main pipeline on sample videos.
 
-    **Common Options (see `./evm_app --help` for full list):**
+### Output Validation
 
-    *   `--input <path>`: Path to the input video (e.g., `../../evmpy/data/face.mp4`).
-    *   `--output <path>`: Path for the output video (e.g., `face_magnified.avi`).
-    *   `--mode <name>`: Processing mode: `laplacian` (default) or `gaussian`.
-    *   `--alpha <float>`: Amplification factor (e.g., `50`).
-    *   `--level <int>`: Number of pyramid levels (e.g., `4`).
-    *   `--fl <float>`: Low frequency cutoff in Hz (e.g., `0.83`).
-    *   `--fh <float>`: High frequency cutoff in Hz (e.g., `1.0`).
-    *   `--lambda_cutoff <float>`: Spatial cutoff wavelength (motion mode, e.g., `16`).
-    *   `--chrom_atten <float>`: Chrominance attenuation factor (e.g., `1.0` for no attenuation, `0.1` to reduce color shifts).
+- **Visual Inspection:**
+  - Compare output videos (e.g., `face_cpp.avi` vs. `face_py.avi`) using a media player.
+  - Look for expected motion/color magnification effects.
+- **Numerical Comparison:**
+  - For deeper validation, compare pixel values or frame statistics between C++ and Python outputs using scripts (not included by default).
 
-    **Example (Color Magnification - Pulse):**
-    ```bash
-    ./evm_app --input ../../evmpy/data/face.mp4 --output face_pulse.avi --mode gaussian --alpha 50 --level 4 --fl 0.83 --fh 1.0 --chrom_atten 0.1
-    ```
-
-    **Example (Motion Magnification - Baby):**
-    ```bash
-    ./evm_app --input ../../evmpy/data/baby.mp4 --output baby_motion.avi --mode laplacian --alpha 20 --level 4 --fl 0.4 --fh 3.0 --lambda_cutoff 10
-    ```
-
-## Future Optimizations & CUDA Implementation
-
-### C++ Optimizations
-
-While the C++ version offers performance gains over Python, further optimizations are possible:
-
-*   **Memory Management:** Pre-allocate memory where possible, reuse buffers (`cv::Mat`) to reduce allocations/deallocations within loops (especially frame processing). Analyze `cv::Mat` copying vs. referencing.
-*   **Loop Unrolling/Vectorization:** Profile key loops (filtering, pyramid construction) and investigate compiler optimizations or manual vectorization (e.g., using SIMD intrinsics if necessary, though OpenCV often handles this).
-*   **Algorithmic Improvements:** Explore alternative filtering techniques if needed.
-*   **Parallelism (CPU):** Utilize multi-threading (e.g., OpenMP, TBB, `std::thread`) for frame-level parallelism or potentially within pyramid level processing if beneficial.
+## CUDA & Advanced Features
 
 ### CUDA Implementation Status (April 2025)
 
-The repository now includes a **working, verified CUDA implementation** for the **Gaussian EVM pathway**, with partial support for the Laplacian pathway. The CUDA code resides in `evmcpp/src/evmcuda/` with headers in `evmcpp/include/evmcuda/`. It uses the CUDA Runtime API directly (raw device pointers, `cudaMallocPitch`, `cudaMemcpy2D`, etc.) and is built as a separate static library.
+- **Gaussian Pathway:**
+  - Fully implemented and verified CUDA acceleration for the Gaussian EVM pipeline.
+  - CUDA source code is located in `cpp/src/evmcuda/` and headers in `cpp/include/evmcuda/`.
+  - Uses the CUDA Runtime API (raw device pointers, `cudaMallocPitch`, `cudaMemcpy2D`, etc.).
+  - Built as a separate static library and linked into the main C++ project.
 
-**Current Status:**
+- **Laplacian Pathway:**
+  - Partial CUDA support (not full pipeline).
+  - Includes CUDA kernel for single-frame IIR Butterworth filtering (`filterLaplacianLevelFrame_gpu`), verified against the CPU version.
+  - Pyramid operations (`pyrDown`/`pyrUp`) via custom CUDA kernels were attempted but abandoned due to numerical discrepancies. If GPU acceleration is needed, use OpenCV's `cv::cuda::pyrDown`/`cv::cuda::pyrUp`.
 
-- **Gaussian Pathway: Fully Implemented and Verified**
-  - **Color Conversion:** `rgb2yiq_gpu` and `yiq2rgb_gpu` kernels convert between RGB and YIQ color spaces. Verified against CPU implementations.
-  - **Temporal Filtering:** `temporalFilterGaussianBatch_gpu` uses cuFFT for batch 1D FFTs, with a custom kernel applying frequency masks and amplification. Verified against CPU results.
-  - **Reconstruction:** CUDA kernels perform addition of filtered signals, color space conversion, clipping, and conversion back to uint8. Verified against CPU pipeline.
-  - **Tests:** Extensive tests compare CUDA outputs to CPU reference implementations, all passing within tight tolerances.
+#### Building with CUDA
 
-- **Laplacian Pathway: Partially Implemented**
-  - **Temporal Filtering:** A CUDA kernel for single-frame IIR Butterworth filtering (`filterLaplacianLevelFrame_gpu`) is implemented and verified against the CPU reference across multiple frames, correctly handling state propagation.
-  - **Pyramid Operations:** Custom CUDA kernels for `pyrDown`/`pyrUp` were attempted but abandoned due to numerical discrepancies. Use OpenCV's `cv::cuda::pyrDown`/`pyrUp` if GPU acceleration is needed.
+- Ensure the CUDA Toolkit is installed and available on your system.
+- The CMake configuration will automatically detect CUDA and enable CUDA builds if available.
+- No special command-line arguments are needed if CUDA is detected; the pipeline will use GPU acceleration for supported pathways.
 
-**Summary of CUDA Kernels:**
+#### Limitations
 
-- **Implemented and Verified:**
-  - `rgb2yiq_gpu`, `yiq2rgb_gpu`
-  - `temporalFilterGaussianBatch_gpu` (cuFFT-based)
-  - Gaussian pathway reconstruction (addition, clipping, conversion)
-- **Implemented and Verified:**
-  - Laplacian temporal filtering (`filterLaplacianLevelFrame_gpu`, IIR-based, multi-frame state verified)
-- **Not Implemented:**
-  - Custom pyramid construction (recommend OpenCV CUDA functions)
-  - Full Laplacian reconstruction pipeline (Requires pyramid ops and accumulation)
+- Only the Gaussian pathway is fully GPU-accelerated as of April 2025.
+- Laplacian pathway CUDA support is partial and experimental.
+- For best results, use the Gaussian mode for CUDA-accelerated inference.
 
-**Integration Strategy:**
+## Development Notes & Future Work
 
-- Keep data on the GPU throughout the Gaussian pipeline: color conversion, temporal filtering, amplification, reconstruction.
-- Use CUDA streams for asynchronous execution.
-- Use cuFFT for temporal filtering.
-- Use raw device pointers with pitched memory for efficient 2D data handling.
-- Transfer final frames back to CPU for display or encoding, or use GPU-accelerated codecs to avoid transfers.
+### Design & Maintainability
+- The repository is organized for clarity: all C++ code is under `cpp/`, all Python code under `python/`, and shared data under `data/`.
+- C++ code uses modular headers/sources, modern CMake, and GoogleTest for robust unit testing.
+- Python code is kept simple and readable for reference and experimentation.
+- All paths are relative and consistent for ease of use and reproducibility.
 
-**Performance:**
+### Areas for Improvement
+- **Test Coverage:**
+  - Add more edge-case and stress tests, especially for CUDA and multi-threaded code.
+  - Implement automated output comparison scripts between C++ and Python results.
+- **Performance Optimizations:**
+  - Further memory management improvements (buffer reuse, minimizing allocations).
+  - Explore more parallelism (OpenMP, TBB, or `std::thread` for CPU; kernel fusion for CUDA).
+  - Investigate further algorithmic enhancements for temporal/spatial filtering.
+- **Feature Extensions:**
+  - Complete full CUDA support for the Laplacian pathway.
+  - Add more color space and chrominance attenuation options.
+  - Expose more configuration via command-line or config files.
+- **Documentation:**
+  - Continue improving code comments and docstrings.
+  - Add more usage examples, troubleshooting, and benchmarking info.
 
-- The CUDA Gaussian pathway provides significant acceleration over the CPU implementation.
-- Numerical results are consistent with the CPU pipeline, verified by automated tests.
+### How to Contribute
+- Fork the repository and create a feature branch.
+- Follow the existing code style and structure.
+- Add tests for new features or bugfixes.
+- Submit a pull request with a clear description of your changes.
 
-**Next Steps:**
+---
 
-- Optional: Integrate GPU-accelerated video decoding/encoding (e.g., `cv::cudacodec`).
-- Optional: Further optimize memory management and kernel launches.
-- Optional: Implement CUDA Laplacian reconstruction (pyramid ops + accumulation).
-- Optional: Integrate GPU-accelerated video decoding/encoding (e.g., `cv::cudacodec`).
-- Optional: Further optimize memory management and kernel launches.
-
-This CUDA implementation enables fast, accurate Gaussian EVM processing on supported NVIDIA GPUs.
+All major sections of the README have now been updated. If you want further edits, more examples, or new sections, let me know!
