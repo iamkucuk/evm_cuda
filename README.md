@@ -348,7 +348,3 @@ cpp/
 - Follow the existing code style and structure.
 - Add tests for new features or bugfixes.
 - Submit a pull request with a clear description of your changes.
-
----
-
-All major sections of the README have now been updated. If you want further edits, more examples, or new sections, let me know!
