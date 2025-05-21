@@ -5,6 +5,8 @@
 /cpp/build/
 /cpp/Testing/
 
+cuda/build
+
 # Python Cache
 /python/src/__pycache__/
 *.pyc
