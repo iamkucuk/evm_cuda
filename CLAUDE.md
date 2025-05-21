@@ -8,7 +8,7 @@ This project implements the Eulerian Video Magnification algorithm in CUDA, base
 Eulerian Video Magnification is a technique to reveal temporal variations in videos that are difficult or impossible to see with the naked eye. The method amplifies small temporal changes in the video signal by using spatial decomposition and temporal filtering, followed by signal amplification.
 
 ### Project Structure
-- `cpp/`: Contains the original CPU implementation (reference code)
+- `cpp/`: Contains the original CPU implementation (reference code, should not be touched!)
 - `cuda/`: Will contain the new CUDA implementation (our target)
 - Documentation: AI-DIARY.md, README.AI.md
 
