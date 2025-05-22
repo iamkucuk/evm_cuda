@@ -5,8 +5,9 @@ project(evm_cuda LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find CUDA
+# Find CUDA and CUFFT
 find_package(CUDA REQUIRED)
+find_library(CUFFT_LIBRARIES cufft HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 ${CUDA_TOOLKIT_ROOT_DIR}/lib)
 include_directories(${CUDA_INCLUDE_DIRS})
 
 # Set CUDA architectures
@@ -67,6 +68,22 @@ target_link_libraries(cuda_laplacian_pyramid
     ${OpenCV_LIBS}
 )
 
+# Gaussian processing library (NEW)
+add_library(cuda_gaussian_processing STATIC
+    src/cuda_gaussian_processing.cu
+    include/cuda_gaussian_processing.cuh
+)
+set_target_properties(cuda_gaussian_processing PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+)
+target_link_libraries(cuda_gaussian_processing
+    cuda_pyramid 
+    cuda_color_conversion
+    ${CUDA_LIBRARIES}
+    ${CUFFT_LIBRARIES}
+    ${OpenCV_LIBS}
+)
+
 # EVM core library
 add_library(cuda_evm STATIC
     src/cuda_evm.cu
@@ -77,22 +94,26 @@ set_target_properties(cuda_evm PROPERTIES
 )
 target_link_libraries(cuda_evm 
     cuda_laplacian_pyramid
+    cuda_gaussian_processing
     cuda_pyramid 
     cuda_color_conversion
     cuda_butterworth
-    ${CUDA_LIBRARIES} 
+    ${CUDA_LIBRARIES}
+    ${CUFFT_LIBRARIES}
     ${OpenCV_LIBS}
 )
 
 # Add the main executable
-add_executable(evm_cuda src/main.cpp)
+add_executable(evm_cuda src/main.cu)
 target_link_libraries(evm_cuda 
     cuda_evm
     cuda_laplacian_pyramid
+    cuda_gaussian_processing
     cuda_pyramid 
     cuda_color_conversion
     cuda_butterworth
-    ${CUDA_LIBRARIES} 
+    ${CUDA_LIBRARIES}
+    ${CUFFT_LIBRARIES}
     ${OpenCV_LIBS}
 )
 

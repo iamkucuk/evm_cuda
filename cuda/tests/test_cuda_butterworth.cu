@@ -368,7 +368,7 @@ bool testButterworthFilter() {
 
 int main(int argc, char* argv[]) {
     // Test data paths
-    std::string basePath = "../../cpp/tests/data/";
+    std::string basePath = "../../../../cpp/tests/data/";
     if (argc > 1) {
         basePath = argv[1];
     }

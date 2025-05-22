@@ -3,6 +3,7 @@
 #include "cuda_pyramid.cuh"
 #include "cuda_color_conversion.cuh"
 #include "cuda_butterworth.cuh"
+#include "cuda_gaussian_processing.cuh"
 
 #include <cuda_runtime.h>
 #include <opencv2/core.hpp>
@@ -198,6 +199,12 @@ bool init_evm() {
         success = false;
     }
     
+    // Initialize gaussian processing module
+    if (!init_gaussian_processing()) {
+        LOG_EVM("Failed to initialize gaussian processing module");
+        success = false;
+    }
+    
     if (success) {
         LOG_EVM("All EVM CUDA modules initialized successfully");
     } else {
@@ -207,11 +214,15 @@ bool init_evm() {
     return success;
 }
 
+// Gaussian mode processing pipeline (NEWLY IMPLEMENTED)
+// Note: Implementation is in cuda_gaussian_processing.cu
+
 // Clean up all resources used by the EVM pipeline
 void cleanup_evm() {
     LOG_EVM("Cleaning up EVM CUDA resources...");
     
     // Clean up all modules in reverse order
+    cleanup_gaussian_processing();
     cleanup_butterworth();
     cleanup_laplacian_pyramid();
     cleanup_pyramid();
