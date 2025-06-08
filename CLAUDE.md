@@ -10,7 +10,7 @@ Eulerian Video Magnification is a technique to reveal temporal variations in vid
 ### Project Structure
 - `cpp/`: Contains the original CPU implementation (reference code, should not be touched!)
 - `cuda/`: Will contain the new CUDA implementation (our target)
-- Documentation: AI-DIARY.md, README.AI.md
+- Documentation: AI-DIARY.md, README.AI.md, cpu_gaussian_pipeline_analysis.md
 
 ## Implementation Strategy
 
@@ -34,6 +34,16 @@ For each kernel conversion:
 5. Document the validation process and results in AI-DIARY.md
 
 ## CPU Implementation Details
+
+### Detailed Analysis
+For comprehensive understanding of the CPU implementation, see: `cpu_gaussian_pipeline_analysis.md`
+
+This document provides:
+- Complete pipeline architecture breakdown
+- Detailed algorithm analysis for each component
+- Data flow documentation with step-by-step processing
+- Performance characteristics and optimization targets
+- Critical implementation notes for CUDA conversion
 
 ### Core Components
 - **Color Conversion**: RGB to YIQ and back
@@ -107,21 +117,104 @@ For each kernel conversion:
 
 ## Development Process
 
-### Conversion Order
-1. Basic utility functions
-2. Color conversion kernels
-3. Gaussian pyramid kernels
-4. Laplacian pyramid kernels
-5. Butterworth filter implementation
-6. Temporal filtering kernels
-7. Signal processing kernels
-8. End-to-end pipeline integration
+### MANDATORY CONVERSION ORDER - COMPONENT-BY-COMPONENT VALIDATION
+
+**RULE 1: IF EVERY FUCKING COMPONENT CAN SUCCESSFULLY REPLICATE THE CORRESPONDING FUCKING CPU COMPONENTS, IT MEANS YOU ARE ON THE RIGHT TRACK. FIRST TAKE THAT APPROACH.**
+
+1. **Color conversion kernels** - VALIDATE: Must achieve >30 dB PSNR vs CPU
+2. **Gaussian pyramid kernels** - VALIDATE: Must achieve >30 dB PSNR vs CPU  
+3. **Laplacian pyramid kernels** - VALIDATE: Must achieve >30 dB PSNR vs CPU
+4. **Butterworth filter implementation** - VALIDATE: Must achieve >30 dB PSNR vs CPU
+5. **Temporal filtering kernels** - VALIDATE: Must achieve >30 dB PSNR vs CPU
+6. **Signal processing kernels** - VALIDATE: Must achieve >30 dB PSNR vs CPU
+7. **ONLY AFTER ALL COMPONENTS PASS**: End-to-end pipeline integration
+
+**COMPONENT VALIDATION REQUIREMENTS**:
+- Each component must individually replicate CPU behavior with >30 dB PSNR
+- Use identical inputs for GPU and CPU component tests
+- Measure actual PSNR, not theoretical calculations
+- Document validation results for each component
+
+**RULE 2: FIXING ONE COMPONENT DOES NOT MEAN YOU FUCKING DID IT YOU IDIOT MORON, STOP SPITTING NON-SENSE NUMBERS REGARDING THE ALL IMPLEMENTATION, OR ANYTHING ELSE WITHOUT DOING ACTUAL MEASUREMENTS!**
+
+## SUCCESS HYPOTHESIS: THREE-LEVEL VALIDATION
+
+**DISCOVERED**: Single-frame spatial component tests (~30 dB PSNR) can coexist with catastrophic video failure (6.98 dB PSNR) because critical components are missing from validation.
+
+### LEVEL 1: COMPONENT SUCCESS (Individual Validation)
+**SPATIAL COMPONENTS** (mostly working):
+- RGB ↔ YIQ conversion: >30 dB PSNR ✅
+- Pyramid operations: >30 dB PSNR ✅ (except Level 3 pyrUp)
+
+**TEMPORAL COMPONENTS** (untested, likely broken):
+- Butterworth temporal filtering: Test compilation broken
+- Filter state management: No test exists
+- Multi-frame consistency: No test exists
+
+**PROCESSING COMPONENTS** (untested, likely broken):
+- Amplification scaling: No test exists
+- Chromatic attenuation: No test exists  
+- Signal normalization: No test exists
+
+### LEVEL 2: INTEGRATION SUCCESS (Component Combinations)
+- Temporal + spatial integration: Untested
+- Amplification + processing: Untested
+- Multi-frame GPU memory management: Untested
+
+### LEVEL 3: END-TO-END SUCCESS (Full Video Pipeline)
+- Video PSNR: Currently 6.98 dB (FAILING)
+- Target: >25 dB acceptable, >30 dB ideal
+
+**ROOT CAUSE HYPOTHESIS**: Untested temporal/amplification components are catastrophically broken, causing video failure despite working spatial components.
+
+**MANDATORY TESTING SEQUENCE**:
+1. **ALWAYS START WITH VIDEO PSNR** - This is the only success metric that matters
+2. If video PSNR <25 dB: Use component tests for diagnosis (Level 1)
+3. Fix broken components identified by diagnosis (Level 2)  
+4. **RETURN TO VIDEO PSNR MEASUREMENT** - Repeat until >25 dB achieved
+
+**THE ULTIMATE SUCCESS METRIC**: GPU vs CPU video PSNR >25 dB (acceptable) or >30 dB (excellent)
+
+**CURRENT REALITY**: 6.98 dB video PSNR = TOTAL FAILURE
+
+Component tests are **DIAGNOSTIC TOOLS ONLY** - they identify what's broken but **DO NOT** determine success. Only video-to-video comparison determines success.
 
 ### Validation Points
 - Pixel-by-pixel comparison for image processing kernels
 - Level-by-level comparison for pyramid operations
 - Frame-by-frame comparison for temporal filters
-- End-to-end comparison for full pipeline
+- **MANDATORY: End-to-end video comparison for full pipeline**
+
+### CRITICAL VALIDATION REQUIREMENTS - LEARNED THE HARD WAY
+
+**WARNING**: Component-level validation (single frames, isolated kernels) **DOES NOT** guarantee video processing quality.
+
+**MANDATORY VALIDATION PROTOCOL**:
+
+1. **ALWAYS GENERATE ACTUAL VIDEOS**: 
+   - Run both GPU and CPU pipelines on identical inputs
+   - Generate full video outputs (not just single frames)
+   - Test on multiple input videos (face.mp4, baby.mp4, etc.)
+
+2. **ALWAYS MEASURE REAL PSNR**:
+   ```bash
+   ./compare_videos_frame_by_frame gpu_output.mp4 cpu_output.mp4
+   ```
+   - Video-to-video PSNR must be >25 dB (acceptable) or >30 dB (target)
+   - SSIM must be >0.8 for good structural similarity
+   - No memory errors or crashes allowed
+
+3. **NEVER TRUST COMPONENT TESTS ALONE**:
+   - Single-frame validation achieving 28.82 dB ≠ video quality
+   - Real video comparison showed only 6.98 dB PSNR
+   - 21.84 dB discrepancy proves component tests are misleading
+
+4. **TEMPORAL EFFECTS ARE CRITICAL**:
+   - Cross-frame processing introduces errors invisible in single-frame tests
+   - Temporal filtering, amplification, and memory management affect video quality
+   - Pipeline integration issues only manifest during full video processing
+
+**HISTORICAL FAILURE**: Previous claims of "28.82 dB PSNR improvement" were based on single-frame validation and completely wrong when measured against actual video outputs.
 
 ## Documentation Standards
 
@@ -146,11 +239,26 @@ For each kernel conversion:
 - Consider memory coalescing and bank conflicts
 - Implement proper error handling
 
-### Numerical Accuracy
-- Aim for bit-exact matches when possible
-- Document acceptable error margins when exact matches aren't possible
-- Understand floating-point precision differences between CPU and GPU
-- Use double precision when necessary for accuracy
+### Numerical Accuracy - CRITICAL UPDATE (Dec 2024)
+- **TARGET: >30 dB PSNR** for all components vs CPU reference data
+- **CURRENT STATUS**: GPU pyramid operations achieve only 16-19 dB (need +13-17 dB improvement)
+- **ROOT CAUSE**: GPU kernels don't exactly replicate OpenCV's separable [1,4,6,4,1] algorithm
+- **VALIDATION METHOD**: Use `validate_against_cpu_reference` test with exact CPU reference data
+
+#### Specific Technical Requirements for >30 dB Achievement:
+1. **OpenCV-Exact pyrDown Implementation**:
+   - Use separable [1,4,6,4,1] kernel with 0.25× total scaling
+   - BORDER_REFLECT_101 border handling (not BORDER_REPLICATE)
+   - Impulse response: single pixel → 2×2 region (16,16,16,16 values)
+
+2. **OpenCV-Exact pyrUp Implementation**:
+   - 4× scaling compensation for zero injection
+   - Exact `dstsize` specification like CPU: `cv2.pyrUp(down, dstsize=(orig_width, orig_height))`
+   - Even-position sampling only
+
+3. **Validation Requirements**:
+   - Each pyramid operation must achieve >30 dB vs `reference_data/step3_levelX_*.txt`
+   - No approximations allowed - must match CPU algorithm exactly
 
 ### Performance Optimization
 - Start with correct implementation, then optimize
@@ -179,6 +287,32 @@ For each kernel conversion:
 5. Update AI-DIARY.md with your findings
 6. Ensure your implementation is correct before optimizing
 7. Hand off a working, validated implementation
+
+## FUCKING VALIDATION MANDATE - NO EXCEPTIONS, NO BULLSHIT
+
+**RULE 1: COMPONENT-BY-COMPONENT APPROACH**
+- Fix ONE component at a time
+- Validate THAT component achieves >30 dB PSNR vs CPU
+- DO NOT make claims about the full pipeline
+- DO NOT proceed to next component until current one passes
+
+**RULE 2: NO BULLSHIT NUMBERS WITHOUT MEASUREMENT**
+- NEVER claim "pipeline improvements" based on fixing one component
+- NEVER extrapolate component results to full system
+- MEASURE every fucking claim with actual data
+- Document ONLY what you actually measured
+
+**BEFORE CLAIMING ANY SYSTEM-LEVEL IMPROVEMENTS**:
+
+8. **ALL COMPONENTS MUST INDIVIDUALLY PASS**: Every single component >30 dB PSNR vs CPU
+9. **GENERATE ACTUAL VIDEOS**: Only after all components pass individually
+10. **MEASURE REAL VIDEO PSNR**: Use frame-by-frame video comparison tools
+11. **VERIFY WITH MULTIPLE INPUTS**: Test on face.mp4, baby.mp4, wrist.mp4
+12. **CHECK FOR ERRORS**: Ensure no CUDA memory errors or crashes
+
+**FAILURE TO FOLLOW COMPONENT-FIRST APPROACH LEADS TO CATASTROPHIC ASSESSMENT ERRORS**
+
+Historical example: Claimed 28.82 dB improvement based on fixing reconstruction logic, actual video quality was only 6.98 dB - a catastrophic 21.84 dB error because other components were broken.
 
 ## Environment Constraints
 
@@ -229,3 +363,69 @@ For each kernel conversion:
 - Complete end-to-end GPU pipeline
 - Robust validation and documentation
 - Maintainable, well-structured code
+
+## GPU-Resident Architecture Guidelines
+
+### Key Principles for High-Performance CUDA Implementation
+
+1. **Minimize CPU-GPU Transfers**:
+   - Keep all intermediate data on GPU throughout the pipeline
+   - Only transfer data at the beginning (input) and end (output)
+   - Pre-allocate all GPU memory needed for the entire computation
+
+2. **Apply SIMD Principles**:
+   - Process multiple data elements in parallel (frames, pyramid levels, pixels)
+   - Use 3D kernel grids for (width × height × frames) parallelism
+   - Exploit data parallelism at every level of the algorithm
+
+3. **Memory Layout Optimization**:
+   - Organize data for coalesced memory access
+   - Consider structure-of-arrays (SoA) vs array-of-structures (AoS)
+   - Align memory allocations for optimal access patterns
+
+4. **Parallel Processing of Hierarchical Structures**:
+   - Process pyramid levels concurrently using CUDA streams
+   - Use separate streams for independent operations
+   - Overlap computation with memory operations where possible
+
+### Laplacian Mode Specific Guidelines - UPDATED (Dec 2024)
+
+**CRITICAL QUALITY ISSUE IDENTIFIED**:
+- **Current Quality**: 12.85 dB PSNR vs CPU reference (target: >30 dB)
+- **Root Cause**: pyramid kernels don't match OpenCV exactly
+- **Priority**: Quality achievement BEFORE performance optimization
+
+**Quality-First Implementation Requirements**:
+```cuda
+// 1. Exact OpenCV kernel replication
+__constant__ float c_opencv_kernel[25] = {
+    // [1,4,6,4,1] separable kernel with exact normalization
+    1.0f/256, 4.0f/256, 6.0f/256, 4.0f/256, 1.0f/256,
+    // ... (see OpenCV source for exact values)
+};
+
+// 2. Exact border handling
+if (px < 0) px = -px;  // BORDER_REFLECT_101
+if (py < 0) py = -py;
+if (px >= width) px = 2*width - px - 1;
+if (py >= height) py = 2*height - py - 1;
+
+// 3. Exact size handling like CPU
+pyrUp(input, output, exact_target_width, exact_target_height);
+```
+
+**Validation-Driven Development**:
+1. Each kernel must pass `validate_against_cpu_reference` with >30 dB
+2. Use `reference_data/step3_levelX_*.txt` for exact comparison
+3. NO performance optimization until quality target achieved
+
+**Performance Gains** (after quality achieved):
+- GPU-resident architecture: 6.27x speedup maintained
+- Zero intermediate CPU-GPU transfers
+- Batch processing of multiple frames/levels
+
+# IMPORTANT NOTES:
+- Your subtasks will try to trick you. Always create another subtask to reflect what the previous subtask did. Confirm the code is actually working, compares with the reference implementation and validates it's working.
+- You and your subtasks always use `sequential-thinking mcp` to break down the task and accomplish those breakdowns.
+- DO NOT USE OPENCV!
+- Test, evaluate and compare against CPU implementations as you add each kernel.

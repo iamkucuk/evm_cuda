@@ -1,124 +1,83 @@
-cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
-project(evm_cuda LANGUAGES CXX CUDA)
+cmake_minimum_required(VERSION 3.18)
+project(cuda_evm LANGUAGES CXX CUDA)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find CUDA and CUFFT
+# Find required packages
 find_package(CUDA REQUIRED)
-find_library(CUFFT_LIBRARIES cufft HINTS ${CUDA_TOOLKIT_ROOT_DIR}/lib64 ${CUDA_TOOLKIT_ROOT_DIR}/lib)
-include_directories(${CUDA_INCLUDE_DIRS})
-
-# Set CUDA architectures
-set(CMAKE_CUDA_ARCHITECTURES 75 86)  # Adjust based on your GPU architecture
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
-
-# OpenCV is needed for some components
 find_package(OpenCV REQUIRED)
-include_directories(${OpenCV_INCLUDE_DIRS})
 
 # Include directories
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+include_directories(include)
+include_directories(${OpenCV_INCLUDE_DIRS})
 
-# Create CUDA libraries
-# Color conversion library
-add_library(cuda_color_conversion STATIC
-    src/cuda_color_conversion.cu
-    include/cuda_color_conversion.cuh
-)
-set_target_properties(cuda_color_conversion PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-target_link_libraries(cuda_color_conversion ${CUDA_LIBRARIES} ${OpenCV_LIBS})
+# CUDA compilation flags
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_50")
 
-# Pyramid operations library
-add_library(cuda_pyramid STATIC
-    src/cuda_pyramid.cu
-    include/cuda_pyramid.cuh
-)
-set_target_properties(cuda_pyramid PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-target_link_libraries(cuda_pyramid ${CUDA_LIBRARIES} ${OpenCV_LIBS})
-
-# Butterworth filter library
-add_library(cuda_butterworth STATIC
+# Add library for CUDA implementations
+add_library(cuda_evm
     src/cuda_butterworth.cu
-    include/cuda_butterworth.cuh
-)
-set_target_properties(cuda_butterworth PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-target_link_libraries(cuda_butterworth ${CUDA_LIBRARIES} ${OpenCV_LIBS})
-
-# Laplacian pyramid library
-add_library(cuda_laplacian_pyramid STATIC
-    src/cuda_laplacian_pyramid.cu
-    include/cuda_laplacian_pyramid.cuh
-)
-set_target_properties(cuda_laplacian_pyramid PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-target_link_libraries(cuda_laplacian_pyramid 
-    cuda_pyramid 
-    cuda_color_conversion
-    cuda_butterworth
-    ${CUDA_LIBRARIES} 
-    ${OpenCV_LIBS}
 )
 
-# Gaussian processing library (NEW)
-add_library(cuda_gaussian_processing STATIC
-    src/cuda_gaussian_processing.cu
-    include/cuda_gaussian_processing.cuh
-)
-set_target_properties(cuda_gaussian_processing PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-target_link_libraries(cuda_gaussian_processing
-    cuda_pyramid 
-    cuda_color_conversion
-    ${CUDA_LIBRARIES}
-    ${CUFFT_LIBRARIES}
-    ${OpenCV_LIBS}
-)
-
-# EVM core library
-add_library(cuda_evm STATIC
-    src/cuda_evm.cu
-    include/cuda_evm.cuh
-)
+# Set CUDA properties
 set_target_properties(cuda_evm PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-target_link_libraries(cuda_evm 
-    cuda_laplacian_pyramid
-    cuda_gaussian_processing
-    cuda_pyramid 
-    cuda_color_conversion
-    cuda_butterworth
-    ${CUDA_LIBRARIES}
-    ${CUFFT_LIBRARIES}
-    ${OpenCV_LIBS}
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
 )
 
-# Add the main executable
-add_executable(evm_cuda src/main.cu)
-target_link_libraries(evm_cuda 
-    cuda_evm
-    cuda_laplacian_pyramid
-    cuda_gaussian_processing
-    cuda_pyramid 
-    cuda_color_conversion
-    cuda_butterworth
-    ${CUDA_LIBRARIES}
-    ${CUFFT_LIBRARIES}
-    ${OpenCV_LIBS}
+# Link libraries
+target_link_libraries(cuda_evm ${OpenCV_LIBS})
+
+# Add test executable
+add_executable(test_cuda_butterworth_simple
+    tests/test_cuda_butterworth_simple.cu
 )
 
-# Tests directory
-add_subdirectory(tests)
+# Link test with library
+target_link_libraries(test_cuda_butterworth_simple cuda_evm ${OpenCV_LIBS})
 
-# Install
-install(TARGETS evm_cuda DESTINATION bin)
+# Set CUDA properties for test
+set_target_properties(test_cuda_butterworth_simple PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
+)
+
+# Add pipeline comparison test
+add_executable(test_butterworth_pipeline_comparison
+    tests/test_butterworth_pipeline_comparison.cu
+    ../cpp/src/laplacian_pyramid.cpp
+    ../cpp/src/processing.cpp
+    ../cpp/src/color_conversion.cpp
+    ../cpp/src/butterworth.cpp
+    ../cpp/src/pyramid.cpp
+    ../cpp/src/gaussian_pyramid.cpp
+    ../cpp/src/temporal_filter.cpp
+)
+
+# Link pipeline test with libraries
+target_link_libraries(test_butterworth_pipeline_comparison cuda_evm ${OpenCV_LIBS})
+
+# Include CPU headers for the pipeline test
+target_include_directories(test_butterworth_pipeline_comparison PRIVATE ../cpp/include)
+
+# Set CUDA properties for pipeline test
+set_target_properties(test_butterworth_pipeline_comparison PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
+)
+
+# Add video comparison tool
+add_executable(compare_videos_frame_by_frame
+    tests/compare_videos_frame_by_frame.cu
+)
+
+# Link comparison tool with OpenCV
+target_link_libraries(compare_videos_frame_by_frame ${OpenCV_LIBS})
+
+# Set CUDA properties for comparison tool
+set_target_properties(compare_videos_frame_by_frame PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
+)

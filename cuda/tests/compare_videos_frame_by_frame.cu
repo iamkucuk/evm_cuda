@@ -1,29 +1,32 @@
 #include <iostream>
 #include <vector>
-#include <string>
-#include <fstream>
-#include <iomanip>
+#include <cmath>
 #include <opencv2/opencv.hpp>
-#include <opencv2/imgproc.hpp>
+#include <iomanip>
 
-// Function to calculate PSNR between two images
 double calculatePSNR(const cv::Mat& img1, const cv::Mat& img2) {
     cv::Mat diff;
     cv::absdiff(img1, img2, diff);
+    
+    // Convert to float for calculation
     diff.convertTo(diff, CV_32F);
+    
+    // Square the differences
     diff = diff.mul(diff);
     
-    cv::Scalar mse = cv::mean(diff);
-    double mse_avg = (mse[0] + mse[1] + mse[2]) / 3.0;
+    // Calculate mean squared error
+    cv::Scalar mse_scalar = cv::mean(diff);
+    double mse = (mse_scalar[0] + mse_scalar[1] + mse_scalar[2]) / 3.0; // Average across channels
     
-    if (mse_avg < 1e-10) {
+    if (mse < 1e-10) {
         return 100.0; // Perfect match
     }
     
-    return 20.0 * log10(255.0 / sqrt(mse_avg));
+    double max_pixel_value = 255.0;
+    double psnr = 20.0 * std::log10(max_pixel_value / std::sqrt(mse));
+    return psnr;
 }
 
-// Function to calculate SSIM between two images
 double calculateSSIM(const cv::Mat& img1, const cv::Mat& img2) {
     const double C1 = 6.5025, C2 = 58.5225;
     
@@ -31,8 +34,8 @@ double calculateSSIM(const cv::Mat& img1, const cv::Mat& img2) {
     img1.convertTo(I1, CV_32F);
     img2.convertTo(I2, CV_32F);
     
-    cv::Mat I2_2 = I2.mul(I2);
     cv::Mat I1_2 = I1.mul(I1);
+    cv::Mat I2_2 = I2.mul(I2);
     cv::Mat I1_I2 = I1.mul(I2);
     
     cv::Mat mu1, mu2;
@@ -54,6 +57,7 @@ double calculateSSIM(const cv::Mat& img1, const cv::Mat& img2) {
     sigma12 -= mu1_mu2;
     
     cv::Mat t1, t2, t3;
+    
     t1 = 2 * mu1_mu2 + C1;
     t2 = 2 * sigma12 + C2;
     t3 = t1.mul(t2);
@@ -66,185 +70,154 @@ double calculateSSIM(const cv::Mat& img1, const cv::Mat& img2) {
     cv::divide(t3, t1, ssim_map);
     
     cv::Scalar mssim = cv::mean(ssim_map);
-    return (mssim[0] + mssim[1] + mssim[2]) / 3.0;
+    double ssim = (mssim[0] + mssim[1] + mssim[2]) / 3.0;
+    
+    return ssim;
 }
 
-struct FrameMetrics {
-    int frame_number;
-    double psnr;
-    double ssim;
-    double max_pixel_diff;
-    double mean_pixel_diff;
-};
-
-bool compareVideos(const std::string& video1_path, const std::string& video2_path, 
-                  const std::string& output_csv = "") {
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <video1> <video2>" << std::endl;
+        return -1;
+    }
+    
+    std::string video1_path = argv[1];
+    std::string video2_path = argv[2];
+    
+    std::cout << "=== Video Comparison Tool ===" << std::endl;
+    std::cout << "Video 1 (CPU): " << video1_path << std::endl;
+    std::cout << "Video 2 (CUDA): " << video2_path << std::endl;
+    
+    // Open video files
     cv::VideoCapture cap1(video1_path);
     cv::VideoCapture cap2(video2_path);
     
     if (!cap1.isOpened()) {
         std::cerr << "Error: Cannot open video 1: " << video1_path << std::endl;
-        return false;
+        return -1;
     }
     
     if (!cap2.isOpened()) {
         std::cerr << "Error: Cannot open video 2: " << video2_path << std::endl;
-        return false;
+        return -1;
     }
     
     // Get video properties
-    int frame_count1 = static_cast<int>(cap1.get(cv::CAP_PROP_FRAME_COUNT));
-    int frame_count2 = static_cast<int>(cap2.get(cv::CAP_PROP_FRAME_COUNT));
+    int frame_count1 = (int)cap1.get(cv::CAP_PROP_FRAME_COUNT);
+    int frame_count2 = (int)cap2.get(cv::CAP_PROP_FRAME_COUNT);
     double fps1 = cap1.get(cv::CAP_PROP_FPS);
     double fps2 = cap2.get(cv::CAP_PROP_FPS);
     
-    std::cout << "Video 1: " << frame_count1 << " frames @ " << fps1 << " FPS" << std::endl;
-    std::cout << "Video 2: " << frame_count2 << " frames @ " << fps2 << " FPS" << std::endl;
+    std::cout << "Video 1: " << frame_count1 << " frames at " << fps1 << " FPS" << std::endl;
+    std::cout << "Video 2: " << frame_count2 << " frames at " << fps2 << " FPS" << std::endl;
     
     if (frame_count1 != frame_count2) {
-        std::cerr << "Warning: Videos have different frame counts!" << std::endl;
+        std::cout << "Warning: Videos have different frame counts!" << std::endl;
     }
     
-    std::vector<FrameMetrics> metrics;
-    std::ofstream csv_file;
+    int num_frames = std::min(frame_count1, frame_count2);
+    std::cout << "Comparing " << num_frames << " frames..." << std::endl;
     
-    if (!output_csv.empty()) {
-        csv_file.open(output_csv);
-        csv_file << "Frame,PSNR,SSIM,MaxPixelDiff,MeanPixelDiff" << std::endl;
-    }
+    // Statistics
+    std::vector<double> psnr_values;
+    std::vector<double> ssim_values;
+    double total_psnr = 0.0;
+    double total_ssim = 0.0;
+    int valid_frames = 0;
     
     cv::Mat frame1, frame2;
-    int frame_num = 0;
     
-    double total_psnr = 0.0, total_ssim = 0.0;
-    double min_psnr = 100.0, max_psnr = 0.0;
-    double min_ssim = 1.0, max_ssim = 0.0;
-    
-    std::cout << "\nFrame-by-frame comparison:" << std::endl;
-    std::cout << "Frame\tPSNR\t\tSSIM\t\tMax Diff\tMean Diff" << std::endl;
-    std::cout << "-----\t----\t\t----\t\t--------\t---------" << std::endl;
-    
-    while (cap1.read(frame1) && cap2.read(frame2)) {
-        // Ensure frames have the same size
-        if (frame1.size() != frame2.size()) {
-            std::cerr << "Error: Frame " << frame_num << " has different sizes!" << std::endl;
-            break;
+    for (int i = 0; i < num_frames; ++i) {
+        bool ret1 = cap1.read(frame1);
+        bool ret2 = cap2.read(frame2);
+        
+        if (!ret1 || !ret2 || frame1.empty() || frame2.empty()) {
+            std::cout << "Warning: Could not read frame " << i << std::endl;
+            continue;
         }
         
-        // Calculate metrics
+        // Ensure frames have the same size
+        if (frame1.size() != frame2.size()) {
+            std::cout << "Warning: Frame " << i << " has different sizes. Resizing..." << std::endl;
+            cv::resize(frame2, frame2, frame1.size());
+        }
+        
+        // Ensure frames have the same type
+        if (frame1.type() != frame2.type()) {
+            frame2.convertTo(frame2, frame1.type());
+        }
+        
+        // Calculate PSNR and SSIM
         double psnr = calculatePSNR(frame1, frame2);
         double ssim = calculateSSIM(frame1, frame2);
         
-        // Calculate pixel differences
-        cv::Mat diff;
-        cv::absdiff(frame1, frame2, diff);
-        double min_diff, max_diff;
-        cv::minMaxLoc(diff, &min_diff, &max_diff);
-        cv::Scalar mean_diff = cv::mean(diff);
-        double mean_diff_avg = (mean_diff[0] + mean_diff[1] + mean_diff[2]) / 3.0;
-        
-        FrameMetrics fm;
-        fm.frame_number = frame_num;
-        fm.psnr = psnr;
-        fm.ssim = ssim;
-        fm.max_pixel_diff = max_diff;
-        fm.mean_pixel_diff = mean_diff_avg;
-        metrics.push_back(fm);
-        
-        // Update statistics
+        psnr_values.push_back(psnr);
+        ssim_values.push_back(ssim);
         total_psnr += psnr;
         total_ssim += ssim;
-        if (psnr < min_psnr) min_psnr = psnr;
-        if (psnr > max_psnr) max_psnr = psnr;
-        if (ssim < min_ssim) min_ssim = ssim;
-        if (ssim > max_ssim) max_ssim = ssim;
+        valid_frames++;
         
-        // Print every 10th frame or first/last frames
-        if (frame_num % 10 == 0 || frame_num < 5 || frame_num == frame_count1 - 1) {
-            std::cout << std::fixed << std::setprecision(2);
-            std::cout << frame_num << "\t" << psnr << "\t\t" << ssim 
-                      << "\t\t" << max_diff << "\t\t" << mean_diff_avg << std::endl;
-        }
-        
-        // Write to CSV
-        if (csv_file.is_open()) {
-            csv_file << frame_num << "," << psnr << "," << ssim 
-                     << "," << max_diff << "," << mean_diff_avg << std::endl;
-        }
-        
-        frame_num++;
-        
-        // Limit output for very long videos
-        if (frame_num >= 300) {  // Process max 300 frames for analysis
-            std::cout << "... (processing limited to 300 frames)" << std::endl;
-            break;
+        if (i % 50 == 0) {
+            std::cout << "Frame " << i << ": PSNR = " << std::fixed << std::setprecision(2) 
+                      << psnr << " dB, SSIM = " << std::setprecision(4) << ssim << std::endl;
         }
     }
     
-    if (csv_file.is_open()) {
-        csv_file.close();
+    cap1.release();
+    cap2.release();
+    
+    if (valid_frames == 0) {
+        std::cerr << "Error: No valid frames found for comparison!" << std::endl;
+        return -1;
     }
     
-    // Print summary statistics
-    int total_frames = metrics.size();
-    double avg_psnr = total_psnr / total_frames;
-    double avg_ssim = total_ssim / total_frames;
+    // Calculate statistics
+    double avg_psnr = total_psnr / valid_frames;
+    double avg_ssim = total_ssim / valid_frames;
     
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "COMPARISON SUMMARY" << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
-    std::cout << "Total frames compared: " << total_frames << std::endl;
-    std::cout << std::fixed << std::setprecision(4);
-    std::cout << "Average PSNR: " << avg_psnr << " dB" << std::endl;
+    // Calculate standard deviations
+    double psnr_variance = 0.0;
+    double ssim_variance = 0.0;
+    for (int i = 0; i < valid_frames; ++i) {
+        psnr_variance += (psnr_values[i] - avg_psnr) * (psnr_values[i] - avg_psnr);
+        ssim_variance += (ssim_values[i] - avg_ssim) * (ssim_values[i] - avg_ssim);
+    }
+    double psnr_std = std::sqrt(psnr_variance / valid_frames);
+    double ssim_std = std::sqrt(ssim_variance / valid_frames);
+    
+    // Find min and max
+    double min_psnr = *std::min_element(psnr_values.begin(), psnr_values.end());
+    double max_psnr = *std::max_element(psnr_values.begin(), psnr_values.end());
+    double min_ssim = *std::min_element(ssim_values.begin(), ssim_values.end());
+    double max_ssim = *std::max_element(ssim_values.begin(), ssim_values.end());
+    
+    std::cout << "\n=== COMPARISON RESULTS ===" << std::endl;
+    std::cout << "Valid frames compared: " << valid_frames << std::endl;
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Average PSNR: " << avg_psnr << " dB (±" << psnr_std << " dB)" << std::endl;
     std::cout << "PSNR range: " << min_psnr << " - " << max_psnr << " dB" << std::endl;
-    std::cout << "Average SSIM: " << avg_ssim << std::endl;
+    std::cout << std::fixed << std::setprecision(4);
+    std::cout << "Average SSIM: " << avg_ssim << " (±" << ssim_std << ")" << std::endl;
     std::cout << "SSIM range: " << min_ssim << " - " << max_ssim << std::endl;
     
-    // Interpretation
-    std::cout << "\nINTERPRETATION:" << std::endl;
-    if (avg_psnr > 40) {
-        std::cout << "• PSNR > 40 dB: Excellent quality, very similar videos" << std::endl;
-    } else if (avg_psnr > 30) {
-        std::cout << "• PSNR 30-40 dB: Good quality, noticeable but acceptable differences" << std::endl;
-    } else if (avg_psnr > 20) {
-        std::cout << "• PSNR 20-30 dB: Fair quality, significant differences" << std::endl;
+    std::cout << "\n=== QUALITY ASSESSMENT ===" << std::endl;
+    if (avg_psnr > 30.0) {
+        std::cout << "✅ EXCELLENT: PSNR > 30 dB - CUDA Butterworth matches CPU implementation very well!" << std::endl;
+    } else if (avg_psnr > 25.0) {
+        std::cout << "✅ GOOD: PSNR > 25 dB - CUDA Butterworth matches CPU implementation acceptably" << std::endl;
+    } else if (avg_psnr > 20.0) {
+        std::cout << "⚠️  FAIR: PSNR > 20 dB - Some differences exist" << std::endl;
     } else {
-        std::cout << "• PSNR < 20 dB: Poor quality, major differences" << std::endl;
+        std::cout << "❌ POOR: PSNR < 20 dB - Significant differences detected" << std::endl;
     }
     
-    if (avg_ssim > 0.95) {
-        std::cout << "• SSIM > 0.95: Excellent structural similarity" << std::endl;
+    if (avg_ssim > 0.9) {
+        std::cout << "✅ EXCELLENT structural similarity (SSIM > 0.9)" << std::endl;
     } else if (avg_ssim > 0.8) {
-        std::cout << "• SSIM 0.8-0.95: Good structural similarity" << std::endl;
-    } else if (avg_ssim > 0.6) {
-        std::cout << "• SSIM 0.6-0.8: Fair structural similarity" << std::endl;
+        std::cout << "✅ GOOD structural similarity (SSIM > 0.8)" << std::endl;
     } else {
-        std::cout << "• SSIM < 0.6: Poor structural similarity" << std::endl;
+        std::cout << "⚠️  FAIR structural similarity (SSIM < 0.8)" << std::endl;
     }
     
-    return true;
-}
-
-int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cout << "Usage: " << argv[0] << " <video1_path> <video2_path> [output_csv]" << std::endl;
-        std::cout << "Example: " << argv[0] << " cpu_output.mp4 cuda_output.mp4 comparison.csv" << std::endl;
-        return 1;
-    }
-    
-    std::string video1_path = argv[1];
-    std::string video2_path = argv[2];
-    std::string output_csv = (argc > 3) ? argv[3] : "";
-    
-    std::cout << "Frame-by-Frame Video Comparison Tool" << std::endl;
-    std::cout << "Video 1 (CPU): " << video1_path << std::endl;
-    std::cout << "Video 2 (CUDA): " << video2_path << std::endl;
-    if (!output_csv.empty()) {
-        std::cout << "CSV output: " << output_csv << std::endl;
-    }
-    std::cout << std::string(60, '=') << std::endl;
-    
-    bool success = compareVideos(video1_path, video2_path, output_csv);
-    
-    return success ? 0 : 1;
+    return 0;
 }
