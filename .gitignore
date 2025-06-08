@@ -31,3 +31,4 @@ test-results.xml
 *.exe
 *.out
 *.log
+alembic.ini
