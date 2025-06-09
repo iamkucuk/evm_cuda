@@ -4,31 +4,106 @@
 /cpp/evmcpp/build/
 /cpp/build/
 /cpp/Testing/
+/cuda/build/
 
-cuda/build
+# CMake Generated Files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Compiled Binaries and Object Files
+*.o
+*.obj
+*.exe
+*.out
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# CUDA Compiled Outputs
+/cuda/test_*
+/cuda/compare_videos_frame_by_frame
+/cuda/debug_*
+!/cuda/test_*.cu
+!/cuda/compare_videos_frame_by_frame.cpp
+
+# Video Output Files (Generated Results)
+*.avi
+*.mp4
+*.mov
+*.mkv
+*.webm
+!/data/*.mp4
+!/data/*.avi
+
+# Image Output Files
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tiff
+
+# Log Files
+*.log
+test-results.xml
+
+# Analysis/Measurement Output Files
+*_analysis.txt
+*_psnr_*.txt
+*_comparison.txt
+!/cpp/tests/data/*.txt
 
 # Python Cache
 /python/src/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+__pycache__/
 
 # Python Output/Results
 /python/evmpy_output/
 /python/results/
 
-# Test Results
-test-results.xml
-
 # IDE/Editor specific
 .vscode/
+.idea/
 *.swp
 *~
+.DS_Store
+Thumbs.db
 
-# Other build artifacts and outputs
-/cpp/evmcpp/tests/data/
-/output_*.avi
-*.o
-*.obj
-*.exe
-*.out
-*.log
+# Temporary and Backup Files
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# Alembic (Database Migration)
 alembic.ini
+
+# Conda/Virtual Environment
+.conda/
+.env
+.venv/
+env/
+venv/
+
+# System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Documentation Build Artifacts (if using Sphinx/similar)
+docs/_build/
+docs/build/
+
+# Package Manager Files (if any)
+node_modules/
+package-lock.json
+yarn.lock

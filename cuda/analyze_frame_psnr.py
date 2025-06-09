@@ -22,7 +22,7 @@ def calculate_psnr(img1, img2):
     mse = np.mean((img1 - img2) ** 2)
     
     if mse == 0:
-        return float('inf')  # Perfect match
+        return 100.0  # Use 100 dB instead of inf for perfect match
     
     # Calculate PSNR
     max_pixel_value = 255.0

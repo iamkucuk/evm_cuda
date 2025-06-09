@@ -2,110 +2,110 @@ Frame-by-Frame PSNR Analysis: CPU vs CUDA Butterworth
 ============================================================
 
 Total Frames: 301
-Average PSNR: 38.05 dB
-Minimum PSNR: 5.40 dB (Frame 5)
-Maximum PSNR: 42.66 dB
-Standard Deviation: 9.49 dB
+Average PSNR: 41.81 dB
+Minimum PSNR: 39.23 dB (Frame 128)
+Maximum PSNR: 100.00 dB
+Standard Deviation: 3.45 dB
 
 Top 10 Lowest PSNR Frames:
-   1. Frame   5: 5.40 dB (t=0.17s)
-   2. Frame   4: 5.41 dB (t=0.13s)
-   3. Frame   6: 5.45 dB (t=0.20s)
-   4. Frame   3: 5.57 dB (t=0.10s)
-   5. Frame   7: 5.58 dB (t=0.23s)
-   6. Frame   8: 5.75 dB (t=0.27s)
-   7. Frame   2: 5.99 dB (t=0.07s)
-   8. Frame   9: 6.00 dB (t=0.30s)
-   9. Frame  10: 6.28 dB (t=0.33s)
-  10. Frame  11: 6.61 dB (t=0.37s)
+   1. Frame 128: 39.23 dB (t=4.27s)
+   2. Frame 130: 39.23 dB (t=4.33s)
+   3. Frame 129: 39.30 dB (t=4.30s)
+   4. Frame 131: 39.32 dB (t=4.37s)
+   5. Frame 127: 39.36 dB (t=4.23s)
+   6. Frame 132: 39.65 dB (t=4.40s)
+   7. Frame 126: 39.71 dB (t=4.20s)
+   8. Frame 133: 39.97 dB (t=4.43s)
+   9. Frame 227: 40.17 dB (t=7.57s)
+  10. Frame 125: 40.18 dB (t=4.17s)
 
 All Frame PSNR Values:
-Frame   0: 23.02 dB
-Frame   1: 7.11 dB
-Frame   2: 5.99 dB
-Frame   3: 5.57 dB
-Frame   4: 5.41 dB
-Frame   5: 5.40 dB
-Frame   6: 5.45 dB
-Frame   7: 5.58 dB
-Frame   8: 5.75 dB
-Frame   9: 6.00 dB
-Frame  10: 6.28 dB
-Frame  11: 6.61 dB
-Frame  12: 6.99 dB
-Frame  13: 7.43 dB
-Frame  14: 7.90 dB
-Frame  15: 8.46 dB
-Frame  16: 9.09 dB
-Frame  17: 9.83 dB
-Frame  18: 10.59 dB
-Frame  19: 11.42 dB
-Frame  20: 12.30 dB
-Frame  21: 13.25 dB
-Frame  22: 14.21 dB
-Frame  23: 15.24 dB
-Frame  24: 16.31 dB
-Frame  25: 17.41 dB
-Frame  26: 18.51 dB
-Frame  27: 19.68 dB
-Frame  28: 20.92 dB
-Frame  29: 22.16 dB
-Frame  30: 23.38 dB
-Frame  31: 24.65 dB
-Frame  32: 26.02 dB
-Frame  33: 27.43 dB
-Frame  34: 28.76 dB
-Frame  35: 30.09 dB
-Frame  36: 31.53 dB
-Frame  37: 32.88 dB
-Frame  38: 34.06 dB
-Frame  39: 35.21 dB
-Frame  40: 36.46 dB
-Frame  41: 37.53 dB
-Frame  42: 38.30 dB
-Frame  43: 38.85 dB
-Frame  44: 39.52 dB
-Frame  45: 39.82 dB
-Frame  46: 39.89 dB
-Frame  47: 39.96 dB
-Frame  48: 40.04 dB
-Frame  49: 40.27 dB
-Frame  50: 40.34 dB
-Frame  51: 40.51 dB
-Frame  52: 40.85 dB
-Frame  53: 41.16 dB
-Frame  54: 41.44 dB
-Frame  55: 41.60 dB
-Frame  56: 41.93 dB
-Frame  57: 42.12 dB
-Frame  58: 42.16 dB
-Frame  59: 42.18 dB
-Frame  60: 42.15 dB
-Frame  61: 42.29 dB
-Frame  62: 42.13 dB
-Frame  63: 41.76 dB
-Frame  64: 41.58 dB
-Frame  65: 41.40 dB
-Frame  66: 41.32 dB
-Frame  67: 41.38 dB
-Frame  68: 41.57 dB
-Frame  69: 41.56 dB
-Frame  70: 41.40 dB
-Frame  71: 41.21 dB
+Frame   0: 100.00 dB
+Frame   1: 47.10 dB
+Frame   2: 44.89 dB
+Frame   3: 44.07 dB
+Frame   4: 43.66 dB
+Frame   5: 43.30 dB
+Frame   6: 42.73 dB
+Frame   7: 42.37 dB
+Frame   8: 42.25 dB
+Frame   9: 42.06 dB
+Frame  10: 41.86 dB
+Frame  11: 41.61 dB
+Frame  12: 41.61 dB
+Frame  13: 41.60 dB
+Frame  14: 41.40 dB
+Frame  15: 41.17 dB
+Frame  16: 40.93 dB
+Frame  17: 40.74 dB
+Frame  18: 40.52 dB
+Frame  19: 40.58 dB
+Frame  20: 40.62 dB
+Frame  21: 40.88 dB
+Frame  22: 40.94 dB
+Frame  23: 41.00 dB
+Frame  24: 41.19 dB
+Frame  25: 41.32 dB
+Frame  26: 41.08 dB
+Frame  27: 41.16 dB
+Frame  28: 41.22 dB
+Frame  29: 41.42 dB
+Frame  30: 41.47 dB
+Frame  31: 41.78 dB
+Frame  32: 42.14 dB
+Frame  33: 42.37 dB
+Frame  34: 42.40 dB
+Frame  35: 42.22 dB
+Frame  36: 41.92 dB
+Frame  37: 41.68 dB
+Frame  38: 41.49 dB
+Frame  39: 41.28 dB
+Frame  40: 41.04 dB
+Frame  41: 40.97 dB
+Frame  42: 40.99 dB
+Frame  43: 40.89 dB
+Frame  44: 40.82 dB
+Frame  45: 40.97 dB
+Frame  46: 41.02 dB
+Frame  47: 40.92 dB
+Frame  48: 40.84 dB
+Frame  49: 40.78 dB
+Frame  50: 40.81 dB
+Frame  51: 40.89 dB
+Frame  52: 41.10 dB
+Frame  53: 41.36 dB
+Frame  54: 41.68 dB
+Frame  55: 41.85 dB
+Frame  56: 42.13 dB
+Frame  57: 42.26 dB
+Frame  58: 42.35 dB
+Frame  59: 42.30 dB
+Frame  60: 42.26 dB
+Frame  61: 42.40 dB
+Frame  62: 42.26 dB
+Frame  63: 41.89 dB
+Frame  64: 41.66 dB
+Frame  65: 41.46 dB
+Frame  66: 41.37 dB
+Frame  67: 41.40 dB
+Frame  68: 41.60 dB
+Frame  69: 41.58 dB
+Frame  70: 41.39 dB
+Frame  71: 41.19 dB
 Frame  72: 40.92 dB
 Frame  73: 40.92 dB
-Frame  74: 40.95 dB
-Frame  75: 40.92 dB
+Frame  74: 40.94 dB
+Frame  75: 40.91 dB
 Frame  76: 40.99 dB
 Frame  77: 40.98 dB
 Frame  78: 41.06 dB
-Frame  79: 41.02 dB
-Frame  80: 41.06 dB
-Frame  81: 41.19 dB
+Frame  79: 41.03 dB
+Frame  80: 41.07 dB
+Frame  81: 41.20 dB
 Frame  82: 41.47 dB
 Frame  83: 41.84 dB
 Frame  84: 41.93 dB
-Frame  85: 42.11 dB
+Frame  85: 42.10 dB
 Frame  86: 42.36 dB
 Frame  87: 42.29 dB
 Frame  88: 42.32 dB
@@ -117,12 +117,12 @@ Frame  93: 41.95 dB
 Frame  94: 41.57 dB
 Frame  95: 41.28 dB
 Frame  96: 41.10 dB
-Frame  97: 41.00 dB
+Frame  97: 41.01 dB
 Frame  98: 40.91 dB
 Frame  99: 40.89 dB
 Frame 100: 41.17 dB
 Frame 101: 41.44 dB
-Frame 102: 41.48 dB
+Frame 102: 41.47 dB
 Frame 103: 41.38 dB
 Frame 104: 41.11 dB
 Frame 105: 40.93 dB
@@ -131,7 +131,7 @@ Frame 107: 40.82 dB
 Frame 108: 40.54 dB
 Frame 109: 40.59 dB
 Frame 110: 40.59 dB
-Frame 111: 40.65 dB
+Frame 111: 40.64 dB
 Frame 112: 40.77 dB
 Frame 113: 41.01 dB
 Frame 114: 41.45 dB
@@ -149,7 +149,7 @@ Frame 125: 40.18 dB
 Frame 126: 39.71 dB
 Frame 127: 39.36 dB
 Frame 128: 39.23 dB
-Frame 129: 39.29 dB
+Frame 129: 39.30 dB
 Frame 130: 39.23 dB
 Frame 131: 39.32 dB
 Frame 132: 39.65 dB
