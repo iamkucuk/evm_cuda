@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Frame-by-frame PSNR analysis between CPU and CUDA Butterworth videos
+Frame-by-frame PSNR analysis between CPU full and CUDA Gaussian + CPU rest hybrid videos
 """
 
 import cv2
@@ -54,20 +54,20 @@ def load_video_frames(video_path):
     
     return frames, fps
 
-def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
+def analyze_frame_psnr(cpu_video_path, hybrid_video_path, output_dir="./"):
     """Analyze frame-by-frame PSNR and create plots"""
     
     # Load videos
     print("=== Loading Videos ===")
     cpu_frames, cpu_fps = load_video_frames(cpu_video_path)
-    cuda_frames, cuda_fps = load_video_frames(cuda_video_path)
+    hybrid_frames, hybrid_fps = load_video_frames(hybrid_video_path)
     
     # Verify frame counts match
-    if len(cpu_frames) != len(cuda_frames):
-        print(f"Warning: Frame count mismatch - CPU: {len(cpu_frames)}, CUDA: {len(cuda_frames)}")
-        min_frames = min(len(cpu_frames), len(cuda_frames))
+    if len(cpu_frames) != len(hybrid_frames):
+        print(f"Warning: Frame count mismatch - CPU: {len(cpu_frames)}, Hybrid: {len(hybrid_frames)}")
+        min_frames = min(len(cpu_frames), len(hybrid_frames))
         cpu_frames = cpu_frames[:min_frames]
-        cuda_frames = cuda_frames[:min_frames]
+        hybrid_frames = hybrid_frames[:min_frames]
         print(f"Using first {min_frames} frames for comparison")
     
     # Calculate PSNR for each frame
@@ -78,14 +78,14 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
     for i in range(num_frames):
         # Ensure frames have same size and type
         cpu_frame = cpu_frames[i]
-        cuda_frame = cuda_frames[i]
+        hybrid_frame = hybrid_frames[i]
         
-        if cpu_frame.shape != cuda_frame.shape:
-            print(f"Frame {i}: Size mismatch, resizing CUDA frame to match CPU")
-            cuda_frame = cv2.resize(cuda_frame, (cpu_frame.shape[1], cpu_frame.shape[0]))
+        if cpu_frame.shape != hybrid_frame.shape:
+            print(f"Frame {i}: Size mismatch, resizing Hybrid frame to match CPU")
+            hybrid_frame = cv2.resize(hybrid_frame, (cpu_frame.shape[1], cpu_frame.shape[0]))
         
         # Calculate PSNR
-        psnr = calculate_psnr(cpu_frame, cuda_frame)
+        psnr = calculate_psnr(cpu_frame, hybrid_frame)
         frame_psnrs.append(psnr)
         
         if i % 50 == 0:
@@ -113,7 +113,7 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
     # Create plots
     plt.style.use('default')
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('Frame-by-Frame PSNR Analysis: CPU vs CUDA Butterworth', fontsize=16)
+    fig.suptitle('Frame-by-Frame PSNR Analysis: CPU Full vs CUDA Gaussian + CPU Rest', fontsize=16)
     
     # Plot 1: PSNR vs Frame Number
     axes[0, 0].plot(frame_psnrs, 'b-', linewidth=1, alpha=0.7)
@@ -167,22 +167,12 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
     plt.tight_layout()
     
     # Save plot
-    plot_path = os.path.join(output_dir, 'frame_psnr_analysis.png')
+    plot_path = os.path.join(output_dir, 'cpu_vs_hybrid_psnr_analysis.png')
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     print(f"\nPlot saved to: {plot_path}")
     
     # Save detailed frame analysis for lowest PSNR frames
     print(f"\n=== Detailed Analysis of Lowest PSNR Frames ===")
-    
-    # Find frames with PSNR below certain thresholds
-    low_psnr_frames = []
-    thresholds = [25, 30, 35]
-    
-    for threshold in thresholds:
-        below_threshold = np.where(frame_psnrs < threshold)[0]
-        if len(below_threshold) > 0:
-            low_psnr_frames.extend(below_threshold)
-            print(f"Frames below {threshold} dB: {len(below_threshold)} frames")
     
     # Get top 10 lowest PSNR frames
     lowest_indices = np.argsort(frame_psnrs)[:10]
@@ -192,10 +182,10 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
         print(f"  {i+1:2d}. Frame {frame_idx:3d}: {frame_psnrs[frame_idx]:.2f} dB (t={time_axis[frame_idx]:.2f}s)")
     
     # Save frame analysis to text file
-    analysis_path = os.path.join(output_dir, 'frame_psnr_analysis.txt')
+    analysis_path = os.path.join(output_dir, 'cpu_vs_hybrid_psnr_analysis.txt')
     with open(analysis_path, 'w') as f:
-        f.write("Frame-by-Frame PSNR Analysis: CPU vs CUDA Butterworth\n")
-        f.write("=" * 60 + "\n\n")
+        f.write("Frame-by-Frame PSNR Analysis: CPU Full vs CUDA Gaussian + CPU Rest\n")
+        f.write("=" * 70 + "\n\n")
         f.write(f"Total Frames: {num_frames}\n")
         f.write(f"Average PSNR: {avg_psnr:.2f} dB\n")
         f.write(f"Minimum PSNR: {min_psnr:.2f} dB (Frame {min_frame_idx})\n")
@@ -219,24 +209,24 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
 
 def main():
     # Define video paths
-    cpu_video = "../cpp/build/cpu_gaussian_exact_reference.avi"
-    cuda_video = "cuda_gaussian_full_output.avi"
+    cpu_video = "../cpp/build/cpu_full_face_output.mp4"
+    hybrid_video = "cuda_gaussian_cpu_hybrid_output.avi"
     
     # Check if videos exist
     if not os.path.exists(cpu_video):
         print(f"Error: CPU video not found at {cpu_video}")
         return 1
     
-    if not os.path.exists(cuda_video):
-        print(f"Error: CUDA video not found at {cuda_video}")
+    if not os.path.exists(hybrid_video):
+        print(f"Error: Hybrid video not found at {hybrid_video}")
         return 1
     
     print("=== Frame-by-Frame PSNR Analysis ===")
-    print(f"CPU Video: {cpu_video}")
-    print(f"CUDA Video: {cuda_video}")
+    print(f"CPU Full Video: {cpu_video}")
+    print(f"CUDA Gaussian + CPU Rest Video: {hybrid_video}")
     
     try:
-        frame_psnrs, min_frame_idx, min_psnr = analyze_frame_psnr(cpu_video, cuda_video)
+        frame_psnrs, min_frame_idx, min_psnr = analyze_frame_psnr(cpu_video, hybrid_video)
         
         print(f"\n=== Analysis Complete ===")
         print(f"Lowest PSNR occurs at Frame {min_frame_idx} with {min_psnr:.2f} dB")

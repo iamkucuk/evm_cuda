@@ -47,6 +47,46 @@ set_target_properties(compare_videos_frame_by_frame PROPERTIES
     CUDA_ARCHITECTURES "50;60;70;75"
 )
 
+# Add CUDA Gaussian Hybrid test
+add_executable(test_cuda_gaussian_hybrid
+    test_cuda_gaussian_hybrid.cu
+    ${CMAKE_SOURCE_DIR}/../cpp/src/gaussian_pyramid.cpp
+    ${CMAKE_SOURCE_DIR}/../cpp/src/processing.cpp
+    ${CMAKE_SOURCE_DIR}/../cpp/src/color_conversion.cpp
+    ${CMAKE_SOURCE_DIR}/../cpp/src/pyramid.cpp
+    ${CMAKE_SOURCE_DIR}/../cpp/src/butterworth.cpp
+    ${CMAKE_SOURCE_DIR}/../cpp/src/temporal_filter.cpp
+)
+
+target_include_directories(test_cuda_gaussian_hybrid PRIVATE
+    ${CMAKE_SOURCE_DIR}/../cpp/include
+)
+
+target_link_libraries(test_cuda_gaussian_hybrid 
+    cuda_evm
+    ${OpenCV_LIBS}
+)
+
+set_target_properties(test_cuda_gaussian_hybrid PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
+)
+
+# Add CUDA Gaussian Full test
+add_executable(test_cuda_gaussian_full
+    test_cuda_gaussian_full.cu
+)
+
+target_link_libraries(test_cuda_gaussian_full 
+    cuda_evm
+    ${OpenCV_LIBS}
+)
+
+set_target_properties(test_cuda_gaussian_full PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
+)
+
 # Add CUDA Butterworth + CPU rest test (FIXED approach)
 add_executable(test_cuda_butter_cpu_rest_fixed
     test_cuda_butter_cpu_rest_fixed.cu

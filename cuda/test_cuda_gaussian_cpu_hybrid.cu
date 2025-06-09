@@ -1,3 +1,8 @@
+// NOTE: This test file is disabled due to NO_OPENCV constraint enforcement
+// The spatially_filter_gaussian_wrapper() function has been removed
+// Use pure CUDA functions with float* arrays instead
+
+/*
 #include "cuda_gaussian_pyramid.cuh"
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
@@ -173,4 +178,12 @@ int main() {
     }
     
     return 0;
+}
+*/
+
+int main() {
+    std::cout << "❌ TEST DISABLED: This test requires OpenCV wrapper functions that have been removed" << std::endl;
+    std::cout << "   Due to NO_OPENCV constraint enforcement, use pure CUDA functions instead" << std::endl;
+    std::cout << "   For video processing, use process_video_gaussian_gpu() directly" << std::endl;
+    return -1;
 }

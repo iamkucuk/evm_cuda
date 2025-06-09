@@ -3,8 +3,6 @@
 
 #include <cuda_runtime.h>
 #include <cufft.h>
-#include <opencv2/opencv.hpp>
-#include <vector>
 
 namespace cuda_evm {
 
@@ -37,11 +35,9 @@ cudaError_t spatially_filter_gaussian_gpu(
  * @param height Image height
  * @param channels Number of channels (3 for YIQ)
  * @param num_frames Number of frames in batch
- * @param fps Frames per second
  * @param fl Low cutoff frequency (Hz)
  * @param fh High cutoff frequency (Hz)
- * @param alpha Amplification factor
- * @param chrom_attenuation Chrominance attenuation factor
+ * @param fps Frames per second
  * @return cudaError_t error code
  */
 cudaError_t temporal_filter_gaussian_batch_gpu(
@@ -51,11 +47,9 @@ cudaError_t temporal_filter_gaussian_batch_gpu(
     int height,
     int channels,
     int num_frames,
-    float fps,
     float fl,
     float fh,
-    float alpha,
-    float chrom_attenuation
+    float fps
 );
 
 /**
@@ -67,6 +61,8 @@ cudaError_t temporal_filter_gaussian_batch_gpu(
  * @param width Image width
  * @param height Image height
  * @param channels Number of channels (3)
+ * @param alpha Amplification factor
+ * @param chrom_attenuation Chrominance attenuation factor
  * @return cudaError_t error code
  */
 cudaError_t reconstruct_gaussian_frame_gpu(
@@ -75,45 +71,13 @@ cudaError_t reconstruct_gaussian_frame_gpu(
     float* d_output_rgb,
     int width,
     int height,
-    int channels
-);
-
-/**
- * @brief Process video using CUDA Gaussian pyramid method
- * Complete end-to-end GPU implementation equivalent to CPU processVideoGaussianBatch
- * @param input_filename Input video file path
- * @param output_filename Output video file path
- * @param levels Number of pyramid levels
- * @param alpha Amplification factor
- * @param fl Low cutoff frequency (Hz)
- * @param fh High cutoff frequency (Hz)
- * @param chrom_attenuation Chrominance attenuation factor
- * @return bool success status
- */
-bool process_video_gaussian_gpu(
-    const std::string& input_filename,
-    const std::string& output_filename,
-    int levels,
-    double alpha,
-    double fl,
-    double fh,
-    double chrom_attenuation
-);
-
-// Host wrapper functions for easier integration
-cv::Mat spatially_filter_gaussian_wrapper(const cv::Mat& input_rgb, int level);
-std::vector<cv::Mat> temporal_filter_gaussian_batch_wrapper(
-    const std::vector<cv::Mat>& spatially_filtered_batch,
-    float fps,
-    float fl,
-    float fh,
+    int channels,
     float alpha,
     float chrom_attenuation
 );
-cv::Mat reconstruct_gaussian_frame_wrapper(
-    const cv::Mat& original_rgb,
-    const cv::Mat& filtered_yiq_signal
-);
+
+// Note: NO_OPENCV constraint - all functions work with raw float* arrays
+// Video processing functions removed - use external wrapper with OpenCV for video I/O
 
 } // namespace cuda_evm
 
