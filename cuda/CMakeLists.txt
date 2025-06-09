@@ -21,6 +21,7 @@ add_library(cuda_evm
     src/cuda_butterworth.cu
     src/cuda_color_conversion.cu
     src/cuda_format_conversion.cu
+    src/cuda_gaussian_pyramid.cu
 )
 
 # Set CUDA properties
@@ -30,7 +31,7 @@ set_target_properties(cuda_evm PROPERTIES
 )
 
 # Link libraries
-target_link_libraries(cuda_evm ${OpenCV_LIBS})
+target_link_libraries(cuda_evm ${OpenCV_LIBS} cufft)
 
 # Add video comparison tool
 add_executable(compare_videos_frame_by_frame
@@ -88,6 +89,48 @@ target_include_directories(test_cuda_color_cuda_butter_working_impl PRIVATE ../c
 
 # Set CUDA properties for CUDA color + WORKING CUDA Butterworth test
 set_target_properties(test_cuda_color_cuda_butter_working_impl PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
+)
+
+# Add CUDA Gaussian Pyramid test
+add_executable(test_cuda_gaussian_pyramid
+    test_cuda_gaussian_pyramid.cu
+    ../cpp/src/gaussian_pyramid.cpp
+    ../cpp/src/processing.cpp
+    ../cpp/src/color_conversion.cpp
+    ../cpp/src/pyramid.cpp
+)
+
+# Link CUDA Gaussian Pyramid test with libraries
+target_link_libraries(test_cuda_gaussian_pyramid cuda_evm ${OpenCV_LIBS})
+
+# Include CPU headers for the CUDA Gaussian Pyramid test
+target_include_directories(test_cuda_gaussian_pyramid PRIVATE ../cpp/include)
+
+# Set CUDA properties for CUDA Gaussian Pyramid test
+set_target_properties(test_cuda_gaussian_pyramid PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "50;60;70;75"
+)
+
+# Add CUDA Gaussian + CPU Hybrid test
+add_executable(test_cuda_gaussian_cpu_hybrid
+    test_cuda_gaussian_cpu_hybrid.cu
+    ../cpp/src/gaussian_pyramid.cpp
+    ../cpp/src/processing.cpp
+    ../cpp/src/color_conversion.cpp
+    ../cpp/src/pyramid.cpp
+)
+
+# Link CUDA Gaussian + CPU Hybrid test with libraries
+target_link_libraries(test_cuda_gaussian_cpu_hybrid cuda_evm ${OpenCV_LIBS})
+
+# Include CPU headers for the CUDA Gaussian + CPU Hybrid test
+target_include_directories(test_cuda_gaussian_cpu_hybrid PRIVATE ../cpp/include)
+
+# Set CUDA properties for CUDA Gaussian + CPU Hybrid test
+set_target_properties(test_cuda_gaussian_cpu_hybrid PROPERTIES
     CUDA_RUNTIME_LIBRARY Shared
     CUDA_ARCHITECTURES "50;60;70;75"
 )
