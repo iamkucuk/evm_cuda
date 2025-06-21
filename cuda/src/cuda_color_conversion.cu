@@ -1,4 +1,4 @@
-#include "cuda_color_conversion.cuh"
+#include "../include/cuda_color_conversion.cuh"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
@@ -79,3 +79,63 @@ cudaError_t yiq_to_rgb(const float3* yiq_data, float3* rgb_data, int width, int 
 }
 
 } // namespace evmcuda
+
+// Additional planar kernels for cuda_evm namespace (for processing compatibility)
+namespace cuda_evm {
+
+__global__ void rgb_to_yiq_planar_kernel(
+    const float* __restrict__ d_rgb,
+    float* __restrict__ d_yiq,
+    int width,
+    int height,
+    int channels)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    if (x >= width || y >= height) return;
+    
+    const int idx = (y * width + x) * channels;
+    
+    // RGB to YIQ conversion
+    const float r = d_rgb[idx + 0];
+    const float g = d_rgb[idx + 1];
+    const float b = d_rgb[idx + 2];
+    
+    // YIQ conversion matrix
+    d_yiq[idx + 0] = 0.299f * r + 0.587f * g + 0.114f * b;           // Y
+    d_yiq[idx + 1] = 0.59590059f * r - 0.27455667f * g - 0.32134392f * b;  // I
+    d_yiq[idx + 2] = 0.21153661f * r - 0.52273617f * g + 0.31119955f * b;  // Q
+}
+
+__global__ void yiq_to_rgb_planar_kernel(
+    const float* __restrict__ d_yiq,
+    float* __restrict__ d_rgb,
+    int width,
+    int height,
+    int channels)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    if (x >= width || y >= height) return;
+    
+    const int idx = (y * width + x) * channels;
+    
+    // YIQ to RGB conversion
+    const float y_val = d_yiq[idx + 0];
+    const float i_val = d_yiq[idx + 1];
+    const float q_val = d_yiq[idx + 2];
+    
+    // RGB conversion matrix
+    d_rgb[idx + 0] = y_val + 0.9559863f * i_val + 0.6208248f * q_val;   // R
+    d_rgb[idx + 1] = y_val - 0.2720128f * i_val - 0.6472042f * q_val;   // G
+    d_rgb[idx + 2] = y_val - 1.1067402f * i_val + 1.7042304f * q_val;   // B
+    
+    // Clamp values to [0, 1] range
+    d_rgb[idx + 0] = fmaxf(0.0f, fminf(1.0f, d_rgb[idx + 0]));
+    d_rgb[idx + 1] = fmaxf(0.0f, fminf(1.0f, d_rgb[idx + 1]));
+    d_rgb[idx + 2] = fmaxf(0.0f, fminf(1.0f, d_rgb[idx + 2]));
+}
+
+} // namespace cuda_evm

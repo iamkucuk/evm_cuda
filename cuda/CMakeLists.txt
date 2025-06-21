@@ -1,176 +1,97 @@
-cmake_minimum_required(VERSION 3.18)
-project(cuda_evm LANGUAGES CXX CUDA)
+cmake_minimum_required(VERSION 3.10)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 14)
+project(evm_cuda_pipeline VERSION 1.0 LANGUAGES CXX CUDA)
+
+# Set C++ standard (same as reference)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Find required packages
-find_package(CUDA REQUIRED)
-find_package(OpenCV REQUIRED)
+# Find OpenCV (required for all modes)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio)
 
 # Include directories
-include_directories(include)
-include_directories(${OpenCV_INCLUDE_DIRS})
+include_directories(
+    ${CMAKE_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+)
 
 # CUDA compilation flags
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_50")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_86")
 
-# Add library for CUDA implementations
-add_library(cuda_evm
-    src/cuda_butterworth.cu
-    src/cuda_color_conversion.cu
-    src/cuda_format_conversion.cu
-    src/cuda_gaussian_pyramid.cu
-)
+# Gather all source and header files (same pattern as reference)
+file(GLOB SOURCES "${CMAKE_SOURCE_DIR}/src/*.cu")
+file(GLOB HEADERS "${CMAKE_SOURCE_DIR}/include/*.cuh")
+
+# Remove main.cu from library sources (same pattern as reference)
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/src/main.cu")
+
+# Add transpose_only.cu to sources
+list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/transpose_only.cu")
+
+# Main library with all core sources (same name pattern as reference: evm_core)
+add_library(evm_core STATIC ${SOURCES} ${HEADERS})
 
 # Set CUDA properties
-set_target_properties(cuda_evm PROPERTIES
+set_target_properties(evm_core PROPERTIES
     CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
+    CUDA_ARCHITECTURES "86"
 )
 
-# Link libraries
-target_link_libraries(cuda_evm ${OpenCV_LIBS} cufft)
+# Link libraries (same pattern as reference)
+target_link_libraries(evm_core PUBLIC ${OpenCV_LIBS} cufft)
 
-# Add video comparison tool
-add_executable(compare_videos_frame_by_frame
-    tests/compare_videos_frame_by_frame.cu
-)
+# Main executable (pipeline entrypoint) - same name as reference: evmpipeline
+add_executable(evmpipeline ${CMAKE_SOURCE_DIR}/src/main.cu)
 
-# Link comparison tool with OpenCV
-target_link_libraries(compare_videos_frame_by_frame ${OpenCV_LIBS})
-
-# Set CUDA properties for comparison tool
-set_target_properties(compare_videos_frame_by_frame PROPERTIES
+# Set CUDA properties for main executable
+set_target_properties(evmpipeline PROPERTIES
     CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
+    CUDA_ARCHITECTURES "86"
 )
 
-# Add CUDA Gaussian Hybrid test
-add_executable(test_cuda_gaussian_hybrid
-    test_cuda_gaussian_hybrid.cu
-    ${CMAKE_SOURCE_DIR}/../cpp/src/gaussian_pyramid.cpp
-    ${CMAKE_SOURCE_DIR}/../cpp/src/processing.cpp
-    ${CMAKE_SOURCE_DIR}/../cpp/src/color_conversion.cpp
-    ${CMAKE_SOURCE_DIR}/../cpp/src/pyramid.cpp
-    ${CMAKE_SOURCE_DIR}/../cpp/src/butterworth.cpp
-    ${CMAKE_SOURCE_DIR}/../cpp/src/temporal_filter.cpp
+# Link main executable (same pattern as reference)
+target_link_libraries(evmpipeline PRIVATE evm_core ${OpenCV_LIBS})
+
+# Install rules (same as reference)
+install(TARGETS evmpipeline RUNTIME DESTINATION bin)
+
+# Custom target for easy execution with environment variables
+# Usage: INPUT=input_video.mp4 OUTPUT=output_video.avi make run
+# Example: INPUT=../../data/face.mp4 OUTPUT=magnified_face.avi make run
+# With extra args: INPUT=../../data/face.mp4 OUTPUT=magnified_face.avi ARGS="--alpha 100" make run
+add_custom_target(run
+    COMMAND ${CMAKE_SOURCE_DIR}/run_evm.sh
+    DEPENDS evmpipeline
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running CUDA EVM pipeline (use INPUT=... OUTPUT=... make run)"
 )
 
-target_include_directories(test_cuda_gaussian_hybrid PRIVATE
-    ${CMAKE_SOURCE_DIR}/../cpp/include
+# Custom target for quick test with default face video
+# Usage: make test_face
+add_custom_target(test_face
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/evmpipeline 
+        --input ${CMAKE_SOURCE_DIR}/../data/face.mp4 
+        --output face_magnified.avi
+    DEPENDS evmpipeline
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running CUDA EVM pipeline on default face video"
 )
 
-target_link_libraries(test_cuda_gaussian_hybrid 
-    cuda_evm
-    ${OpenCV_LIBS}
+# Custom target for heart rate detection preset
+# Usage: INPUT=face_video.mp4 make heart_rate
+add_custom_target(heart_rate
+    COMMAND ${CMAKE_SOURCE_DIR}/run_evm.sh $(INPUT) heart_rate_magnified.avi --alpha 50 --fl 0.8333 --fh 1.0 --level 4
+    DEPENDS evmpipeline
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running CUDA EVM pipeline optimized for heart rate detection (set INPUT=video.mp4)"
 )
 
-set_target_properties(test_cuda_gaussian_hybrid PROPERTIES
-    CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
-)
-
-# Add CUDA Gaussian Full test
-add_executable(test_cuda_gaussian_full
-    test_cuda_gaussian_full.cu
-)
-
-target_link_libraries(test_cuda_gaussian_full 
-    cuda_evm
-    ${OpenCV_LIBS}
-)
-
-set_target_properties(test_cuda_gaussian_full PROPERTIES
-    CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
-)
-
-# Add CUDA Butterworth + CPU rest test (FIXED approach)
-add_executable(test_cuda_butter_cpu_rest_fixed
-    test_cuda_butter_cpu_rest_fixed.cu
-    ../cpp/src/laplacian_pyramid.cpp
-    ../cpp/src/processing.cpp
-    ../cpp/src/color_conversion.cpp
-    ../cpp/src/pyramid.cpp
-    ../cpp/src/gaussian_pyramid.cpp
-    ../cpp/src/butterworth.cpp
-    ../cpp/src/temporal_filter.cpp
-)
-
-# Link CUDA Butterworth + CPU rest test (FIXED) with libraries
-target_link_libraries(test_cuda_butter_cpu_rest_fixed cuda_evm ${OpenCV_LIBS})
-
-# Include CPU headers for the CUDA Butterworth + CPU rest test (FIXED)
-target_include_directories(test_cuda_butter_cpu_rest_fixed PRIVATE ../cpp/include)
-
-# Set CUDA properties for CUDA Butterworth + CPU rest test (FIXED)
-set_target_properties(test_cuda_butter_cpu_rest_fixed PROPERTIES
-    CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
-)
-
-# Add CUDA color + WORKING CUDA Butterworth test
-add_executable(test_cuda_color_cuda_butter_working_impl
-    test_cuda_color_cuda_butter_working_impl.cu
-    ../cpp/src/laplacian_pyramid.cpp
-    ../cpp/src/processing.cpp
-    ../cpp/src/color_conversion.cpp
-    ../cpp/src/pyramid.cpp
-    ../cpp/src/gaussian_pyramid.cpp
-)
-
-# Link CUDA color + WORKING CUDA Butterworth test with libraries
-target_link_libraries(test_cuda_color_cuda_butter_working_impl cuda_evm ${OpenCV_LIBS})
-
-# Include CPU headers for the CUDA color + WORKING CUDA Butterworth test
-target_include_directories(test_cuda_color_cuda_butter_working_impl PRIVATE ../cpp/include)
-
-# Set CUDA properties for CUDA color + WORKING CUDA Butterworth test
-set_target_properties(test_cuda_color_cuda_butter_working_impl PROPERTIES
-    CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
-)
-
-# Add CUDA Gaussian Pyramid test
-add_executable(test_cuda_gaussian_pyramid
-    test_cuda_gaussian_pyramid.cu
-    ../cpp/src/gaussian_pyramid.cpp
-    ../cpp/src/processing.cpp
-    ../cpp/src/color_conversion.cpp
-    ../cpp/src/pyramid.cpp
-)
-
-# Link CUDA Gaussian Pyramid test with libraries
-target_link_libraries(test_cuda_gaussian_pyramid cuda_evm ${OpenCV_LIBS})
-
-# Include CPU headers for the CUDA Gaussian Pyramid test
-target_include_directories(test_cuda_gaussian_pyramid PRIVATE ../cpp/include)
-
-# Set CUDA properties for CUDA Gaussian Pyramid test
-set_target_properties(test_cuda_gaussian_pyramid PROPERTIES
-    CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
-)
-
-# Add CUDA Gaussian + CPU Hybrid test
-add_executable(test_cuda_gaussian_cpu_hybrid
-    test_cuda_gaussian_cpu_hybrid.cu
-    ../cpp/src/gaussian_pyramid.cpp
-    ../cpp/src/processing.cpp
-    ../cpp/src/color_conversion.cpp
-    ../cpp/src/pyramid.cpp
-)
-
-# Link CUDA Gaussian + CPU Hybrid test with libraries
-target_link_libraries(test_cuda_gaussian_cpu_hybrid cuda_evm ${OpenCV_LIBS})
-
-# Include CPU headers for the CUDA Gaussian + CPU Hybrid test
-target_include_directories(test_cuda_gaussian_cpu_hybrid PRIVATE ../cpp/include)
-
-# Set CUDA properties for CUDA Gaussian + CPU Hybrid test
-set_target_properties(test_cuda_gaussian_cpu_hybrid PROPERTIES
-    CUDA_RUNTIME_LIBRARY Shared
-    CUDA_ARCHITECTURES "50;60;70;75"
+# Custom target for breathing analysis preset
+# Usage: INPUT=chest_video.mp4 make breathing
+add_custom_target(breathing
+    COMMAND ${CMAKE_SOURCE_DIR}/run_evm.sh $(INPUT) breathing_magnified.avi --alpha 30 --fl 0.17 --fh 0.5 --level 5
+    DEPENDS evmpipeline
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running CUDA EVM pipeline optimized for breathing analysis (set INPUT=video.mp4)"
 )

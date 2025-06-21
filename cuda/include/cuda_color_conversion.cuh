@@ -47,4 +47,21 @@ cudaError_t yiq_to_rgb(const float3* yiq_data, float3* rgb_data, int width, int 
 
 } // namespace evmcuda
 
+// Additional kernels for cuda_evm namespace (for processing compatibility)
+namespace cuda_evm {
+
+/**
+ * @brief CUDA kernel for planar RGB to YIQ conversion
+ * Used by reconstruction pipeline
+ */
+__global__ void rgb_to_yiq_planar_kernel(const float* d_rgb, float* d_yiq, int width, int height, int channels);
+
+/**
+ * @brief CUDA kernel for planar YIQ to RGB conversion  
+ * Used by reconstruction pipeline
+ */
+__global__ void yiq_to_rgb_planar_kernel(const float* d_yiq, float* d_rgb, int width, int height, int channels);
+
+} // namespace cuda_evm
+
 #endif // CUDA_COLOR_CONVERSION_CUH

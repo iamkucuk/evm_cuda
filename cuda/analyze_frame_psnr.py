@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import sys
+import argparse
 
 def calculate_psnr(img1, img2):
     """Calculate PSNR between two images"""
@@ -35,13 +36,13 @@ def load_video_frames(video_path):
     cap = cv2.VideoCapture(video_path)
     
     if not cap.isOpened():
-        raise ValueError(f"Cannot open video: {video_path}")
+        raise ValueError("Cannot open video: {}".format(video_path))
     
     frames = []
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    print(f"Loading {frame_count} frames from {os.path.basename(video_path)} at {fps} FPS...")
+    print("Loading {} frames from {} at {} FPS...".format(frame_count, os.path.basename(video_path), fps))
     
     while True:
         ret, frame = cap.read()
@@ -50,7 +51,7 @@ def load_video_frames(video_path):
         frames.append(frame)
     
     cap.release()
-    print(f"Loaded {len(frames)} frames")
+    print("Loaded {} frames".format(len(frames)))
     
     return frames, fps
 
@@ -64,11 +65,11 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
     
     # Verify frame counts match
     if len(cpu_frames) != len(cuda_frames):
-        print(f"Warning: Frame count mismatch - CPU: {len(cpu_frames)}, CUDA: {len(cuda_frames)}")
+        print("Warning: Frame count mismatch - CPU: {}, CUDA: {}".format(len(cpu_frames), len(cuda_frames)))
         min_frames = min(len(cpu_frames), len(cuda_frames))
         cpu_frames = cpu_frames[:min_frames]
         cuda_frames = cuda_frames[:min_frames]
-        print(f"Using first {min_frames} frames for comparison")
+        print("Using first {} frames for comparison".format(min_frames))
     
     # Calculate PSNR for each frame
     print("\n=== Calculating Frame-by-Frame PSNR ===")
@@ -81,7 +82,7 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
         cuda_frame = cuda_frames[i]
         
         if cpu_frame.shape != cuda_frame.shape:
-            print(f"Frame {i}: Size mismatch, resizing CUDA frame to match CPU")
+            print("Frame {}: Size mismatch, resizing CUDA frame to match CPU".format(i))
             cuda_frame = cv2.resize(cuda_frame, (cpu_frame.shape[1], cpu_frame.shape[0]))
         
         # Calculate PSNR
@@ -89,7 +90,7 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
         frame_psnrs.append(psnr)
         
         if i % 50 == 0:
-            print(f"  Frame {i}/{num_frames}: PSNR = {psnr:.2f} dB")
+            print("  Frame {}/{}: PSNR = {:.2f} dB".format(i, num_frames, psnr))
     
     # Convert to numpy array for analysis
     frame_psnrs = np.array(frame_psnrs)
@@ -101,11 +102,11 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
     std_psnr = np.std(frame_psnrs)
     min_frame_idx = np.argmin(frame_psnrs)
     
-    print(f"\n=== PSNR Statistics ===")
-    print(f"Average PSNR: {avg_psnr:.2f} dB")
-    print(f"Minimum PSNR: {min_psnr:.2f} dB (Frame {min_frame_idx})")
-    print(f"Maximum PSNR: {max_psnr:.2f} dB")
-    print(f"Standard Deviation: {std_psnr:.2f} dB")
+    print("\n=== PSNR Statistics ===")
+    print("Average PSNR: {:.2f} dB".format(avg_psnr))
+    print("Minimum PSNR: {:.2f} dB (Frame {})".format(min_psnr, min_frame_idx))
+    print("Maximum PSNR: {:.2f} dB".format(max_psnr))
+    print("Standard Deviation: {:.2f} dB".format(std_psnr))
     
     # Create time axis (in seconds)
     time_axis = np.arange(num_frames) / cpu_fps
@@ -218,18 +219,16 @@ def analyze_frame_psnr(cpu_video_path, cuda_video_path, output_dir="./"):
     return frame_psnrs, min_frame_idx, min_psnr
 
 def main():
-    # Define video paths
-    cpu_video = "../cpp/build/cpu_gaussian_exact_reference.avi"
-    cuda_video = "cuda_gaussian_full_output.avi"
+    parser = argparse.ArgumentParser(description="Frame-by-frame PSNR analysis between two videos.")
+    parser.add_argument("cpu_video_path", help="Path to the CPU-generated video file.")
+    parser.add_argument("cuda_video_path", help="Path to the CUDA-generated video file.")
+    args = parser.parse_args()
+
+    cpu_video = args.cpu_video_path
+    cuda_video = args.cuda_video_path
     
-    # Check if videos exist
-    if not os.path.exists(cpu_video):
-        print(f"Error: CPU video not found at {cpu_video}")
-        return 1
-    
-    if not os.path.exists(cuda_video):
-        print(f"Error: CUDA video not found at {cuda_video}")
-        return 1
+    # The analyze_frame_psnr function and load_video_frames within it already handle
+    # checking if videos exist and can be opened.
     
     print("=== Frame-by-Frame PSNR Analysis ===")
     print(f"CPU Video: {cpu_video}")
