@@ -10,7 +10,8 @@
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
+build/Makefile
+*/build/Makefile
 *.cmake
 !CMakeLists.txt
 
