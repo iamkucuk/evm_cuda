@@ -53,7 +53,7 @@ clean:
 gaussian: $(TARGET)
 	@echo "🚀 Running Gaussian EVM on face.mp4 (presentation preset)..."
 	@echo "   Parameters: level=4, alpha=50, attenuation=1, ω=0.8333-1.0"
-	./$(TARGET) --input=../data/face.mp4 --output=face_gaussian_presentation.avi \
+	./$(TARGET) --input=../data/face.mp4 --output=face_gaussian.avi \
 		--mode=gaussian --level=4 --alpha=50 --chrom_attenuation=1 \
 		--fl=0.8333 --fh=1.0 --timing
 
@@ -61,7 +61,7 @@ gaussian: $(TARGET)
 laplacian: $(TARGET)
 	@echo "🚀 Running Laplacian EVM on baby.mp4 (presentation preset)..."
 	@echo "   Parameters: level=4, alpha=15, λ=16, attenuation=0.1, ω=0.4-3.0"
-	./$(TARGET) --input=../data/baby.mp4 --output=baby_laplacian_presentation.avi \
+	./$(TARGET) --input=../data/baby.mp4 --output=baby_laplacian.avi \
 		--mode=laplacian --level=4 --alpha=15 --chrom_attenuation=0.1 \
 		--fl=0.4 --fh=3.0 --timing
 
