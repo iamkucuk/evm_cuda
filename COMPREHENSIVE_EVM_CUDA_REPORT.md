@@ -60,6 +60,24 @@ The Eulerian Video Magnification (EVM) technique, as conceptualized by Wu et al.
 
 The EVM algorithm can be broken down into the following key stages [1]:
 
+```mermaid
+graph LR
+    A[Input Video<br/>Frames] --> B[Spatial<br/>Decomposition]
+    B --> C[Temporal<br/>Filtering]
+    C --> D[Amplification]
+    D --> E[Reconstruction]
+    E --> F[Output Magnified<br/>Video]
+    
+    style A fill:#e1f5fe,stroke:#333,stroke-width:2px,color:#000
+    style B fill:#fff3e0,stroke:#333,stroke-width:2px,color:#000
+    style C fill:#fce4ec,stroke:#333,stroke-width:2px,color:#000
+    style D fill:#f3e5f5,stroke:#333,stroke-width:2px,color:#000
+    style E fill:#e8f5e8,stroke:#333,stroke-width:2px,color:#000
+    style F fill:#c8e6c9,stroke:#333,stroke-width:2px,color:#000
+```
+
+**Figure 1:** Core Eulerian Video Magnification algorithm pipeline. The algorithm processes video frames through five sequential stages to reveal subtle temporal variations.
+
 **a. Spatial Decomposition:**
 The input video frames are first decomposed into different spatial frequency bands. This is typically achieved by constructing a spatial pyramid, most commonly a Laplacian pyramid [1], for each frame. The Laplacian pyramid represents the frame as a series of band-pass filtered images, each capturing details at a different spatial scale, plus a low-frequency residual. Alternatively, a Gaussian pyramid can be used, especially if the goal is primarily spatial pooling to improve signal-to-noise ratio (SNR) for color amplification tasks [1]. This multi-scale representation is crucial because the signals of interest might have different characteristics at different spatial frequencies, and noise might also vary across scales.
 
@@ -81,6 +99,38 @@ Our CPU reference implementation closely follows the algorithmic structure descr
     1.  To provide a robust and deep understanding of the EVM algorithm by working with established, efficient image processing operations.
     2.  To serve as a highly optimized and fair reference baseline. Using OpenCV's optimized functions creates a more challenging benchmark, making any speedup achieved by the custom CUDA implementation more significant and demonstrative of genuine acceleration beyond standard library optimizations.
 
+```mermaid
+graph LR
+    subgraph Row1["Input & Spatial Processing"]
+        A[Video Input<br/>OpenCV] --> B[RGB→YIQ<br/>Convert]
+        B --> C[Gaussian Blur<br/>cv::GaussianBlur]
+        C --> D[Downsample<br/>cv::pyrDown]
+    end
+    
+    subgraph Row2["Temporal & Amplification"]
+        E[FFT Filter<br/>cv::dft] --> F[Frequency<br/>Domain Filter]
+        F --> G[Inverse FFT<br/>cv::idft]
+        G --> H[Amplify<br/>α Factor]
+    end
+    
+    subgraph Row3["Reconstruction & Output"]
+        I[Pyramid<br/>Collapse] --> J[cv::pyrUp<br/>Addition]
+        J --> K[YIQ→RGB<br/>Convert]
+        K --> L[Video Output<br/>OpenCV]
+    end
+    
+    D --> E
+    H --> I
+    
+    style A fill:#e3f2fd,stroke:#333,stroke-width:2px,color:#000
+    style L fill:#e8f5e8,stroke:#333,stroke-width:2px,color:#000
+    style Row1 fill:#fff8e1,stroke:#333,stroke-width:1px,color:#000
+    style Row2 fill:#fce4ec,stroke:#333,stroke-width:1px,color:#000
+    style Row3 fill:#e0f2f1,stroke:#333,stroke-width:1px,color:#000
+```
+
+**Figure 2:** CPU implementation architecture using OpenCV. The implementation leverages highly optimized OpenCV functions for spatial processing, FFT-based temporal filtering, and pyramid reconstruction.
+
 The specific steps are:
 - **Video I/O:** OpenCV is used for reading input video frames and writing output frames.
 - **Spatial Decomposition:** A Laplacian pyramid is constructed for each frame. This involves iteratively applying a Gaussian filter and downsampling to create the Gaussian pyramid, and then taking differences between levels of the Gaussian pyramid and upsampled versions of coarser levels to form the Laplacian levels.
@@ -96,6 +146,34 @@ The CUDA implementation aims to parallelize the computationally intensive stages
 **a. Overall Pipeline:**
 The entire video is first transferred from CPU to GPU memory. All subsequent processing stages (spatial decomposition, temporal filtering, amplification, reconstruction) are performed by CUDA kernels. The final magnified video frames are then transferred back to the CPU. This strategy significantly reduces intermediate data transfers (a reported 71.4% reduction in transfer operations compared to a traditional pipeline).
 
+```mermaid
+graph LR
+    subgraph Transfer1["Data Upload 44.9%"]
+        A[CPU Video<br/>Loading] --> B[CPU→GPU<br/>300ms]
+    end
+    
+    subgraph GPUProcess["GPU-Resident Processing 55.1%"]
+        C[Spatial<br/>1158ms] --> D[Temporal<br/>265ms]
+        D --> E[Amplify<br/>α Factor]
+        E --> F[Reconstruct<br/>208ms]
+    end
+    
+    subgraph Transfer2["Data Download"]
+        G[GPU→CPU<br/>280ms] --> H[CPU Video<br/>Writing]
+    end
+    
+    B --> C
+    F --> G
+    
+    style Transfer1 fill:#fff3e0,stroke:#333,stroke-width:2px,color:#000
+    style GPUProcess fill:#e3f2fd,stroke:#333,stroke-width:2px,color:#000
+    style Transfer2 fill:#fff3e0,stroke:#333,stroke-width:2px,color:#000
+    style A fill:#ffebee,stroke:#333,stroke-width:2px,color:#000
+    style H fill:#e8f5e8,stroke:#333,stroke-width:2px,color:#000
+```
+
+**Figure 3:** CUDA GPU-resident architecture with execution times. The pipeline minimizes CPU-GPU transfers by maintaining data on the GPU throughout processing, with data transfers accounting for 44.9% and GPU computation for 55.1% of total execution time.
+
 **b. Memory Management:**
 Unified GPU memory allocation is performed at the beginning for all necessary buffers (input frames, pyramid levels, filtered signals, output frames). Data remains in these persistent GPU buffers throughout the pipeline, eliminating memory fragmentation and allocation overhead during processing. Data type conversions (e.g., `uchar` to `float`, scaling [0,255] to [0,1]) are handled within CUDA kernels.
 
@@ -105,12 +183,80 @@ Unified GPU memory allocation is performed at the beginning for all necessary bu
 - **Laplacian Calculation:** Element-wise subtraction of pyramid levels is inherently parallel.
 Each level of the pyramid construction is a separate kernel launch, or potentially fused for efficiency.
 
+```mermaid
+graph LR
+    subgraph Input["Input Layer"]
+        A[Frame<br/>528×592]
+    end
+    
+    subgraph Gaussian["Gaussian Filtering"]
+        B[Horizontal<br/>Convolution] --> C[Vertical<br/>Convolution]
+    end
+    
+    subgraph Pyramid["Pyramid Levels"]
+        D[Level 1<br/>264×296] --> E[Level 2<br/>132×148]
+        E --> F[Level 3<br/>66×74]
+        F --> G[Level 4<br/>33×37]
+    end
+    
+    subgraph Output["Laplacian Pyramid"]
+        H[Multi-level<br/>Pyramid]
+    end
+    
+    A --> B
+    C --> D
+    G --> H
+    
+    style Input fill:#e1f5fe,stroke:#333,stroke-width:2px,color:#000
+    style Gaussian fill:#ffebee,stroke:#333,stroke-width:2px,color:#000
+    style Pyramid fill:#fce4ec,stroke:#333,stroke-width:2px,color:#000
+    style Output fill:#c8e6c9,stroke:#333,stroke-width:2px,color:#000
+```
+
+**Figure 4:** Parallel spatial decomposition in CUDA. The implementation uses separable Gaussian convolution and creates a multi-level pyramid through progressive downsampling, with each level halving the spatial dimensions.
+
 **d. Temporal Filtering (Parallel FFT-based):**
 - **Data Transposition:** For efficient FFT processing, pixel data, typically stored frame by frame (pixel-major within a frame), needs to be effectively transposed so that the time series for each pixel is contiguous in memory. This can be a performance-critical step. Optimized transpose kernels are used.
 - **FFT:** The NVIDIA cuFFT library is used to perform 1D FFTs in batch mode, one for each pixel's time series across all frames. This is a key kernel-level optimization for temporal processing.
 - **Frequency Domain Filtering:** Multiplication by the bandpass filter mask in the frequency domain is an element-wise parallel operation.
 - **Inverse FFT:** cuFFT is used for the inverse transform.
 The filtered data is then transposed back if necessary.
+
+```mermaid
+graph LR
+    subgraph Data["Input Data"]
+        A[Pyramid Data<br/>301 frames]
+    end
+    
+    subgraph Transpose["Memory Layout"]
+        B[Frame→Pixel<br/>Transpose] --> C[Contiguous<br/>Time Series]
+    end
+    
+    subgraph FFT["Parallel FFT"]
+        D[cuFFT Batch<br/>282M pixels] --> E[Frequency<br/>Domain]
+    end
+    
+    subgraph Filter["Bandpass Filter"]
+        F[0.83-1.0 Hz<br/>Selection] --> G[Multiply<br/>Filter Mask]
+    end
+    
+    subgraph IFFT["Inverse FFT"]
+        H[cuFFT Inverse<br/>Batch] --> I[Filtered<br/>Signals]
+    end
+    
+    A --> B
+    C --> D
+    E --> F
+    G --> H
+    
+    style Data fill:#e1f5fe,stroke:#333,stroke-width:2px,color:#000
+    style Transpose fill:#ffebee,stroke:#333,stroke-width:2px,color:#000
+    style FFT fill:#fce4ec,stroke:#333,stroke-width:2px,color:#000
+    style Filter fill:#f3e5f5,stroke:#333,stroke-width:2px,color:#000
+    style IFFT fill:#c8e6c9,stroke:#333,stroke-width:2px,color:#000
+```
+
+**Figure 5:** Parallel temporal filtering using cuFFT. The process involves data transposition to create contiguous time series, batch FFT processing for 282 million pixels, bandpass filtering in frequency domain, and inverse FFT to obtain filtered temporal signals.
 
 **e. Amplification (Parallel Element-wise Operation):**
 The multiplication of filtered signals by `α` (and potential attenuation) is a simple element-wise kernel, highly parallelizable.
@@ -176,6 +322,14 @@ The CPU implementation was benchmarked by measuring the total execution time for
 **a. Overall Performance Comparison:**
 The CUDA implementation demonstrated a significant performance improvement over the CPU reference. The key overall results for processing `face.mp4` are summarized as follows (CPU Reference: 15.288 seconds; CUDA Async: 3.037 seconds; CUDA GPU-Sync: 2.958 seconds):
 
+![Figure 6: EVM Performance Comparison - Total Execution Time](figure_6_execution_time.png)
+
+**Figure 6:** Total execution time comparison for EVM processing of face.mp4 (301 frames, 528×592 resolution). The CUDA implementations achieve significant speedup over the CPU reference, with GPU-Sync mode showing the best performance at 2.958 seconds.
+
+![Figure 7: CUDA Acceleration Speedup vs CPU Reference](figure_7_speedup.png)
+
+**Figure 7:** Speedup factors achieved by CUDA implementations relative to CPU baseline. The maximum speedup of 5.17× demonstrates the effectiveness of GPU acceleration for EVM processing.
+
 | Implementation  | Time (seconds) | Speedup vs CPU   | Standard Deviation | CV (%) |
 | :-------------- | :------------- | :--------------- | :----------------- | :----- |
 | CPU Reference   | 15.288         | 1.00× (baseline) | N/A                | N/A    |
@@ -190,6 +344,10 @@ These results highlight:
 **b. CUDA Pipeline Component Breakdown (GPU-Sync Mode):**
 A detailed breakdown of execution time within the CUDA pipeline (using GPU-Sync for accuracy) reveals where time is spent (mean times: Spatial Filtering 1,158ms; Temporal Filtering 265ms; Reconstruction 208ms; Estimated Data Transfer ~1,327ms):
 
+![Figure 8: CUDA Pipeline Component Breakdown](figure_8_component_breakdown.png)
+
+**Figure 8:** CUDA pipeline time distribution showing both percentage breakdown (left) and absolute execution times (right). Data transfer operations dominate at 44.9% of total time, while spatial filtering is the most computationally intensive GPU operation at 39.1%.
+
 | Component            | Mean Time (ms) | % of Total | Key Optimization Strategy             |
 | :------------------- | :------------- | :--------- | :------------------------------------ |
 | Spatial Filtering    | 1,158          | 39.1%      | Parallel pyramid processing           |
@@ -199,6 +357,10 @@ A detailed breakdown of execution time within the CUDA pipeline (using GPU-Sync 
 | **Total GPU-Sync**   | **2,958**      | **100%**   |                                       |
 
 This breakdown shows that while GPU computation (55.1%) is significant, data transfers still constitute a large portion of the total time (44.9%) in this optimized pipeline. Spatial filtering is the most time-consuming compute stage.
+
+![Figure 10: EVM CUDA Performance Analysis Summary](figure_performance_summary.png)
+
+**Figure 10:** Comprehensive performance analysis summary showing: (A) execution time comparison, (B) acceleration achieved, (C) CUDA pipeline component breakdown, and (D) GPU compute utilization. The summary highlights the 5.17× speedup achieved while revealing significant underutilization of GPU computational resources.
 
 ### 4. Bottleneck Analysis
 
@@ -214,6 +376,10 @@ A thorough bottleneck analysis was conducted.
 -   **Temporal Filtering:** Achieved ~52.2 GFLOPS/s, ~0.147% of peak.
 -   **Reconstruction:** Achieved ~40.5 GFLOPS/s, ~0.114% of peak.
 -   **Overall GPU Utilization:** The achieved GFLOPS for all compute stages are consistently **<0.15% of the theoretical peak performance** of the RTX 3090.
+
+![Figure 9: GPU Utilization - Achieved vs Theoretical Peak Performance](figure_9_gflops_comparison.png)
+
+**Figure 9:** GPU utilization analysis showing achieved GFLOPS/s compared to RTX 3090's theoretical peak performance (35.6 TFLOPS). The logarithmic scale reveals massive underutilization, with all compute stages achieving less than 0.15% of peak performance, indicating significant optimization opportunities.
 
 **c. Primary Bottleneck Identification:**
 The system is identified as **COMPUTE-BOUND**, but not in the sense of being limited by raw FLOPS capability. Rather, it is bound by **ALGORITHMIC EFFICIENCY** on the GPU.
