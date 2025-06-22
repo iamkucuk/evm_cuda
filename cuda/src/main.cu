@@ -1,6 +1,6 @@
 /**
  * CUDA Eulerian Video Magnification - Unified Command Line Interface
- * Dual Algorithm Support: Gaussian (42.89 dB) + Laplacian (37.62 dB, 78.4 FPS)
+ * Dual Algorithm Support: Gaussian + Laplacian modes
  * All code organized in proper src/ and include/ structure
  */
 
@@ -12,6 +12,7 @@
 #include <chrono>
 #include <vector>
 #include <string>
+#include <cmath>
 
 // Include modular CUDA components from include/ directory
 #include "cuda_gaussian_pyramid.cuh"    // Gaussian pyramid operations
@@ -19,6 +20,7 @@
 #include "cuda_temporal_filter.cuh"     // FFT + IIR temporal filtering
 #include "cuda_processing.cuh"          // EVM reconstruction
 #include "cuda_color_conversion.cuh"    // RGB ↔ YIQ conversion
+#include "cuda_scaling.cuh"             // GPU data scaling operations
 
 // External transpose functions (required for temporal filtering)
 extern "C" cudaError_t launch_transpose_frame_to_pixel(
@@ -55,11 +57,23 @@ struct EVMConfig {
     float chrom_attenuation = 1.0f;
     bool timing = false;
     bool quiet = false;
+    bool gpu_sync = false;  // GPU synchronization timing mode
+    int warmup_runs = 0;
+    int benchmark_runs = 1;
 };
+
+void gpu_sync_if_enabled(const EVMConfig& config, const char* operation) {
+    if (config.gpu_sync) {
+        cudaError_t sync_error = cudaDeviceSynchronize();
+        if (sync_error != cudaSuccess) {
+            std::cerr << "GPU sync error after " << operation << ": " << cudaGetErrorString(sync_error) << std::endl;
+        }
+    }
+}
 
 void print_usage(const char* program_name) {
     std::cout << "CUDA Eulerian Video Magnification - Command Line Interface\\n"
-              << "Dual Algorithm Support: Gaussian (42.89 dB) and Laplacian (37.62 dB)\\n\\n"
+              << "Dual Algorithm Support: Gaussian and Laplacian modes\\n\\n"
               << "Usage: " << program_name << " --input=<input_video> --output=<output_video> [options]\\n\\n"
               << "Required Arguments:\\n"
               << "  --input=<path>           Input video file path\\n"
@@ -73,11 +87,17 @@ void print_usage(const char* program_name) {
               << "  --fps=<float>            Video frame rate (default: 30.0)\\n"
               << "  --chrom_attenuation=<f>  Chrominance attenuation (default: 1.0)\\n"
               << "  --timing                 Show detailed timing information\\n"
+              << "  --gpu-sync               Enable GPU synchronization for accurate kernel timing (slower)\\n"
+              << "  --warmup=<int>           Number of warmup runs (default: 0)\\n"
+              << "  --benchmark=<int>        Number of benchmark runs (default: 1)\\n"
               << "  --quiet                  Suppress progress output\\n"
               << "  --help                   Show this help message\\n\\n"
               << "Algorithm Modes:\\n"
-              << "  gaussian                 FFT-based temporal filtering (42.89 dB PSNR)\\n"
-              << "  laplacian                IIR-based temporal filtering (37.62 dB PSNR, 78.4 FPS)\\n\\n"
+              << "  gaussian                 FFT-based temporal filtering (high quality)\\n"
+              << "  laplacian                IIR-based temporal filtering (high speed)\\n\\n"
+              << "Timing Modes:\\n"
+              << "  Default (async)          Measures kernel launch time (faster, preserves async nature)\\n"
+              << "  --gpu-sync              Measures actual GPU execution time (slower, accurate)\\n\\n"
               << "Examples:\\n"
               << "  " << program_name << " --input=face.mp4 --output=magnified.avi\\n"
               << "  " << program_name << " --input=video.mp4 --output=result.avi --mode=laplacian --alpha=100\\n"
@@ -123,8 +143,14 @@ bool parse_arguments(int argc, char* argv[], EVMConfig& config) {
             }
         } else if (arg == "--timing") {
             config.timing = true;
+        } else if (arg == "--gpu-sync") {
+            config.gpu_sync = true;
         } else if (arg == "--quiet") {
             config.quiet = true;
+        } else if (arg.substr(0, 9) == "--warmup=") {
+            config.warmup_runs = std::stoi(arg.substr(9));
+        } else if (arg.substr(0, 12) == "--benchmark=") {
+            config.benchmark_runs = std::stoi(arg.substr(12));
         } else {
             std::cerr << "Error: Unknown argument: " << arg << std::endl;
             return false;
@@ -154,6 +180,14 @@ bool parse_arguments(int argc, char* argv[], EVMConfig& config) {
         std::cerr << "Error: FPS must be positive" << std::endl;
         return false;
     }
+    if (config.warmup_runs < 0) {
+        std::cerr << "Error: Warmup runs must be non-negative" << std::endl;
+        return false;
+    }
+    if (config.benchmark_runs < 1) {
+        std::cerr << "Error: Benchmark runs must be at least 1" << std::endl;
+        return false;
+    }
     
     return true;
 }
@@ -177,8 +211,8 @@ int main(int argc, char* argv[]) {
     if (!config.quiet) {
         std::cout << "CUDA Eulerian Video Magnification - Full GPU Pipeline" << std::endl;
         std::string mode_name = (config.mode == EVMMode::GAUSSIAN) ? "Gaussian" : "Laplacian";
-        std::string quality_info = (config.mode == EVMMode::GAUSSIAN) ? "42.89 dB PSNR" : "37.62 dB PSNR, 78.4 FPS";
-        std::cout << "Algorithm: " << mode_name << " EVM (" << quality_info << ")" << std::endl;
+        std::string quality_info = (config.mode == EVMMode::GAUSSIAN) ? "high quality" : "high speed";
+        std::cout << "Algorithm: " << mode_name << " EVM (" << quality_info << " mode)" << std::endl;
         std::cout << "Parameters: alpha=" << config.alpha << ", level=" << config.level 
                   << ", fl=" << config.fl << ", fh=" << config.fh 
                   << ", fps=" << config.fps << ", chrom_attenuation=" << config.chrom_attenuation << std::endl;
@@ -214,117 +248,214 @@ int main(int argc, char* argv[]) {
         std::cout << "Loaded " << num_frames << " frames" << std::endl;
     }
     
-    auto start_time = std::chrono::high_resolution_clock::now();
+    // Benchmarking setup
+    std::vector<double> execution_times;
+    int total_runs = config.warmup_runs + config.benchmark_runs;
     
-    // Check which algorithm to use
-    if (config.mode == EVMMode::GAUSSIAN) {
-        return run_gaussian_pipeline(config, frames, width, height, num_frames, start_time);
-    } else {
-        return run_laplacian_pipeline(config, frames, width, height, num_frames, start_time);
+    if (!config.quiet && (config.warmup_runs > 0 || config.benchmark_runs > 1)) {
+        std::cout << "\\n=== Benchmarking Mode ===" << std::endl;
+        std::cout << "Warmup runs: " << config.warmup_runs << std::endl;
+        std::cout << "Benchmark runs: " << config.benchmark_runs << std::endl;
+        std::cout << "Timing mode: " << (config.gpu_sync ? "GPU-synchronized (accurate kernels)" : "Async launch (default)") << std::endl;
     }
+    
+    // Execute warmup + benchmark runs
+    for (int run = 0; run < total_runs; run++) {
+        bool is_warmup = (run < config.warmup_runs);
+        bool is_benchmark = !is_warmup;
+        
+        if (!config.quiet && total_runs > 1) {
+            if (is_warmup) {
+                std::cout << "\\n--- Warmup Run " << (run + 1) << "/" << config.warmup_runs << " ---" << std::endl;
+            } else {
+                std::cout << "\\n--- Benchmark Run " << (run - config.warmup_runs + 1) << "/" << config.benchmark_runs << " ---" << std::endl;
+            }
+        }
+        
+        auto start_time = std::chrono::high_resolution_clock::now();
+        
+        // Execute pipeline
+        int result;
+        if (config.mode == EVMMode::GAUSSIAN) {
+            result = run_gaussian_pipeline(config, frames, width, height, num_frames, start_time);
+        } else {
+            result = run_laplacian_pipeline(config, frames, width, height, num_frames, start_time);
+        }
+        
+        gpu_sync_if_enabled(config, "complete pipeline");
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        double seconds = duration.count() / 1000.0;
+        
+        // Store benchmark results (not warmup)
+        if (is_benchmark) {
+            execution_times.push_back(seconds);
+        }
+        
+        if (!config.quiet && total_runs > 1) {
+            std::cout << "Run time: " << seconds << " seconds";
+            if (config.gpu_sync) {
+                std::cout << " (GPU-synchronized)";
+            } else {
+                std::cout << " (async mode)";
+            }
+            std::cout << std::endl;
+        }
+        
+        if (result != 0) {
+            return result;
+        }
+    }
+    
+    // Report benchmarking statistics
+    if (!config.quiet && config.benchmark_runs > 1) {
+        double total_time = 0.0;
+        double min_time = execution_times[0];
+        double max_time = execution_times[0];
+        
+        for (double time : execution_times) {
+            total_time += time;
+            min_time = std::min(min_time, time);
+            max_time = std::max(max_time, time);
+        }
+        
+        double mean_time = total_time / execution_times.size();
+        
+        // Calculate standard deviation
+        double variance = 0.0;
+        for (double time : execution_times) {
+            variance += (time - mean_time) * (time - mean_time);
+        }
+        variance /= execution_times.size();
+        double std_dev = std::sqrt(variance);
+        double cv = (std_dev / mean_time) * 100.0;
+        
+        std::cout << "\\n=== Benchmark Results ===" << std::endl;
+        std::cout << "Runs: " << config.benchmark_runs << std::endl;
+        std::cout << "Mean: " << mean_time << " seconds" << std::endl;
+        std::cout << "Std Dev: " << std_dev << " seconds" << std::endl;
+        std::cout << "CV: " << cv << "%" << std::endl;
+        std::cout << "Min: " << min_time << " seconds" << std::endl;
+        std::cout << "Max: " << max_time << " seconds" << std::endl;
+    }
+    
+    return 0;
 }
 
 int run_gaussian_pipeline(const EVMConfig& config, const std::vector<cv::Mat>& frames, 
                          int width, int height, int num_frames, 
                          std::chrono::high_resolution_clock::time_point start_time) {
-    // =====================================================================
-    // STEP 1: VERIFIED ATOMIC CUDA SPATIAL FILTERING (42.89 dB PSNR)
-    // =====================================================================
+    
     if (!config.quiet) {
-        std::cout << "\\n=== Step 1: Verified Atomic CUDA Spatial Filtering ===" << std::endl;
+        std::cout << "\\n=== GPU-Resident Pipeline (CORRECTED): Uploading All Frames ===" << std::endl;
     }
     
-    std::vector<cv::Mat> spatially_filtered_frames;
-    spatially_filtered_frames.reserve(num_frames);
+    // =====================================================================
+    // MEMORY ALLOCATION: GPU-RESIDENT ARCHITECTURE  
+    // =====================================================================
+    const int channels = 3;
+    const size_t frame_size = width * height * channels * sizeof(float);
+    const size_t total_size = width * height * channels * num_frames;
+    const size_t total_bytes = total_size * sizeof(float);
     
-    // Allocate GPU memory for spatial filtering
-    const size_t frame_size = width * height * 3 * sizeof(float);
-    float* d_input_rgb = nullptr;
-    float* d_output_yiq = nullptr;
+    // GPU memory for entire pipeline - all data stays on device
+    float* d_input_frames_255 = nullptr;      // Input RGB frames [0,255]
+    float* d_input_frames_1 = nullptr;        // Input RGB frames [0,1] for reconstruction
+    float* d_spatially_filtered_255 = nullptr; // Spatially filtered YIQ [0,255]
+    float* d_spatially_filtered_1 = nullptr;  // Spatially filtered YIQ [0,1] for temporal
+    float* d_pixel_major = nullptr;           // Transposed for temporal processing
+    float* d_temporal_filtered = nullptr;     // Temporally filtered results [0,1]
+    float* d_final_frames = nullptr;          // Final reconstructed RGB frames [0,1]
     
-    check_cuda_error(cudaMalloc(&d_input_rgb, frame_size), "Allocate input RGB");
-    check_cuda_error(cudaMalloc(&d_output_yiq, frame_size), "Allocate output YIQ");
+    check_cuda_error(cudaMalloc(&d_input_frames_255, total_bytes), "Allocate input frames 255");
+    check_cuda_error(cudaMalloc(&d_input_frames_1, total_bytes), "Allocate input frames 1");
+    check_cuda_error(cudaMalloc(&d_spatially_filtered_255, total_bytes), "Allocate spatial filtered 255");
+    check_cuda_error(cudaMalloc(&d_spatially_filtered_1, total_bytes), "Allocate spatial filtered 1");
+    check_cuda_error(cudaMalloc(&d_pixel_major, total_bytes), "Allocate pixel major");
+    check_cuda_error(cudaMalloc(&d_temporal_filtered, total_bytes), "Allocate temporal filtered");
+    check_cuda_error(cudaMalloc(&d_final_frames, total_bytes), "Allocate final frames");
     
-    auto spatial_start = std::chrono::high_resolution_clock::now();
+    // =====================================================================
+    // UPLOAD: All input frames to GPU (SINGLE TRANSFER)
+    // =====================================================================
+    auto upload_start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < num_frames; i++) {
         cv::Mat rgb_frame;
         cv::cvtColor(frames[i], rgb_frame, cv::COLOR_BGR2RGB);
-        
-        // Convert to float and keep [0,255] range (like evmcpp)
         cv::Mat rgb_float;
-        rgb_frame.convertTo(rgb_float, CV_32FC3);
+        rgb_frame.convertTo(rgb_float, CV_32FC3);  // Keep [0,255] range
         
-        // Upload to GPU
+        float* frame_ptr = d_input_frames_255 + (i * width * height * channels);
         check_cuda_error(
-            cudaMemcpy(d_input_rgb, rgb_float.ptr<float>(), frame_size, cudaMemcpyHostToDevice),
-            "Upload RGB frame"
+            cudaMemcpy(frame_ptr, rgb_float.ptr<float>(), frame_size, cudaMemcpyHostToDevice),
+            "Upload input frame"
         );
-        
-        // Apply verified atomic spatial filtering
-        cudaError_t result = cuda_evm::spatially_filter_gaussian_gpu(
-            d_input_rgb, d_output_yiq, width, height, 3, config.level);
-        check_cuda_error(result, "Atomic CUDA spatial filtering");
-        
-        // Download result
-        cv::Mat filtered_yiq(height, width, CV_32FC3);
-        check_cuda_error(
-            cudaMemcpy(filtered_yiq.ptr<float>(), d_output_yiq, frame_size, cudaMemcpyDeviceToHost),
-            "Download YIQ frame"
-        );
-        
-        spatially_filtered_frames.push_back(filtered_yiq.clone());
         
         if (!config.quiet && (i + 1) % 50 == 0) {
-            std::cout << "Atomic CUDA spatial filtered " << (i + 1) << "/" << num_frames << " frames" << std::endl;
+            std::cout << "Uploaded " << (i + 1) << "/" << num_frames << " frames to GPU" << std::endl;
         }
     }
+    auto upload_end = std::chrono::high_resolution_clock::now();
+    auto upload_duration = std::chrono::duration_cast<std::chrono::milliseconds>(upload_end - upload_start);
+    
+    if (config.timing) {
+        std::cout << "Upload time: " << upload_duration.count() << " ms" << std::endl;
+    }
+    
+    // =====================================================================
+    // STEP 1: GPU-RESIDENT SPATIAL FILTERING (WORKS WITH [0,255])
+    // =====================================================================
+    if (!config.quiet) {
+        std::cout << "\\n=== Step 1: GPU-Resident Spatial Filtering ===" << std::endl;
+    }
+    
+    auto spatial_start = std::chrono::high_resolution_clock::now();
+    
+    // Process all frames on GPU without host transfers - spatial filtering expects [0,255]
+    for (int i = 0; i < num_frames; i++) {
+        float* input_ptr = d_input_frames_255 + (i * width * height * channels);      // [0,255]
+        float* output_ptr = d_spatially_filtered_255 + (i * width * height * channels); // [0,255]
+        
+        cudaError_t result = cuda_evm::spatially_filter_gaussian_gpu(
+            input_ptr, output_ptr, width, height, channels, config.level);
+        check_cuda_error(result, "GPU-resident spatial filtering");
+        
+        if (!config.quiet && (i + 1) % 50 == 0) {
+            std::cout << "GPU spatial filtered " << (i + 1) << "/" << num_frames << " frames" << std::endl;
+        }
+    }
+    gpu_sync_if_enabled(config, "spatial filtering");
     auto spatial_end = std::chrono::high_resolution_clock::now();
     auto spatial_duration = std::chrono::duration_cast<std::chrono::milliseconds>(spatial_end - spatial_start);
     
-    if (config.timing || !config.quiet) {
-        std::cout << "Atomic CUDA spatial filtering time: " << spatial_duration.count() << " ms" << std::endl;
+    if (config.timing) {
+        std::cout << "GPU spatial filtering time: " << spatial_duration.count() << " ms";
+        if (config.gpu_sync) {
+            std::cout << " (GPU-synchronized)";
+        } else {
+            std::cout << " (async launch only)";
+        }
+        std::cout << std::endl;
     }
-    
-    // Cleanup spatial filtering memory
-    cudaFree(d_input_rgb);
-    cudaFree(d_output_yiq);
     
     // =====================================================================
-    // STEP 2: CUDA TEMPORAL FILTERING (VERIFIED WORKING)
+    // STEP 2: GPU-RESIDENT TEMPORAL FILTERING (NEEDS [0,1] INPUT)
     // =====================================================================
     if (!config.quiet) {
-        std::cout << "\\n=== Step 2: CUDA Temporal Filtering (Pixel-Major Layout) ===" << std::endl;
+        std::cout << "\\n=== Step 2: GPU-Resident Temporal Filtering ===" << std::endl;
     }
     
-    const int channels = 3;
-    const size_t spatial_size = width * height * channels;
-    const size_t total_size = spatial_size * num_frames;
-    const size_t frame_size_bytes = width * height * channels * sizeof(float);
+    auto temporal_start = std::chrono::high_resolution_clock::now();
     
-    // Allocate GPU memory for temporal filtering
-    float *d_frame_major = nullptr;
-    float *d_pixel_major = nullptr;
-    float *d_filtered_pixel_major = nullptr;
-    
-    check_cuda_error(cudaMalloc(&d_frame_major, total_size * sizeof(float)), "Allocate frame major");
-    check_cuda_error(cudaMalloc(&d_pixel_major, total_size * sizeof(float)), "Allocate pixel major");
-    check_cuda_error(cudaMalloc(&d_filtered_pixel_major, total_size * sizeof(float)), "Allocate filtered pixel major");
-    
-    // Upload frames in frame-major layout (scale to [0,1] for temporal processing)
+    // Scale spatially filtered data from [0,255] to [0,1] for temporal processing
     if (!config.quiet) {
-        std::cout << "Uploading spatially filtered frames to GPU..." << std::endl;
+        std::cout << "Scaling spatially filtered data [0,255] → [0,1]..." << std::endl;
     }
-    for (int i = 0; i < num_frames; i++) {
-        cv::Mat yiq_float;
-        spatially_filtered_frames[i].convertTo(yiq_float, CV_32FC3, 1.0/255.0);
-        float* frame_ptr = d_frame_major + (i * width * height * channels);
-        check_cuda_error(
-            cudaMemcpy(frame_ptr, yiq_float.ptr<float>(), frame_size_bytes, cudaMemcpyHostToDevice),
-            "Upload frame data"
-        );
-    }
+    const int total_elements = width * height * channels * num_frames;
+    cudaError_t scale_err = gpu_scale_255_to_1(d_spatially_filtered_255, d_spatially_filtered_1, total_elements);
+    check_cuda_error(scale_err, "Scale YIQ data to [0,1] range");
     
-    // Transpose to pixel-major layout on GPU for temporal filtering
+    // Transpose scaled YIQ data to pixel-major layout for temporal processing
     if (!config.quiet) {
         std::cout << "Transposing to pixel-major layout..." << std::endl;
     }
@@ -332,130 +463,132 @@ int run_gaussian_pipeline(const EVMConfig& config, const std::vector<cv::Mat>& f
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x,
                   (height + blockSize.y - 1) / blockSize.y,
                   (channels + blockSize.z - 1) / blockSize.z);
+    
     cudaError_t transpose_err = launch_transpose_frame_to_pixel(
-        d_frame_major, d_pixel_major, width, height, channels, num_frames, gridSize, blockSize);
+        d_spatially_filtered_1, d_pixel_major, width, height, channels, num_frames, gridSize, blockSize);
     check_cuda_error(transpose_err, "Transpose frame to pixel major");
     
-    // Apply CUDA temporal filtering
+    // Apply CUDA temporal filtering (all data stays on GPU, [0,1] range)
     if (!config.quiet) {
-        std::cout << "Applying CUDA temporal filtering..." << std::endl;
+        std::cout << "Applying GPU-resident temporal filtering..." << std::endl;
     }
-    auto temporal_start = std::chrono::high_resolution_clock::now();
     cudaError_t temporal_err = cuda_evm::temporal_filter_gaussian_batch_gpu(
-        d_pixel_major, d_filtered_pixel_major, width, height, channels, num_frames,
+        d_pixel_major, d_temporal_filtered, width, height, channels, num_frames,
         config.fl, config.fh, config.fps, config.alpha, config.chrom_attenuation);
-    check_cuda_error(temporal_err, "CUDA temporal filtering");
-    auto temporal_end = std::chrono::high_resolution_clock::now();
-    auto temporal_duration = std::chrono::duration_cast<std::chrono::milliseconds>(temporal_end - temporal_start);
+    check_cuda_error(temporal_err, "GPU-resident temporal filtering");
     
-    if (config.timing) {
-        std::cout << "CUDA temporal filtering time: " << temporal_duration.count() << " ms" << std::endl;
-    }
-    
-    // Transpose filtered results back to frame-major layout
+    // Transpose filtered results back to frame-major layout (keep in [0,1] for reconstruction)
     if (!config.quiet) {
         std::cout << "Transposing filtered results to frame-major layout..." << std::endl;
     }
     transpose_err = launch_transpose_pixel_to_frame(
-        d_filtered_pixel_major, d_frame_major, width, height, channels, num_frames, gridSize, blockSize);
+        d_temporal_filtered, d_spatially_filtered_1, width, height, channels, num_frames, gridSize, blockSize);
     check_cuda_error(transpose_err, "Transpose pixel to frame major");
     
-    // Download temporal filtered frames
-    std::vector<cv::Mat> temporal_filtered_frames;
-    temporal_filtered_frames.reserve(num_frames);
-    if (!config.quiet) {
-        std::cout << "Downloading temporal filtered frames..." << std::endl;
-    }
-    for (int i = 0; i < num_frames; i++) {
-        cv::Mat filtered_frame(height, width, CV_32FC3);
-        float* frame_ptr = d_frame_major + (i * width * height * channels);
-        check_cuda_error(
-            cudaMemcpy(filtered_frame.ptr<float>(), frame_ptr, frame_size_bytes, cudaMemcpyDeviceToHost),
-            "Download filtered frame"
-        );
-        
-        // Convert back to [0,255] scale for compatibility with reconstruction
-        cv::Mat filtered_frame_255;
-        filtered_frame.convertTo(filtered_frame_255, CV_32FC3, 255.0);
-        temporal_filtered_frames.push_back(filtered_frame_255);
-    }
+    gpu_sync_if_enabled(config, "temporal filtering");
+    auto temporal_end = std::chrono::high_resolution_clock::now();
+    auto temporal_duration = std::chrono::duration_cast<std::chrono::milliseconds>(temporal_end - temporal_start);
     
-    if (!config.quiet) {
-        std::cout << "✅ CUDA temporal filtering complete" << std::endl;
+    if (config.timing) {
+        std::cout << "GPU temporal filtering time: " << temporal_duration.count() << " ms";
+        if (config.gpu_sync) {
+            std::cout << " (GPU-synchronized)";
+        } else {
+            std::cout << " (async launch only)";
+        }
+        std::cout << std::endl;
     }
-    
-    // Cleanup temporal filtering memory
-    cudaFree(d_frame_major);
-    cudaFree(d_pixel_major);
-    cudaFree(d_filtered_pixel_major);
     
     // =====================================================================
-    // STEP 3: CUDA RECONSTRUCTION (VERIFIED WORKING)
+    // STEP 3: GPU-RESIDENT RECONSTRUCTION (NEEDS [0,1] INPUTS)
     // =====================================================================
     if (!config.quiet) {
-        std::cout << "\\n=== Step 3: CUDA Reconstruction ===" << std::endl;
+        std::cout << "\\n=== Step 3: GPU-Resident Reconstruction ===" << std::endl;
     }
-    
-    std::vector<cv::Mat> final_frames;
-    final_frames.reserve(num_frames);
-    
-    float *d_original_rgb = nullptr;
-    float *d_filtered_yiq_signal = nullptr;
-    float *d_output_rgb = nullptr;
-    
-    check_cuda_error(cudaMalloc(&d_original_rgb, frame_size), "Allocate original RGB");
-    check_cuda_error(cudaMalloc(&d_filtered_yiq_signal, frame_size), "Allocate filtered YIQ signal");
-    check_cuda_error(cudaMalloc(&d_output_rgb, frame_size), "Allocate output RGB");
     
     auto recon_start = std::chrono::high_resolution_clock::now();
-    // Process each frame through CUDA reconstruction
+    
+    // Scale input frames from [0,255] to [0,1] for reconstruction
+    if (!config.quiet) {
+        std::cout << "Scaling input frames [0,255] → [0,1] for reconstruction..." << std::endl;
+    }
+    scale_err = gpu_scale_255_to_1(d_input_frames_255, d_input_frames_1, total_elements);
+    check_cuda_error(scale_err, "Scale input frames to [0,1] range");
+    
+    // Process all frames on GPU without host transfers - both inputs now in [0,1] range
+    if (!config.quiet) {
+        std::cout << "Processing reconstruction on GPU..." << std::endl;
+    }
     for (int i = 0; i < num_frames; i++) {
-        // Upload original frame as RGB
-        cv::Mat original_rgb;
-        cv::cvtColor(frames[i], original_rgb, cv::COLOR_BGR2RGB);
-        original_rgb.convertTo(original_rgb, CV_32FC3, 1.0/255.0);
-        check_cuda_error(
-            cudaMemcpy(d_original_rgb, original_rgb.ptr<float>(), frame_size, cudaMemcpyHostToDevice),
-            "Upload original RGB"
-        );
+        float* original_ptr = d_input_frames_1 + (i * width * height * channels);       // Original RGB frames [0,1]
+        float* filtered_ptr = d_spatially_filtered_1 + (i * width * height * channels); // Temporally filtered YIQ [0,1]
+        float* output_ptr = d_final_frames + (i * width * height * channels);           // Final RGB output [0,1]
         
-        // Upload temporally filtered YIQ signal
-        cv::Mat filtered_yiq_float;
-        temporal_filtered_frames[i].convertTo(filtered_yiq_float, CV_32FC3, 1.0/255.0);
-        check_cuda_error(
-            cudaMemcpy(d_filtered_yiq_signal, filtered_yiq_float.ptr<float>(), frame_size, cudaMemcpyHostToDevice),
-            "Upload filtered YIQ"
-        );
-        
-        // Apply CUDA reconstruction
+        // Apply CUDA reconstruction (all pointers are GPU memory, [0,1] range)
         cudaError_t result = cuda_evm::reconstruct_gaussian_frame_gpu(
-            d_original_rgb, d_filtered_yiq_signal, d_output_rgb, width, height, channels, config.alpha, config.chrom_attenuation);
-        check_cuda_error(result, "CUDA reconstruction");
-        
-        // Download reconstructed frame
-        cv::Mat output_frame(height, width, CV_32FC3);
-        check_cuda_error(
-            cudaMemcpy(output_frame.ptr<float>(), d_output_rgb, frame_size, cudaMemcpyDeviceToHost),
-            "Download reconstructed frame"
-        );
-        
-        final_frames.push_back(output_frame.clone());
+            original_ptr, filtered_ptr, output_ptr, width, height, channels, config.alpha, config.chrom_attenuation);
+        check_cuda_error(result, "GPU-resident reconstruction");
         
         if (!config.quiet && (i + 1) % 50 == 0) {
-            std::cout << "CUDA reconstructed " << (i + 1) << "/" << num_frames << " frames" << std::endl;
+            std::cout << "GPU reconstructed " << (i + 1) << "/" << num_frames << " frames" << std::endl;
         }
     }
+    
+    gpu_sync_if_enabled(config, "reconstruction");
     auto recon_end = std::chrono::high_resolution_clock::now();
     auto recon_duration = std::chrono::duration_cast<std::chrono::milliseconds>(recon_end - recon_start);
     
     if (config.timing) {
-        std::cout << "CUDA reconstruction time: " << recon_duration.count() << " ms" << std::endl;
+        std::cout << "GPU reconstruction time: " << recon_duration.count() << " ms";
+        if (config.gpu_sync) {
+            std::cout << " (GPU-synchronized)";
+        } else {
+            std::cout << " (async launch only)";
+        }
+        std::cout << std::endl;
     }
     
-    // Cleanup reconstruction memory
-    cudaFree(d_original_rgb);
-    cudaFree(d_filtered_yiq_signal);
-    cudaFree(d_output_rgb);
+    // =====================================================================
+    // DOWNLOAD: Final results from GPU (SINGLE TRANSFER)
+    // =====================================================================
+    if (!config.quiet) {
+        std::cout << "\\n=== Downloading Final Results from GPU ===" << std::endl;
+    }
+    
+    auto download_start = std::chrono::high_resolution_clock::now();
+    std::vector<cv::Mat> final_frames;
+    final_frames.reserve(num_frames);
+    
+    for (int i = 0; i < num_frames; i++) {
+        cv::Mat output_frame(height, width, CV_32FC3);
+        float* frame_ptr = d_final_frames + (i * width * height * channels);
+        check_cuda_error(
+            cudaMemcpy(output_frame.ptr<float>(), frame_ptr, frame_size, cudaMemcpyDeviceToHost),
+            "Download final frame"
+        );
+        final_frames.push_back(output_frame.clone());
+        
+        if (!config.quiet && (i + 1) % 50 == 0) {
+            std::cout << "Downloaded " << (i + 1) << "/" << num_frames << " final frames" << std::endl;
+        }
+    }
+    auto download_end = std::chrono::high_resolution_clock::now();
+    auto download_duration = std::chrono::duration_cast<std::chrono::milliseconds>(download_end - download_start);
+    
+    if (config.timing) {
+        std::cout << "Download time: " << download_duration.count() << " ms" << std::endl;
+    }
+    
+    // =====================================================================
+    // CLEANUP: Free all GPU memory
+    // =====================================================================
+    cudaFree(d_input_frames_255);
+    cudaFree(d_input_frames_1);
+    cudaFree(d_spatially_filtered_255);
+    cudaFree(d_spatially_filtered_1);
+    cudaFree(d_pixel_major);
+    cudaFree(d_temporal_filtered);
+    cudaFree(d_final_frames);
     
     // =====================================================================
     // STEP 4: SAVE OUTPUT VIDEO
@@ -482,22 +615,24 @@ int run_gaussian_pipeline(const EVMConfig& config, const std::vector<cv::Mat>& f
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     
     if (!config.quiet) {
-        std::cout << "\\n=== Full CUDA Pipeline Complete ===" << std::endl;
+        std::cout << "\\n=== CORRECTED GPU-Resident Pipeline Complete ===" << std::endl;
         std::cout << "Output video: " << config.output_video << std::endl;
         std::cout << "Total processing time: " << duration.count() / 1000.0 << " seconds" << std::endl;
         
         if (config.timing) {
             std::cout << "Breakdown:" << std::endl;
-            std::cout << "  Spatial filtering: " << spatial_duration.count() << " ms" << std::endl;
-            std::cout << "  Temporal filtering: " << temporal_duration.count() << " ms" << std::endl;
-            std::cout << "  Reconstruction: " << recon_duration.count() << " ms" << std::endl;
+            std::cout << "  Upload: " << upload_duration.count() << " ms" << std::endl;
+            std::cout << "  GPU Spatial filtering: " << spatial_duration.count() << " ms" << std::endl;
+            std::cout << "  GPU Temporal filtering: " << temporal_duration.count() << " ms" << std::endl;
+            std::cout << "  GPU Reconstruction: " << recon_duration.count() << " ms" << std::endl;
+            std::cout << "  Download: " << download_duration.count() << " ms" << std::endl;
         }
         
         std::cout << "\\n=== Pipeline Summary ===" << std::endl;
-        std::cout << "✅ CUDA Spatial Filtering: Verified atomic components (42.89 dB PSNR)" << std::endl;
-        std::cout << "✅ CUDA Temporal Filtering: Working with cuFFT and transpose" << std::endl;
-        std::cout << "✅ CUDA Reconstruction: Working with proper signal combination" << std::endl;
-        std::cout << "✅ Full GPU Acceleration: No CPU fallbacks" << std::endl;
+        std::cout << "✅ GPU-Resident Architecture: Complete with Correct Scaling" << std::endl;
+        std::cout << "✅ Data Range Management: [0,255] ↔ [0,1] conversions handled" << std::endl;
+        std::cout << "✅ Minimal Data Transfers: Upload once + Download once" << std::endl;
+        std::cout << "✅ Full GPU Acceleration: Complete" << std::endl;
     }
     
     return 0;
@@ -507,129 +642,256 @@ int run_laplacian_pipeline(const EVMConfig& config, const std::vector<cv::Mat>& 
                           int width, int height, int num_frames,
                           std::chrono::high_resolution_clock::time_point start_time) {
     if (!config.quiet) {
-        std::cout << "\\n=== CUDA Laplacian EVM Pipeline (37.62 dB PSNR, 78.4 FPS) ===" << std::endl;
+        std::cout << "\\n=== CUDA Laplacian EVM Pipeline ===" << std::endl;
     }
     
-    // Allocate input frames on GPU
-    const size_t frame_size = width * height * 3 * sizeof(float);
-    const size_t total_frames_size = frame_size * num_frames;
-    float* d_input_frames = nullptr;
+    const int channels = 3;
+    const size_t frame_size = width * height * channels * sizeof(float);
+    const size_t total_size = width * height * channels * num_frames;
+    const size_t total_bytes = total_size * sizeof(float);
     
-    check_cuda_error(cudaMalloc(&d_input_frames, total_frames_size), "Allocate input frames");
-    
-    // Upload all frames to GPU
+    // =====================================================================
+    // STEP 1: UPLOAD ALL FRAMES TO GPU
+    // =====================================================================
     if (!config.quiet) {
-        std::cout << "Uploading frames to GPU..." << std::endl;
+        std::cout << "\\n=== Step 1: Uploading Frames to GPU ===" << std::endl;
     }
+    
+    auto upload_start = std::chrono::high_resolution_clock::now();
+    
+    // Allocate GPU memory for input frames
+    float* d_input_frames = nullptr;
+    check_cuda_error(cudaMalloc(&d_input_frames, total_bytes), "Allocate input frames");
+    
+    // Upload all frames
     for (int i = 0; i < num_frames; i++) {
         cv::Mat rgb_frame;
         cv::cvtColor(frames[i], rgb_frame, cv::COLOR_BGR2RGB);
         cv::Mat rgb_float;
-        rgb_frame.convertTo(rgb_float, CV_32FC3, 1.0f/255.0f);
+        rgb_frame.convertTo(rgb_float, CV_32FC3);
         
-        float* frame_ptr = d_input_frames + (i * width * height * 3);
+        float* frame_ptr = d_input_frames + (i * width * height * channels);
         check_cuda_error(
             cudaMemcpy(frame_ptr, rgb_float.ptr<float>(), frame_size, cudaMemcpyHostToDevice),
             "Upload input frame"
         );
+        
+        if (!config.quiet && (i + 1) % 50 == 0) {
+            std::cout << "Uploaded " << (i + 1) << "/" << num_frames << " frames" << std::endl;
+        }
     }
     
-    // =====================================================================
-    // STEP 1: CUDA LAPLACIAN PYRAMID GENERATION
-    // =====================================================================
-    if (!config.quiet) {
-        std::cout << "\\n=== Step 1: CUDA Laplacian Pyramid Generation ===" << std::endl;
-    }
-    
-    auto pyramid_start = std::chrono::high_resolution_clock::now();
-    std::vector<LaplacianPyramidGPU> cuda_pyramids;
-    cudaError_t pyramid_err = getLaplacianPyramids_gpu(
-        d_input_frames, width, height, num_frames, config.level, cuda_pyramids);
-    check_cuda_error(pyramid_err, "CUDA Laplacian pyramid generation");
-    auto pyramid_end = std::chrono::high_resolution_clock::now();
-    auto pyramid_duration = std::chrono::duration_cast<std::chrono::milliseconds>(pyramid_end - pyramid_start);
+    auto upload_end = std::chrono::high_resolution_clock::now();
+    auto upload_duration = std::chrono::duration_cast<std::chrono::milliseconds>(upload_end - upload_start);
     
     if (config.timing) {
-        std::cout << "CUDA pyramid generation time: " << pyramid_duration.count() << " ms" << std::endl;
+        std::cout << "Upload time: " << upload_duration.count() << " ms" << std::endl;
     }
     
     // =====================================================================
-    // STEP 2: CUDA LAPLACIAN TEMPORAL FILTERING (IIR)
+    // STEP 2: SPATIAL PROCESSING - GENERATE LAPLACIAN PYRAMIDS
     // =====================================================================
     if (!config.quiet) {
-        std::cout << "\\n=== Step 2: CUDA Laplacian Temporal Filtering (IIR) ===" << std::endl;
+        std::cout << "\\n=== Step 2: Generating Laplacian Pyramids ===" << std::endl;
+    }
+    
+    auto spatial_start = std::chrono::high_resolution_clock::now();
+    
+    // Convert RGB to YIQ and generate Laplacian pyramids
+    float* d_yiq_frames = nullptr;
+    check_cuda_error(cudaMalloc(&d_yiq_frames, total_bytes), "Allocate YIQ frames");
+    
+    // Convert all frames to YIQ
+    for (int i = 0; i < num_frames; i++) {
+        float* rgb_ptr = d_input_frames + (i * width * height * channels);
+        float* yiq_ptr = d_yiq_frames + (i * width * height * channels);
+        
+        // Use existing planar RGB to YIQ kernel from cuda_color_conversion.cu
+        dim3 blockSize(16, 16);
+        dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+        cuda_evm::rgb_to_yiq_planar_kernel<<<gridSize, blockSize>>>(rgb_ptr, yiq_ptr, width, height, channels);
+        cudaError_t result = cudaGetLastError();
+        check_cuda_error(result, "RGB to YIQ conversion");
+        
+        if (!config.quiet && (i + 1) % 50 == 0) {
+            std::cout << "Converted " << (i + 1) << "/" << num_frames << " frames to YIQ" << std::endl;
+        }
+    }
+    
+    // Generate Laplacian pyramids for all frames
+    std::vector<cuda_evm::LaplacianPyramidGPU> pyramids;
+    cudaError_t pyramid_result = cuda_evm::getLaplacianPyramids_gpu(
+        d_yiq_frames, width, height, num_frames, config.level, pyramids);
+    check_cuda_error(pyramid_result, "Generate Laplacian pyramids");
+    
+    gpu_sync_if_enabled(config, "spatial processing");
+    auto spatial_end = std::chrono::high_resolution_clock::now();
+    auto spatial_duration = std::chrono::duration_cast<std::chrono::milliseconds>(spatial_end - spatial_start);
+    
+    if (config.timing) {
+        std::cout << "Spatial processing time: " << spatial_duration.count() << " ms";
+        if (config.gpu_sync) {
+            std::cout << " (GPU-synchronized)";
+        } else {
+            std::cout << " (async launch only)";
+        }
+        std::cout << std::endl;
+    }
+    
+    // =====================================================================
+    // STEP 3: TEMPORAL FILTERING WITH SPATIAL ATTENUATION
+    // =====================================================================
+    if (!config.quiet) {
+        std::cout << "\\n=== Step 3: Temporal Filtering with Spatial Attenuation ===" << std::endl;
     }
     
     auto temporal_start = std::chrono::high_resolution_clock::now();
-    std::vector<LaplacianPyramidGPU> filtered_pyramids;
-    cudaError_t temporal_err = filterLaplacianPyramids_gpu(
-        cuda_pyramids, filtered_pyramids, width, height, config.level, num_frames,
-        config.fl, config.fh, config.fps, config.alpha, config.chrom_attenuation);
-    check_cuda_error(temporal_err, "CUDA Laplacian temporal filtering");
+    
+    // Apply temporal filtering to Laplacian pyramids
+    // Lambda cutoff parameter for spatial attenuation (default from EVM paper)
+    float lambda_cutoff = 16.0f;  // Can be made configurable
+    
+    cudaError_t filter_result = cuda_evm::filterLaplacianPyramids_gpu(
+        pyramids, num_frames, config.level,
+        config.fps, config.fl, config.fh,
+        config.alpha, lambda_cutoff, config.chrom_attenuation);
+    check_cuda_error(filter_result, "Temporal filtering");
+    
+    gpu_sync_if_enabled(config, "temporal filtering");
     auto temporal_end = std::chrono::high_resolution_clock::now();
     auto temporal_duration = std::chrono::duration_cast<std::chrono::milliseconds>(temporal_end - temporal_start);
     
     if (config.timing) {
-        std::cout << "CUDA temporal filtering time: " << temporal_duration.count() << " ms" << std::endl;
+        std::cout << "Temporal filtering time: " << temporal_duration.count() << " ms";
+        if (config.gpu_sync) {
+            std::cout << " (GPU-synchronized)";
+        } else {
+            std::cout << " (async launch only)";
+        }
+        std::cout << std::endl;
     }
     
     // =====================================================================
-    // STEP 3: CUDA LAPLACIAN RECONSTRUCTION
+    // STEP 4: RECONSTRUCTION
     // =====================================================================
     if (!config.quiet) {
-        std::cout << "\\n=== Step 3: CUDA Laplacian Reconstruction ===" << std::endl;
+        std::cout << "\\n=== Step 4: Laplacian Reconstruction ===" << std::endl;
     }
     
-    float* d_output_frames = nullptr;
-    check_cuda_error(cudaMalloc(&d_output_frames, total_frames_size), "Allocate output frames");
-    
     auto recon_start = std::chrono::high_resolution_clock::now();
-    cudaError_t recon_err = reconstructLaplacianFrames_gpu(
-        d_input_frames, filtered_pyramids, d_output_frames,
-        width, height, config.level, num_frames, config.alpha, config.chrom_attenuation);
-    check_cuda_error(recon_err, "CUDA Laplacian reconstruction");
+    
+    // Allocate memory for reconstructed YIQ frames
+    float* d_reconstructed_yiq = nullptr;
+    check_cuda_error(cudaMalloc(&d_reconstructed_yiq, total_bytes), "Allocate reconstructed YIQ");
+    
+    // Reconstruct each frame from its filtered Laplacian pyramid
+    for (int i = 0; i < num_frames; i++) {
+        float* original_yiq_ptr = d_yiq_frames + (i * width * height * channels);
+        float* output_yiq_ptr = d_reconstructed_yiq + (i * width * height * channels);
+        
+        cudaError_t recon_result = cuda_evm::reconstructLaplacianImage_gpu(
+            original_yiq_ptr, pyramids[i], output_yiq_ptr, width, height);
+        check_cuda_error(recon_result, "Laplacian reconstruction");
+        
+        if (!config.quiet && (i + 1) % 50 == 0) {
+            std::cout << "Reconstructed " << (i + 1) << "/" << num_frames << " frames" << std::endl;
+        }
+    }
+    
+    // Convert reconstructed YIQ back to RGB
+    float* d_final_rgb = nullptr;
+    check_cuda_error(cudaMalloc(&d_final_rgb, total_bytes), "Allocate final RGB frames");
+    
+    for (int i = 0; i < num_frames; i++) {
+        float* yiq_ptr = d_reconstructed_yiq + (i * width * height * channels);
+        float* rgb_ptr = d_final_rgb + (i * width * height * channels);
+        
+        // Use existing planar YIQ to RGB kernel from cuda_color_conversion.cu
+        dim3 blockSize(16, 16);
+        dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+        cuda_evm::yiq_to_rgb_planar_kernel<<<gridSize, blockSize>>>(yiq_ptr, rgb_ptr, width, height, channels);
+        cudaError_t convert_result = cudaGetLastError();
+        check_cuda_error(convert_result, "YIQ to RGB conversion");
+    }
+    
+    gpu_sync_if_enabled(config, "reconstruction");
     auto recon_end = std::chrono::high_resolution_clock::now();
     auto recon_duration = std::chrono::duration_cast<std::chrono::milliseconds>(recon_end - recon_start);
     
     if (config.timing) {
-        std::cout << "CUDA reconstruction time: " << recon_duration.count() << " ms" << std::endl;
+        std::cout << "Reconstruction time: " << recon_duration.count() << " ms";
+        if (config.gpu_sync) {
+            std::cout << " (GPU-synchronized)";
+        } else {
+            std::cout << " (async launch only)";
+        }
+        std::cout << std::endl;
     }
     
     // =====================================================================
-    // STEP 4: DOWNLOAD AND SAVE OUTPUT VIDEO
+    // STEP 5: DOWNLOAD RESULTS AND SAVE VIDEO
     // =====================================================================
     if (!config.quiet) {
-        std::cout << "\\n=== Step 4: Saving Output Video ===" << std::endl;
+        std::cout << "\\n=== Step 5: Downloading Results and Saving Video ===" << std::endl;
     }
     
+    auto download_start = std::chrono::high_resolution_clock::now();
+    
+    // Download final RGB frames
+    std::vector<cv::Mat> final_frames;
+    final_frames.reserve(num_frames);
+    
+    for (int i = 0; i < num_frames; i++) {
+        cv::Mat output_frame(height, width, CV_32FC3);
+        float* frame_ptr = d_final_rgb + (i * width * height * channels);
+        check_cuda_error(
+            cudaMemcpy(output_frame.ptr<float>(), frame_ptr, frame_size, cudaMemcpyDeviceToHost),
+            "Download final frame"
+        );
+        final_frames.push_back(output_frame.clone());
+        
+        if (!config.quiet && (i + 1) % 50 == 0) {
+            std::cout << "Downloaded " << (i + 1) << "/" << num_frames << " frames" << std::endl;
+        }
+    }
+    
+    auto download_end = std::chrono::high_resolution_clock::now();
+    auto download_duration = std::chrono::duration_cast<std::chrono::milliseconds>(download_end - download_start);
+    
+    if (config.timing) {
+        std::cout << "Download time: " << download_duration.count() << " ms" << std::endl;
+    }
+    
+    // Save output video
     cv::VideoWriter writer(config.output_video, cv::VideoWriter::fourcc('M','J','P','G'), config.fps, cv::Size(width, height));
     if (!writer.isOpened()) {
         std::cerr << "Error: Cannot open video writer" << std::endl;
+        
+        // Cleanup GPU memory
+        cudaFree(d_input_frames);
+        cudaFree(d_yiq_frames);
+        cudaFree(d_reconstructed_yiq);
+        cudaFree(d_final_rgb);
+        
         return 1;
     }
     
     for (int i = 0; i < num_frames; i++) {
-        cv::Mat output_frame(height, width, CV_32FC3);
-        float* frame_ptr = d_output_frames + (i * width * height * 3);
-        check_cuda_error(
-            cudaMemcpy(output_frame.ptr<float>(), frame_ptr, frame_size, cudaMemcpyDeviceToHost),
-            "Download output frame"
-        );
-        
         cv::Mat frame_bgr;
-        cv::cvtColor(output_frame, frame_bgr, cv::COLOR_RGB2BGR);
+        cv::cvtColor(final_frames[i], frame_bgr, cv::COLOR_RGB2BGR);
         frame_bgr.convertTo(frame_bgr, CV_8UC3, 255.0);
         writer << frame_bgr;
-        
-        if (!config.quiet && (i + 1) % 50 == 0) {
-            std::cout << "Saved " << (i + 1) << "/" << num_frames << " frames" << std::endl;
-        }
     }
     writer.release();
     
-    // Cleanup
+    // =====================================================================
+    // CLEANUP GPU MEMORY
+    // =====================================================================
     cudaFree(d_input_frames);
-    cudaFree(d_output_frames);
+    cudaFree(d_yiq_frames);
+    cudaFree(d_reconstructed_yiq);
+    cudaFree(d_final_rgb);
+    // Note: pyramids will be automatically cleaned up by their destructors
     
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
@@ -641,16 +903,19 @@ int run_laplacian_pipeline(const EVMConfig& config, const std::vector<cv::Mat>& 
         
         if (config.timing) {
             std::cout << "Breakdown:" << std::endl;
-            std::cout << "  Pyramid generation: " << pyramid_duration.count() << " ms" << std::endl;
-            std::cout << "  Temporal filtering: " << temporal_duration.count() << " ms" << std::endl;
+            std::cout << "  Upload: " << upload_duration.count() << " ms" << std::endl;
+            std::cout << "  Spatial Processing: " << spatial_duration.count() << " ms" << std::endl;
+            std::cout << "  Temporal Filtering: " << temporal_duration.count() << " ms" << std::endl;
             std::cout << "  Reconstruction: " << recon_duration.count() << " ms" << std::endl;
+            std::cout << "  Download: " << download_duration.count() << " ms" << std::endl;
         }
         
         std::cout << "\\n=== Pipeline Summary ===" << std::endl;
-        std::cout << "✅ CUDA Laplacian Pyramids: Working with validated generation" << std::endl;
-        std::cout << "✅ CUDA IIR Temporal Filtering: 54.69 dB PSNR quality" << std::endl;
-        std::cout << "✅ CUDA Laplacian Reconstruction: Full GPU acceleration" << std::endl;
-        std::cout << "✅ Complete Laplacian Pipeline: 37.62 dB PSNR, 78.4 FPS performance" << std::endl;
+        std::cout << "✅ CUDA Laplacian Processing: Complete" << std::endl;
+        std::cout << "✅ IIR Temporal Filtering: High Speed Mode" << std::endl;
+        std::cout << "✅ Spatial Attenuation: Applied" << std::endl;
+        std::cout << "✅ Multi-level Pyramid: " << config.level << " levels" << std::endl;
+        std::cout << "✅ GPU Acceleration: Complete" << std::endl;
     }
     
     return 0;
