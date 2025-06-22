@@ -83,7 +83,7 @@ cudaError_t getLaplacianPyramids_gpu(
  * @param fl Low cutoff frequency (Hz)
  * @param fh High cutoff frequency (Hz)
  * @param alpha Magnification factor
- * @param lambda_cutoff Spatial wavelength cutoff for attenuation
+ * @param delta Calculated delta value for spatial attenuation (lambda_cutoff / (8 * (1 + alpha)))
  * @param chrom_attenuation Chrominance attenuation factor
  * @return cudaError_t CUDA error code
  */
@@ -91,7 +91,7 @@ cudaError_t filterLaplacianPyramids_gpu(
     std::vector<LaplacianPyramidGPU>& pyramids,
     int num_frames, int pyramid_levels,
     float fps, float fl, float fh,
-    float alpha, float lambda_cutoff, float chrom_attenuation
+    float alpha, float delta, float chrom_attenuation
 );
 
 /**

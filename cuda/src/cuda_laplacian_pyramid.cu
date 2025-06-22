@@ -444,7 +444,7 @@ cudaError_t filterLaplacianPyramids_gpu(
     std::vector<LaplacianPyramidGPU>& pyramids,
     int num_frames, int pyramid_levels,
     float fps, float fl, float fh,
-    float alpha, float lambda_cutoff, float chrom_attenuation)
+    float alpha, float delta, float chrom_attenuation)
 {
     if (pyramids.empty() || num_frames <= 0 || pyramid_levels <= 0) {
         return cudaErrorInvalidValue;
@@ -463,11 +463,11 @@ cudaError_t filterLaplacianPyramids_gpu(
     b_low[0] = k_low; b_low[1] = k_low;
     a_low[0] = 1.0f; a_low[1] = -(1.0f - k_low);
     
-    // High-pass filter: butter(1, fh_norm, 'high')  
+    // High-pass filter: butter(1, fh_norm, 'low') - MATCHING CPU REFERENCE EXACTLY!
     float b_high[2], a_high[2];
     float wc_high = tanf(M_PI * fh_norm / 2.0f);
-    float k_high = 1.0f / (1.0f + wc_high);
-    b_high[0] = k_high; b_high[1] = -k_high;
+    float k_high = wc_high / (1.0f + wc_high);
+    b_high[0] = k_high; b_high[1] = k_high;
     a_high[0] = 1.0f; a_high[1] = -(1.0f - k_high);
     
     // Allocate state memory for each pyramid level
@@ -525,6 +525,19 @@ cudaError_t filterLaplacianPyramids_gpu(
             int height = pyramids[frame].heights[level];
             int channels = 3;
             
+            // CRITICAL: Store original input BEFORE any filtering modifies pyramids[frame].d_levels[level]
+            float* d_original_input = nullptr;
+            size_t level_bytes = pyramids[frame].level_sizes[level] * sizeof(float);
+            cudaError_t err = cudaMalloc(&d_original_input, level_bytes);
+            if (err != cudaSuccess) goto cleanup;
+            
+            err = cudaMemcpy(d_original_input, pyramids[frame].d_levels[level], 
+                           level_bytes, cudaMemcpyDeviceToDevice);
+            if (err != cudaSuccess) {
+                cudaFree(d_original_input);
+                goto cleanup;
+            }
+            
             // Launch kernels for IIR filtering
             dim3 blockSize(16, 16, 1);
             dim3 gridSize((width + blockSize.x - 1) / blockSize.x,
@@ -533,19 +546,22 @@ cudaError_t filterLaplacianPyramids_gpu(
             
             // Low-pass filter: y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1]
             iirFilterKernel<<<gridSize, blockSize>>>(
-                pyramids[frame].d_levels[level],  // current input
+                d_original_input,                 // current input (original, unfiltered)
                 d_prev_input[level],              // previous input  
                 d_lowpass_state[level],           // previous output (state)
                 d_temp_lowpass[level],            // current output
                 b_low[0], b_low[1], a_low[1],
                 width, height, channels);
             
-            cudaError_t err = cudaGetLastError();
-            if (err != cudaSuccess) goto cleanup;
+            err = cudaGetLastError();
+            if (err != cudaSuccess) {
+                cudaFree(d_original_input);
+                goto cleanup;
+            }
             
             // High-pass filter: y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1]
             iirFilterKernel<<<gridSize, blockSize>>>(
-                pyramids[frame].d_levels[level],  // current input
+                d_original_input,                 // current input (original, unfiltered)
                 d_prev_input[level],              // previous input
                 d_highpass_state[level],          // previous output (state)
                 d_temp_highpass[level],           // current output
@@ -563,15 +579,21 @@ cudaError_t filterLaplacianPyramids_gpu(
             err = cudaGetLastError();
             if (err != cudaSuccess) goto cleanup;
             
-            // Apply spatial attenuation (matching CPU implementation)
+            // Apply spatial attenuation (EXACTLY matching CPU implementation)
             if (level >= 1 && level < (pyramid_levels - 1)) {
                 float lambda = sqrtf((float)(height * height + width * width));
-                float new_alpha = (lambda / (8.0f * lambda_cutoff)) - 1.0f;
+                float new_alpha = (lambda / (8.0f * delta)) - 1.0f;
                 float current_alpha = fminf(alpha, new_alpha);
                 
                 spatialAttenuationKernel<<<gridSize, blockSize>>>(
-                    d_temp_bandpass[level], pyramids[frame].d_levels[level],
+                    d_temp_bandpass[level], d_temp_bandpass[level],
                     current_alpha, chrom_attenuation, width, height, channels);
+                
+                // Copy the attenuated result to the output pyramid
+                err = cudaMemcpy(pyramids[frame].d_levels[level], d_temp_bandpass[level],
+                               pyramids[frame].level_sizes[level] * sizeof(float),
+                               cudaMemcpyDeviceToDevice);
+                if (err != cudaSuccess) goto cleanup;
             } else {
                 // No spatial attenuation, just copy bandpass result
                 err = cudaMemcpy(pyramids[frame].d_levels[level], d_temp_bandpass[level],
@@ -591,10 +613,16 @@ cudaError_t filterLaplacianPyramids_gpu(
                            cudaMemcpyDeviceToDevice);
             if (err != cudaSuccess) goto cleanup;
             
-            err = cudaMemcpy(d_prev_input[level], pyramids[frame].d_levels[level],
-                           pyramids[frame].level_sizes[level] * sizeof(float),
-                           cudaMemcpyDeviceToDevice);
-            if (err != cudaSuccess) goto cleanup;
+            // Update d_prev_input with ORIGINAL input (not filtered result)
+            err = cudaMemcpy(d_prev_input[level], d_original_input,
+                           level_bytes, cudaMemcpyDeviceToDevice);
+            if (err != cudaSuccess) {
+                cudaFree(d_original_input);
+                goto cleanup;
+            }
+            
+            // Cleanup temporary original input buffer
+            cudaFree(d_original_input);
         }
     }
     

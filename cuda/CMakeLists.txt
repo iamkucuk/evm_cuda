@@ -29,6 +29,32 @@ list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/src/main.cu")
 # Add transpose_only.cu to sources
 list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/transpose_only.cu")
 
+# CPU Reference Implementation for validation (not part of main library)
+add_executable(cpu_reference_laplacian ${CMAKE_SOURCE_DIR}/cpu_reference_laplacian.cu)
+set_target_properties(cpu_reference_laplacian PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "86"
+)
+target_link_libraries(cpu_reference_laplacian PRIVATE ${OpenCV_LIBS})
+
+# Component Isolation Test for systematic debugging (not part of main library)
+add_executable(component_isolation_test ${CMAKE_SOURCE_DIR}/component_isolation_test.cu)
+set_target_properties(component_isolation_test PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "86"
+)
+target_link_libraries(component_isolation_test PRIVATE ${OpenCV_LIBS})
+
+# Hybrid Component Test for isolating specific CUDA components
+add_executable(hybrid_component_test 
+    ${CMAKE_SOURCE_DIR}/hybrid_component_test.cu
+    ${CMAKE_SOURCE_DIR}/cuda_cpu_interface.cu)
+set_target_properties(hybrid_component_test PROPERTIES
+    CUDA_RUNTIME_LIBRARY Shared
+    CUDA_ARCHITECTURES "86"
+)
+target_link_libraries(hybrid_component_test PRIVATE evm_core ${OpenCV_LIBS})
+
 # Main library with all core sources (same name pattern as reference: evm_core)
 add_library(evm_core STATIC ${SOURCES} ${HEADERS})
 

@@ -668,7 +668,7 @@ int run_laplacian_pipeline(const EVMConfig& config, const std::vector<cv::Mat>& 
         cv::Mat rgb_frame;
         cv::cvtColor(frames[i], rgb_frame, cv::COLOR_BGR2RGB);
         cv::Mat rgb_float;
-        rgb_frame.convertTo(rgb_float, CV_32FC3);
+        rgb_frame.convertTo(rgb_float, CV_32FC3, 1.0/255.0);  // Convert [0,255] to [0,1]
         
         float* frame_ptr = d_input_frames + (i * width * height * channels);
         check_cuda_error(
@@ -748,13 +748,14 @@ int run_laplacian_pipeline(const EVMConfig& config, const std::vector<cv::Mat>& 
     auto temporal_start = std::chrono::high_resolution_clock::now();
     
     // Apply temporal filtering to Laplacian pyramids
-    // Lambda cutoff parameter for spatial attenuation (default from EVM paper)
-    float lambda_cutoff = 16.0f;  // Can be made configurable
+    // Calculate lambda cutoff and delta exactly like CPU reference (laplacian_pyramid.cpp line 186)
+    float lambda_cutoff = 16.0f;  // Default from EVM paper
+    float delta = lambda_cutoff / (8.0f * (1.0f + config.alpha));
     
     cudaError_t filter_result = cuda_evm::filterLaplacianPyramids_gpu(
         pyramids, num_frames, config.level,
         config.fps, config.fl, config.fh,
-        config.alpha, lambda_cutoff, config.chrom_attenuation);
+        config.alpha, delta, config.chrom_attenuation);
     check_cuda_error(filter_result, "Temporal filtering");
     
     gpu_sync_if_enabled(config, "temporal filtering");
