@@ -339,7 +339,11 @@ The CUDA implementation demonstrated a significant performance improvement over 
 These results highlight:
 -   A **maximum speedup of 5.17×** achieved with the GPU-Sync timing methodology.
 -   Excellent consistency in CUDA performance (CV < 1.4%).
--   Minimal overhead between Async and GPU-Sync modes (GPU-Sync being ~2.7% faster), suggesting efficient GPU utilization where kernel execution times dominate launch latencies for this workload.
+-   **Counterintuitive performance characteristic:** GPU-Sync mode performs slightly better than Async mode (~2.7% faster), which initially appears unexpected since asynchronous execution typically allows better thread utilization by preventing thread starvation.
+
+However, this result is actually consistent with the **inherently sequential nature** of the Eulerian Video Magnification algorithm. The three major EVM modules—spatial filtering, temporal filtering, and reconstruction—are highly parallelizable within themselves but must execute sequentially relative to each other. Spatial filtering operates on the spatial dimension and must complete construction of the entire spatial pyramid before temporal filtering can begin its processing on the temporal dimension. Similarly, reconstruction cannot commence until temporal filtering has processed all temporal data. This sequential dependency between major pipeline stages eliminates most opportunities for CPU-GPU work overlap that would benefit from asynchronous execution.
+
+The slight performance advantage of GPU-Sync mode can be attributed to reduced measurement overhead (eliminating kernel launch latencies and CUDA API call overhead from timing measurements) and potentially better CUDA driver optimizations when explicit synchronization points are provided, rather than any fundamental algorithmic benefit.
 
 **b. CUDA Pipeline Component Breakdown (GPU-Sync Mode):**
 A detailed breakdown of execution time within the CUDA pipeline (using GPU-Sync for accuracy) reveals where time is spent (mean times: Spatial Filtering 1,158ms; Temporal Filtering 265ms; Reconstruction 208ms; Estimated Data Transfer ~1,327ms):
