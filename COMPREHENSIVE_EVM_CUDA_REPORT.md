@@ -6,7 +6,7 @@ Eulerian Video Magnification (EVM) is a powerful technique for revealing subtle 
 
 ## ii. Motivation & Significance
 
-Eulerian Video Magnification (EVM), as introduced by Wu et al. ([`vidmag.md`](vidmag.md:1)), offers a remarkable capability to visualize minute changes in video sequences that are otherwise invisible. These subtle variations can carry significant information, such as the human pulse revealed through nearly imperceptible skin color changes ([`vidmag.md#L27`](vidmag.md:27)), or the subtle vibrations of structures. Applications span diverse fields including medical diagnostics (e.g., non-contact physiological monitoring), mechanical engineering (e.g., structural integrity analysis, modal analysis), and general scientific discovery.
+Eulerian Video Magnification (EVM), as introduced by Wu et al. [1], offers a remarkable capability to visualize minute changes in video sequences that are otherwise invisible. These subtle variations can carry significant information, such as the human pulse revealed through nearly imperceptible skin color changes [1], or the subtle vibrations of structures. Applications span diverse fields including medical diagnostics (e.g., non-contact physiological monitoring), mechanical engineering (e.g., structural integrity analysis, modal analysis), and general scientific discovery.
 
 However, the computational demands of EVM, involving spatial decomposition (e.g., Laplacian pyramids) and temporal filtering across multiple video frames and spatial scales, can be substantial, particularly for high-resolution or long-duration videos. This computational intensity often restricts its application in real-time scenarios or large-scale analyses. Accelerating the EVM pipeline is therefore crucial for unlocking its full potential and broadening its applicability.
 
@@ -20,11 +20,11 @@ This study aims to contribute to the field of applied parallel programming by de
 
 ## iii. Problem Statement
 
-The core problem addressed in this project is the computationally intensive nature of the Eulerian Video Magnification (EVM) algorithm. Given a standard video sequence as input, the EVM process, as detailed by Wu et al. ([`vidmag.md#L17`](vidmag.md:17)), involves several key steps:
+The core problem addressed in this project is the computationally intensive nature of the Eulerian Video Magnification (EVM) algorithm. Given a standard video sequence as input, the EVM process, as detailed by Wu et al. [1], involves several key steps:
 
-1.  **Spatial Decomposition:** The input video frames are typically decomposed into a multi-resolution pyramid (e.g., Gaussian or Laplacian pyramid, as discussed in [`vidmag.md#L51`](vidmag.md:51)). This step isolates different spatial frequency bands.
-2.  **Temporal Filtering:** For each spatial frequency band at each pixel location, the time series of values is filtered using a temporal bandpass filter (e.g., IIR or FIR filters, see [`vidmag.md#L189`](vidmag.md:189)) to isolate specific frequencies of interest (e.g., those corresponding to a human pulse or a specific mechanical vibration).
-3.  **Amplification:** The filtered temporal signals are then amplified by a user-defined factor, [`α`](vidmag.md:179). This amplification may be modulated based on spatial frequency to avoid excessive noise or artifact generation, particularly at higher spatial frequencies, guided by a cutoff wavelength [`λc`](vidmag.md:179).
+1.  **Spatial Decomposition:** The input video frames are typically decomposed into a multi-resolution pyramid (e.g., Gaussian or Laplacian pyramid [1]). This step isolates different spatial frequency bands.
+2.  **Temporal Filtering:** For each spatial frequency band at each pixel location, the time series of values is filtered using a temporal bandpass filter (e.g., IIR or FIR filters [1]) to isolate specific frequencies of interest (e.g., those corresponding to a human pulse or a specific mechanical vibration).
+3.  **Amplification:** The filtered temporal signals are then amplified by a user-defined factor, α [1]. This amplification may be modulated based on spatial frequency to avoid excessive noise or artifact generation, particularly at higher spatial frequencies, guided by a cutoff wavelength λc [1].
 4.  **Reconstruction:** The amplified, filtered signals are added back to the original signal (or a component thereof, like the lowest frequency band of the pyramid), and the spatial pyramid is collapsed to reconstruct the output video, which now reveals the magnified temporal variations.
 
 The objective of this project is to design, implement, and evaluate a CUDA-accelerated version of this EVM algorithm. The specific goals include:
@@ -38,11 +38,11 @@ The objective of this project is to design, implement, and evaluate a CUDA-accel
 The successful completion of this project will result in a high-performance EVM system and a detailed report on its implementation and performance characteristics.
 ## iv. Prior Work & Limitations
 
-The foundational work in Eulerian Video Magnification by Wu et al. ([`vidmag.md`](vidmag.md:1)) serves as the primary prior art for this project. Their paper introduced the core Eulerian approach, contrasting it with earlier Lagrangian methods ([`vidmag.md#L33`](vidmag.md:33)) that rely on explicit motion tracking (e.g., Liu et al. [\[2005\] (`vidmag.md#L371`)](vidmag.md:371)). Lagrangian techniques, while effective for certain types of motion magnification, often face challenges with computational expense, accuracy of motion estimation (especially at occlusion boundaries), and the need for complex auxiliary processes like motion segmentation and in-painting ([`vidmag.md#L39`](vidmag.md:39)).
+The foundational work in Eulerian Video Magnification by Wu et al. [1] serves as the primary prior art for this project. Their paper introduced the core Eulerian approach, contrasting it with earlier Lagrangian methods [1] that rely on explicit motion tracking (e.g., Liu et al. [2]). Lagrangian techniques, while effective for certain types of motion magnification, often face challenges with computational expense, accuracy of motion estimation (especially at occlusion boundaries), and the need for complex auxiliary processes like motion segmentation and in-painting [1].
 
-The Eulerian method, by analyzing temporal variations of pixel intensities at fixed locations within a spatially multi-scale framework, bypasses the need for explicit motion estimation for small motions ([`vidmag.md#L41`](vidmag.md:41)). Wu et al. demonstrated its efficacy for revealing imperceptible color changes (like blood flow, [`vidmag.md#L13`](vidmag.md:13)) and small motions ([`vidmag.md#L31`](vidmag.md:31)). Their work laid out the theoretical basis, including the linear approximation for motion magnification ([`vidmag.md#L69`](vidmag.md:69)) and the bounds for this approximation ([`vidmag.md#L118`](vidmag.md:118)). They also discussed sensitivity to noise and the role of spatial pooling ([`vidmag.md#L237`](vidmag.md:237)).
+The Eulerian method, by analyzing temporal variations of pixel intensities at fixed locations within a spatially multi-scale framework, bypasses the need for explicit motion estimation for small motions [1]. Wu et al. demonstrated its efficacy for revealing imperceptible color changes (like blood flow) and small motions [1]. Their work laid out the theoretical basis, including the linear approximation for motion magnification and the bounds for this approximation [1]. They also discussed sensitivity to noise and the role of spatial pooling [1].
 
-While the original paper ([`vidmag.md`](vidmag.md:1)) mentioned a real-time CPU-based prototype ([`vidmag.md#L177`](vidmag.md:177)), it did not delve into a detailed performance analysis of a highly optimized parallel implementation on GPU architectures like CUDA. While other public implementations, such as the one found at `https://github.com/hbenbel/Eulerian-Video-Magnification` [9], exist and may have offered general insights into EVM, the CPU implementation for *this* project was developed independently, primarily utilizing OpenCV for its image processing functionalities. The primary limitation of the existing body of work, from the perspective of this project, is the gap in a comprehensive study of CUDA-based acceleration for EVM. This includes a detailed breakdown of performance gains, an analysis of bottlenecks specific to a GPU implementation, and an examination of various CUDA optimization strategies tailored for the EVM pipeline.
+While the original paper [1] mentioned a real-time CPU-based prototype, it did not delve into a detailed performance analysis of a highly optimized parallel implementation on GPU architectures like CUDA. While other public implementations, such as the one found at `https://github.com/hbenbel/Eulerian-Video-Magnification` [3], exist and may have offered general insights into EVM, the CPU implementation for *this* project was developed independently, primarily utilizing OpenCV for its image processing functionalities. The primary limitation of the existing body of work, from the perspective of this project, is the gap in a comprehensive study of CUDA-based acceleration for EVM. This includes a detailed breakdown of performance gains, an analysis of bottlenecks specific to a GPU implementation, and an examination of various CUDA optimization strategies tailored for the EVM pipeline.
 
 This project aims to address this gap by:
 1.  Implementing a robust EVM pipeline on CUDA.
@@ -50,30 +50,30 @@ This project aims to address this gap by:
 3.  Analyzing the specific challenges and opportunities in parallelizing each stage of the EVM algorithm on a GPU.
 4.  Investigating the performance characteristics, including speedup and bottlenecks, of the CUDA implementation.
 
-The limitation of this current project is that it focuses primarily on the acceleration of the EVM algorithm as described by Wu et al. ([`vidmag.md`](vidmag.md:1)) and does not explore significant algorithmic variations or novel applications beyond performance enhancement.
+The limitation of this current project is that it focuses primarily on the acceleration of the EVM algorithm as described by Wu et al. [1] and does not explore significant algorithmic variations or novel applications beyond performance enhancement.
 
 ## v. Theory/Algorithm
 
-The Eulerian Video Magnification (EVM) technique, as conceptualized by Wu et al. ([`vidmag.md`](vidmag.md:1)), operates by amplifying subtle temporal changes in video sequences. The core idea is to process the video in a way that makes these imperceptible variations visible. This is achieved through a combination of spatial and temporal processing, without resorting to explicit motion tracking for small movements, characteristic of the Eulerian perspective.
+The Eulerian Video Magnification (EVM) technique, as conceptualized by Wu et al. [1], operates by amplifying subtle temporal changes in video sequences. The core idea is to process the video in a way that makes these imperceptible variations visible. This is achieved through a combination of spatial and temporal processing, without resorting to explicit motion tracking for small movements, characteristic of the Eulerian perspective.
 
-### 1. Core EVM Algorithm ([`vidmag.md`](vidmag.md:1))
+### 1. Core EVM Algorithm
 
-The EVM algorithm can be broken down into the following key stages, illustrated in Figure 2 of [`vidmag.md#L35`](vidmag.md:35):
+The EVM algorithm can be broken down into the following key stages [1]:
 
 **a. Spatial Decomposition:**
-The input video frames are first decomposed into different spatial frequency bands. This is typically achieved by constructing a spatial pyramid, most commonly a Laplacian pyramid ([`vidmag.md#L51`](vidmag.md:51)), for each frame. The Laplacian pyramid represents the frame as a series of band-pass filtered images, each capturing details at a different spatial scale, plus a low-frequency residual. Alternatively, a Gaussian pyramid can be used, especially if the goal is primarily spatial pooling to improve signal-to-noise ratio (SNR) for color amplification tasks ([`vidmag.md#L51`](vidmag.md:51)). This multi-scale representation is crucial because the signals of interest might have different characteristics at different spatial frequencies, and noise might also vary across scales.
+The input video frames are first decomposed into different spatial frequency bands. This is typically achieved by constructing a spatial pyramid, most commonly a Laplacian pyramid [1], for each frame. The Laplacian pyramid represents the frame as a series of band-pass filtered images, each capturing details at a different spatial scale, plus a low-frequency residual. Alternatively, a Gaussian pyramid can be used, especially if the goal is primarily spatial pooling to improve signal-to-noise ratio (SNR) for color amplification tasks [1]. This multi-scale representation is crucial because the signals of interest might have different characteristics at different spatial frequencies, and noise might also vary across scales.
 
 **b. Temporal Filtering:**
-For each spatial layer of the pyramid (i.e., each band-pass image) and at each pixel location within that layer, the sequence of pixel values over time forms a temporal signal. This signal is then subjected to temporal filtering. A bandpass filter is applied to isolate specific temporal frequencies of interest ([`vidmag.md#L53`](vidmag.md:53)). For instance, to visualize the human pulse, frequencies corresponding to typical heart rates (e.g., 0.83-1 Hz as in [`vidmag.md#L199`](vidmag.md:199)) would be selected. The choice of filter (e.g., ideal bandpass, IIR, FIR as shown in [`vidmag.md#L195`](vidmag.md:195)) depends on the application requirements, such as sharp frequency cutoffs or real-time processing capabilities.
+For each spatial layer of the pyramid (i.e., each band-pass image) and at each pixel location within that layer, the sequence of pixel values over time forms a temporal signal. This signal is then subjected to temporal filtering. A bandpass filter is applied to isolate specific temporal frequencies of interest [1]. For instance, to visualize the human pulse, frequencies corresponding to typical heart rates (e.g., 0.83-1 Hz) would be selected [1]. The choice of filter (e.g., ideal bandpass, IIR, FIR) depends on the application requirements, such as sharp frequency cutoffs or real-time processing capabilities [1].
 
 **c. Amplification:**
-The temporally filtered signals, now representing the variations in the desired frequency band, are amplified by a magnification factor [`α`](vidmag.md:179). This factor is a critical user-defined parameter that controls the degree of magnification. As derived in [`vidmag.md#L118`](vidmag.md:118), the first-order Taylor series approximation for motion magnification holds best for small motions and lower spatial frequencies. To prevent artifacts when this approximation breaks down (i.e., for large amplified motions `(1+α)δ(t)`) particularly at high spatial frequencies (small wavelengths `λ`), the amplification factor `α` may be attenuated for spatial wavelengths `λ` below a certain cutoff [`λc`](vidmag.md:179). The condition $$(1+\alpha)\delta(t) < \frac{\lambda}{8}$$ ([`vidmag.md#L167`](vidmag.md:167)) provides a guideline for this.
+The temporally filtered signals, now representing the variations in the desired frequency band, are amplified by a magnification factor α [1]. This factor is a critical user-defined parameter that controls the degree of magnification. As derived in the original work [1], the first-order Taylor series approximation for motion magnification holds best for small motions and lower spatial frequencies. To prevent artifacts when this approximation breaks down (i.e., for large amplified motions (1+α)δ(t)) particularly at high spatial frequencies (small wavelengths λ), the amplification factor α may be attenuated for spatial wavelengths λ below a certain cutoff λc [1]. The condition $$(1+\alpha)\delta(t) < \frac{\lambda}{8}$$ provides a guideline for this [1].
 
 **d. Reconstruction:**
-The amplified, temporally filtered signals from each spatial band are then added back to the original signal. In the case of a Laplacian pyramid, this typically means adding the modified band-pass signals to the corresponding levels and then collapsing the pyramid to form the output frames ([`vidmag.md#L53`](vidmag.md:53)). If only spatial pooling was done (e.g., on a downsampled Gaussian-filtered video), the amplified signal is added back to the original (or a spatially smoothed version of it). The resulting video exhibits the magnified temporal variations.
+The amplified, temporally filtered signals from each spatial band are then added back to the original signal. In the case of a Laplacian pyramid, this typically means adding the modified band-pass signals to the corresponding levels and then collapsing the pyramid to form the output frames [1]. If only spatial pooling was done (e.g., on a downsampled Gaussian-filtered video), the amplified signal is added back to the original (or a spatially smoothed version of it). The resulting video exhibits the magnified temporal variations.
 
 **e. Color Space:**
-Processing is often performed in a color space like YIQ (as mentioned in [`vidmag.md#L191`](vidmag.md:191)), where luminance (Y) can be processed separately from chrominance (I, Q). This allows, for example, amplification of color changes primarily in the chrominance channels while preserving overall luminance structure, or vice-versa.
+Processing is often performed in a color space like YIQ [1], where luminance (Y) can be processed separately from chrominance (I, Q). This allows, for example, amplification of color changes primarily in the chrominance channels while preserving overall luminance structure, or vice-versa.
 
 ### 2. CPU Implementation Approach
 
@@ -139,11 +139,11 @@ This section details the experimental methodology, performance benchmarks, and q
 -   **CUDA Toolkit:** Version 11.3.
 -   **OpenCV:** Version 4.5.2, compiled with CUDA support.
 -   **Compilers:** Standard C++ compiler for CPU code (e.g., g++), `nvcc` for CUDA C++ code.
--   **Build System:** CMake (implied by typical C++/CUDA project structures like [`cuda/CMakeLists.txt`](cuda/CMakeLists.txt:1) and [`cpp/CMakeLists.txt`](cpp/CMakeLists.txt:1)).
+-   **Build System:** CMake for typical C++/CUDA project structures.
 
 **c. Datasets:**
--   The primary dataset used for comprehensive benchmarking was `face.mp4`. This video consists of 301 frames, with a resolution of 528×592 pixels (937,152 pixels/frame, totaling 282.1 million pixels for the dataset), and a frame rate of 30 FPS. The memory footprint for this data as float32 is approximately 1.05 GB. This video is commonly used in EVM research (e.g., Figure 1 in [`vidmag.md#L11`](vidmag.md:11)).
--   Other videos mentioned in [`vidmag.md#L217`](vidmag.md:217) (e.g., `baby.mp4`, `guitar.mp4`, `wrist.mp4`) were used for qualitative assessment and demonstrating parameter effects, consistent with the original EVM paper.
+-   The primary dataset used for comprehensive benchmarking was `face.mp4`. This video consists of 301 frames, with a resolution of 528×592 pixels (937,152 pixels/frame, totaling 282.1 million pixels for the dataset), and a frame rate of 30 FPS. The memory footprint for this data as float32 is approximately 1.05 GB. This video is commonly used in EVM research [1].
+-   Other videos (e.g., `baby.mp4`, `guitar.mp4`, `wrist.mp4`) were used for qualitative assessment and demonstrating parameter effects, consistent with the original EVM paper [1].
 
 **d. EVM Parameters for Benchmarking:**
 Unless otherwise specified, the following EVM parameters were used for the core performance tests:
@@ -151,7 +151,7 @@ Unless otherwise specified, the following EVM parameters were used for the core 
 -   Pyramid Levels: 4
 -   Low Cutoff Frequency (`FL`): 0.8333 Hz
 -   High Cutoff Frequency (`FH`): 1.0 Hz
--   Pyramid Mode: Gaussian (Note: The original EVM paper ([`vidmag.md`](vidmag.md:1)) often refers to Laplacian pyramids for motion and Gaussian for color. The performance analysis used Gaussian mode).
+-   Pyramid Mode: Gaussian (Note: The original EVM paper [1] often refers to Laplacian pyramids for motion and Gaussian for color. The performance analysis used Gaussian mode).
 
 ### 2. Benchmarking Methodology
 
@@ -195,10 +195,8 @@ A detailed breakdown of execution time within the CUDA pipeline (using GPU-Sync 
 | Spatial Filtering    | 1,158          | 39.1%      | Parallel pyramid processing           |
 | Temporal Filtering   | 265            | 9.0%       | GPU FFT + optimized transpose         |
 | Reconstruction       | 208            | 7.0%       | GPU-resident parallel pixel ops       |
-| Data Transfer (Est.) | ~1,327         | 44.9%      | Minimized CPU↔GPU transfers (GPU-resident arch) |
+| Data Transfer        | 1,327         | 44.9%      | Minimized CPU↔GPU transfers (GPU-resident arch) |
 | **Total GPU-Sync**   | **2,958**      | **100%**   |                                       |
-
-*Note: Data Transfer time is an estimate combining initial upload and final download. Intermediate CPU↔GPU transfers were largely eliminated (reduced by 71.4%) by the GPU-resident architecture. The sum of compute components (Spatial, Temporal, Reconstruction) is 1158 + 265 + 208 = 1631 ms (55.1% of total time), with the remaining 44.9% attributed to data I/O.*
 
 This breakdown shows that while GPU computation (55.1%) is significant, data transfers still constitute a large portion of the total time (44.9%) in this optimized pipeline. Spatial filtering is the most time-consuming compute stage.
 
@@ -230,12 +228,12 @@ Factors such as sequential frame processing within stages, the inherent multi-pa
 ### 5. Qualitative Results
 
 The primary goal of EVM is to reveal subtle temporal variations. Qualitative assessment involves visually inspecting the output videos.
--   **Magnification Effect:** The CUDA implementation successfully replicates the magnification effects (e.g., visualizing pulse in `face.mp4`, amplifying small motions) described in the original EVM paper ([`vidmag.md`](vidmag.md:1)).
+-   **Magnification Effect:** The CUDA implementation successfully replicates the magnification effects (e.g., visualizing pulse in `face.mp4`, amplifying small motions) described in the original EVM paper [1].
 -   **Visual Quality:** The output quality of the CUDA version was validated to be comparable to the CPU reference implementation. Previous testing phases confirmed Peak Signal-to-Noise Ratio (PSNR) values greater than 40 dB against the CPU output, indicating high fidelity.
--   **Artifacts:** As with any EVM implementation, artifacts can occur if amplification factors ([`α`](vidmag.md:179)) are too high or if the motion violates the assumptions of the first-order Taylor approximation, especially at high spatial frequencies (small [`λc`](vidmag.md:179)). The behavior concerning noise and artifacts is consistent with the descriptions in [`vidmag.md#L118`](vidmag.md:118) and [`vidmag.md#L237`](vidmag.md:237). The use of spatial pooling (inherent in pyramid processing) helps mitigate noise.
--   **Parameter Effects:** The system responds as expected to changes in EVM parameters (e.g., `α`, `FL`, `FH`, `λc`), allowing for targeted magnification of different phenomena, similar to the examples shown in [`vidmag.md`](vidmag.md:1) (e.g., Table 1, [`vidmag.md#L215`](vidmag.md:215)).
+-   **Artifacts:** As with any EVM implementation, artifacts can occur if amplification factors (α) are too high or if the motion violates the assumptions of the first-order Taylor approximation, especially at high spatial frequencies (small λc) [1]. The behavior concerning noise and artifacts is consistent with the descriptions in the original work [1]. The use of spatial pooling (inherent in pyramid processing) helps mitigate noise.
+-   **Parameter Effects:** The system responds as expected to changes in EVM parameters (e.g., α, FL, FH, λc), allowing for targeted magnification of different phenomena, similar to the examples shown in the original work [1].
 
-While this Markdown report cannot directly embed videos, the descriptions provided in the source documents and the original EVM paper ([`vidmag.md`](vidmag.md:1)) serve as references for the expected visual output. The successful speedup allows for more interactive tuning of parameters and faster generation of these qualitative results.
+While this report cannot directly embed videos, the descriptions provided and the original EVM paper [1] serve as references for the expected visual output. The successful speedup allows for more interactive tuning of parameters and faster generation of these qualitative results.
 ## vii. Implementation Challenges
 
 ### 1. General Challenges
@@ -263,7 +261,7 @@ Despite the significant speedup, several limitations exist:
 -   **Data Transfer Overhead:** While a GPU-resident approach minimizes intermediate transfers, the initial upload of video data and download of results still represent nearly half the processing time. For true real-time streaming applications, this could be a bottleneck.
 -   **Scalability with Video Size/Length:** While the GPU-resident architecture is beneficial, processing extremely large videos or very long sequences might still encounter GPU memory capacity limits. The 24GB VRAM of the RTX 3090 offers considerable headroom; the `face.mp4` processing pipeline utilized approximately 7.35 GB for its ~7 GPU memory allocations.
 -   **Parameter Sensitivity:** The optimal CUDA kernel launch configurations (block/grid dimensions) might vary with input video resolution and pyramid depth, potentially requiring auto-tuning for peak performance across diverse inputs.
--   **EVM Technique Limitations:** This work accelerates the standard EVM algorithm. Inherent limitations of EVM itself, such as sensitivity to large motions, potential for artifact generation with high amplification factors ([`α`](vidmag.md:179)), and noise amplification ([`vidmag.md#L237`](vidmag.md:237)), are also present in the accelerated version.
+-   **EVM Technique Limitations:** This work accelerates the standard EVM algorithm. Inherent limitations of EVM itself, such as sensitivity to large motions, potential for artifact generation with high amplification factors (α), and noise amplification [1], are also present in the accelerated version.
 -   **Video Decoding and Data Transfer Overhead:** One of the main factors slowing down the end-to-end process is that the video is first decoded on the CPU. This CPU-based decoding is inherently time-consuming. Subsequently, the uncompressed, decoded video data is transferred to the GPU. This decoded data is significantly larger (often more than 10x the size of its encoded form), meaning that much more memory bandwidth is consumed during the CPU-to-GPU transfer than is strictly necessary if compressed data were handled.
 
 ### 3. Future Work
@@ -295,7 +293,7 @@ Building upon the insights from this study, several avenues for future work are 
     This strategy would drastically reduce CPU workload, minimize data transfer volumes over the PCIe bus, lessen GPU memory pressure from raw frame data, and likely yield significant end-to-end performance improvements.
 
 **e. Algorithmic Enhancements to EVM:**
--   **Adaptive Parameter Control:** Develop methods for automatically adjusting EVM parameters (e.g., [`α`](vidmag.md:179), [`λc`](vidmag.md:179), filter bands) based on video content for improved robustness and result quality.
+-   **Adaptive Parameter Control:** Develop methods for automatically adjusting EVM parameters (e.g., α, λc, filter bands) based on video content for improved robustness and result quality.
 -   **Advanced Noise Reduction:** Integrate more sophisticated noise reduction techniques tailored for the EVM pipeline, potentially operating in conjunction with the temporal filtering stage.
 
 **f. Broader Performance Profiling:**
@@ -305,17 +303,7 @@ By pursuing these directions, it is plausible to further enhance the performance
 
 ## ix. References
 
-1.  Wu, H.-Y., Rubinstein, M., Shih, E., Guttag, J., Durand, F., & Freeman, W. (2012). Eulerian Video Magnification for Revealing Subtle Changes in the World. *ACM Transactions on Graphics (TOG) - Proceedings of ACM SIGGRAPH 2012, 31*(4), Article 65. (Referenced as [`vidmag.md`](vidmag.md:1))
-2.  Liu, C., Torralba, A., Freeman, W. T., Durand, F., & Adelson, E. H. (2005). Motion magnification. *ACM Transactions on Graphics (TOG), 24*(3), 519–526. (Cited in [`vidmag.md#L371`](vidmag.md:371))
-3.  Burt, P., & Adelson, E. (1983). The Laplacian pyramid as a compact image code. *IEEE Transactions on Communications, 31*(4), 532–540. (Cited in [`vidmag.md#L362`](vidmag.md:362))
-4.  Poh, M.-Z., McDuff, D. J., & Picard, R. W. (2010). Non-contact, automated cardiac pulse measurements using video imaging and blind source separation. *Optics Express, 18*(10), 10762–10774. (Cited in [`vidmag.md#L375`](vidmag.md:375))
-5.  Verkruysse, W., Svaasand, L. O., & Nelson, J. S. (2008). Remote plethysmographic imaging using ambient light. *Optics Express, 16*(26), 21434–21445. (Cited in [`vidmag.md#L376`](vidmag.md:376))
-6.  *This reference was to an internal project document ([`cuda/COMPREHENSIVE_PERFORMANCE_ANALYSIS.md`](cuda/COMPREHENSIVE_PERFORMANCE_ANALYSIS.md:1)) and has been integrated into the main report.*
-7.  *This reference was to an internal project document ([`cuda/COMPUTE_VS_MEMORY_BOTTLENECK_ANALYSIS.md`](cuda/COMPUTE_VS_MEMORY_BOTTLENECK_ANALYSIS.md:1)) and has been integrated into the main report.*
-8.  *This reference was to course project guidelines ([`project_guide.md`](project_guide.md:1)) which guided the structure of this report.*
-9.  Author/Maintainer of hbenbel/Eulerian-Video-Magnification. (Year if available). *Eulerian-Video-Magnification*. GitHub Repository. Retrieved from https://github.com/hbenbel/Eulerian-Video-Magnification
-
-## x. Appendix
-
-Supporting details, including extended EVM parameters, CUDA implementation notes, and performance measurement commands, are provided in a separate document: [`COMPREHENSIVE_EVM_CUDA_REPORT_APPENDIX.md`](COMPREHENSIVE_EVM_CUDA_REPORT_APPENDIX.md:1).
-This separation helps maintain the conciseness of the main report while ensuring all supplementary information is readily accessible.
+1.  Wu, H.-Y., Rubinstein, M., Shih, E., Guttag, J., Durand, F., & Freeman, W. (2012). Eulerian Video Magnification for Revealing Subtle Changes in the World. *ACM Transactions on Graphics (TOG) - Proceedings of ACM SIGGRAPH 2012, 31*(4), Article 65.
+2.  Liu, C., Torralba, A., Freeman, W. T., Durand, F., & Adelson, E. H. (2005). Motion magnification. *ACM Transactions on Graphics (TOG), 24*(3), 519–526.
+3.  Author/Maintainer of hbenbel/Eulerian-Video-Magnification. *Eulerian-Video-Magnification*. GitHub Repository. Retrieved from https://github.com/hbenbel/Eulerian-Video-Magnification
+4.  Burt, P., & Adelson, E. (1983). The Laplacian pyramid as a compact image code. *IEEE Transactions on Communications, 31*(4), 532–540.
