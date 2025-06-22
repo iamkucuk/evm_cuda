@@ -22,16 +22,7 @@
 #include "cuda_color_conversion.cuh"    // RGB ↔ YIQ conversion
 #include "cuda_scaling.cuh"             // GPU data scaling operations
 
-// External transpose functions (required for temporal filtering)
-extern "C" cudaError_t launch_transpose_frame_to_pixel(
-    const float* d_frame_major, float* d_pixel_major,
-    int width, int height, int channels, int num_frames,
-    dim3 gridSize, dim3 blockSize);
-
-extern "C" cudaError_t launch_transpose_pixel_to_frame(
-    const float* d_pixel_major, float* d_frame_major,
-    int width, int height, int channels, int num_frames,
-    dim3 gridSize, dim3 blockSize);
+#include "cuda_transpose.cuh"
 
 void check_cuda_error(cudaError_t error, const char* message) {
     if (error != cudaSuccess) {
