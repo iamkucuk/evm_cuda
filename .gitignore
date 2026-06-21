@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Data / outputs
+data/*
+!data/.gitkeep
+output/
+
+# CUDA build artifacts
+cuda/build/
+*.so
+*.o
+*.obj
+*.cubin
+*.fatbin
+*.ptx
+
+# Editors
+.vscode/
+.idea/
+.DS_Store
