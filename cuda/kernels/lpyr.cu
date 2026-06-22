@@ -37,6 +37,25 @@ void launch_up_conv_rows(const float* in, float* out,
 void launch_up_conv_cols(const float* in, float* out,
                          int H, int in_W, int out_W,
                          const float* filt, int filt_len, cudaStream_t stream);
+// Batched variants (from spatial.cu) — process B slices per launch.
+void launch_corr_dn_rows_batched(const float* in, float* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_corr_dn_cols_batched(const float* in, float* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_up_conv_rows_batched(const float* in, float* out,
+                                 int in_H, int out_H, int W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_up_conv_cols_batched(const float* in, float* out,
+                                 int H, int in_W, int out_W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
 
 // --- elementwise helpers (file-local) --------------------------------------
 
@@ -174,6 +193,114 @@ void lpyr_recon_device(
                                        cudaMemcpyDeviceToDevice, stream));
         }
     }
+}
+
+// ===========================================================================
+// Scatter/gather kernels for the channel-major band layout.
+//
+// The band buffer is laid out (level, channel, frame, spatial) so that Stage C's
+// temporal filter sees contiguous (T, N) blocks. This makes per-slice offsets
+// irregular: slice_off(m) = (m%3)*n_frames + m/3. These kernels bridge the
+// frame-major scratch buffers (regular strides) and the channel-major band
+// storage (scattered) via a pre-computed offset table.
+//
+// Grid: (ceil(n_per_slice/256), B). blockIdx.y = slice index m.
+// ===========================================================================
+
+// Scatter-subtract: dst[offsets[m] + px] = a[m*stride + px] - b[m*stride + px].
+// Used to write band[l] = current - hi2 into channel-major band storage.
+__global__ void scatter_subtract_kernel(
+    const float* __restrict__ a,       // frame-major (B, n_per_slice)
+    const float* __restrict__ b,       // frame-major (B, n_per_slice)
+    float* __restrict__ dst,           // scattered (channel-major)
+    const int* __restrict__ offsets,   // [B] offset in floats per slice
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    int ai = m * n_per_slice + px;
+    dst[offsets[m] + px] = a[ai] - b[ai];
+}
+
+// Scatter-copy: dst[offsets[m] + px] = src[m*stride + px].
+// Used for the coarsest band (residual lowpass).
+__global__ void scatter_kernel(
+    const float* __restrict__ src,     // frame-major (B, n_per_slice)
+    float* __restrict__ dst,           // scattered (channel-major)
+    const int* __restrict__ offsets,   // [B] offset in floats per slice
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    dst[offsets[m] + px] = src[m * n_per_slice + px];
+}
+
+// Gather-add: dst[m*stride + px] = src[offsets[m] + px] + b[m*stride + px].
+// Used in recon: out = band[l] (scattered) + res (frame-major).
+__global__ void gather_add_kernel(
+    const float* __restrict__ src,     // scattered band data (channel-major)
+    const float* __restrict__ b,       // frame-major res (B, n_per_slice)
+    float* __restrict__ dst,           // frame-major output (B, n_per_slice)
+    const int* __restrict__ offsets,   // [B] offset in floats per slice
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    int di = m * n_per_slice + px;
+    dst[di] = src[offsets[m] + px] + b[di];
+}
+
+// Gather: dst[m*stride + px] = src[offsets[m] + px].
+// Used in recon to read the coarsest band (scattered) into frame-major scratch.
+__global__ void gather_kernel(
+    const float* __restrict__ src,     // scattered band data (channel-major)
+    float* __restrict__ dst,           // frame-major (B, n_per_slice)
+    const int* __restrict__ offsets,   // [B] offset in floats per slice
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    dst[m * n_per_slice + px] = src[offsets[m] + px];
+}
+
+void launch_scatter_subtract(const float* a, const float* b, float* dst,
+                             const int* offsets, int n_per_slice, int B,
+                             cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    scatter_subtract_kernel<<<grid, block, 0, stream>>>(
+        a, b, dst, offsets, n_per_slice, B);
+}
+
+void launch_scatter(const float* src, float* dst,
+                    const int* offsets, int n_per_slice, int B,
+                    cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    scatter_kernel<<<grid, block, 0, stream>>>(
+        src, dst, offsets, n_per_slice, B);
+}
+
+void launch_gather_add(const float* src, const float* b, float* dst,
+                       const int* offsets, int n_per_slice, int B,
+                       cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    gather_add_kernel<<<grid, block, 0, stream>>>(
+        src, b, dst, offsets, n_per_slice, B);
+}
+
+void launch_gather(const float* src, float* dst,
+                   const int* offsets, int n_per_slice, int B,
+                   cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    gather_kernel<<<grid, block, 0, stream>>>(
+        src, dst, offsets, n_per_slice, B);
 }
 
 }  // namespace evm

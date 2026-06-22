@@ -167,4 +167,165 @@ void launch_up_conv_cols(const float* in, float* out,
         in, out, H, in_W, out_W, filt, filt_len);
 }
 
+// ===========================================================================
+// Batched variants — process B independent (H,W) slices in a single launch.
+// Used by the batched Laplacian pyramid build/reconstruct to collapse the
+// M-slice host loop (~35k launches) into ~40 launches (one per kernel per
+// level). Each slice occupies a contiguous block of `slice_stride` floats;
+// the grid z-dimension indexes the batch.
+//
+// Per-thread math is IDENTICAL to the single-slice kernels above — just
+// pointer-offset by blockIdx.z * slice_stride. FP summation order unchanged.
+// ===========================================================================
+
+// Batched corr_dn along axis=0 (rows). B slices, each (H,W) -> ((H+1)/2, W).
+__global__ void corr_dn_rows_batched_kernel(
+    const float* __restrict__ in,   // (B, H*W)
+    float* __restrict__ out,        // (B, ((H+1)/2)*W)
+    int H, int W, const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int yo = blockIdx.y * blockDim.y + threadIdx.y;
+    const int b = blockIdx.z;
+    const int Ho = (H + 1) / 2;
+    if (x >= W || yo >= Ho || b >= B) return;
+
+    const int src_center = 2 * yo;
+    const int pad = filt_len / 2;
+    const float* sin = in + b * slice_stride_in;
+    float acc = 0.0f;
+    for (int k = 0; k < filt_len; ++k) {
+        int src = reflect1(src_center + (k - pad), H);
+        acc += filt[k] * sin[src * W + x];
+    }
+    out[b * slice_stride_out + yo * W + x] = acc;
+}
+
+// Batched corr_dn along axis=1 (cols). B slices, each (H,W) -> (H, (W+1)/2).
+__global__ void corr_dn_cols_batched_kernel(
+    const float* __restrict__ in,
+    float* __restrict__ out,
+    int H, int W, const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int xo = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int b = blockIdx.z;
+    const int Wo = (W + 1) / 2;
+    if (xo >= Wo || y >= H || b >= B) return;
+
+    const int src_center = 2 * xo;
+    const int pad = filt_len / 2;
+    const float* sin = in + b * slice_stride_in;
+    float acc = 0.0f;
+    for (int k = 0; k < filt_len; ++k) {
+        int src = reflect1(src_center + (k - pad), W);
+        acc += filt[k] * sin[y * W + src];
+    }
+    out[b * slice_stride_out + y * Wo + xo] = acc;
+}
+
+// Batched up_conv along axis=0 (rows). B slices, each (in_H,W) -> (out_H,W).
+__global__ void up_conv_rows_batched_kernel(
+    const float* __restrict__ in,
+    float* __restrict__ out,
+    int in_H, int out_H, int W,
+    const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int yo = blockIdx.y * blockDim.y + threadIdx.y;
+    const int b = blockIdx.z;
+    if (x >= W || yo >= out_H || b >= B) return;
+
+    const int pad = filt_len / 2;
+    const int up_H = 2 * in_H;
+    const float* sin = in + b * slice_stride_in;
+    float acc = 0.0f;
+    for (int k = 0; k < filt_len; ++k) {
+        int u_idx = yo + (k - pad);
+        int r = reflect1(u_idx, up_H);
+        if ((r & 1) == 0) {
+            int src = r / 2;
+            acc += filt[k] * sin[src * W + x];
+        }
+    }
+    out[b * slice_stride_out + yo * W + x] = acc;
+}
+
+// Batched up_conv along axis=1 (cols). B slices, each (H,in_W) -> (H,out_W).
+__global__ void up_conv_cols_batched_kernel(
+    const float* __restrict__ in,
+    float* __restrict__ out,
+    int H, int in_W, int out_W,
+    const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int xo = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int b = blockIdx.z;
+    if (xo >= out_W || y >= H || b >= B) return;
+
+    const int pad = filt_len / 2;
+    const int up_W = 2 * in_W;
+    const float* sin = in + b * slice_stride_in;
+    float acc = 0.0f;
+    for (int k = 0; k < filt_len; ++k) {
+        int u_idx = xo + (k - pad);
+        int r = reflect1(u_idx, up_W);
+        if ((r & 1) == 0) {
+            int src = r / 2;
+            acc += filt[k] * sin[y * in_W + src];
+        }
+    }
+    out[b * slice_stride_out + y * out_W + xo] = acc;
+}
+
+// --- batched launchers ------------------------------------------------------
+
+void launch_corr_dn_rows_batched(const float* in, float* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream) {
+    int Ho = (H + 1) / 2;
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(W, 32), div_up(Ho, 32), B);
+    corr_dn_rows_batched_kernel<<<grid, block, 0, stream>>>(
+        in, out, H, W, filt, filt_len, stride_in, stride_out, B);
+}
+
+void launch_corr_dn_cols_batched(const float* in, float* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream) {
+    int Wo = (W + 1) / 2;
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(Wo, 32), div_up(H, 32), B);
+    corr_dn_cols_batched_kernel<<<grid, block, 0, stream>>>(
+        in, out, H, W, filt, filt_len, stride_in, stride_out, B);
+}
+
+void launch_up_conv_rows_batched(const float* in, float* out,
+                                 int in_H, int out_H, int W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(W, 32), div_up(out_H, 32), B);
+    up_conv_rows_batched_kernel<<<grid, block, 0, stream>>>(
+        in, out, in_H, out_H, W, filt, filt_len, stride_in, stride_out, B);
+}
+
+void launch_up_conv_cols_batched(const float* in, float* out,
+                                 int H, int in_W, int out_W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(out_W, 32), div_up(H, 32), B);
+    up_conv_cols_batched_kernel<<<grid, block, 0, stream>>>(
+        in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
+}
+
 }  // namespace evm

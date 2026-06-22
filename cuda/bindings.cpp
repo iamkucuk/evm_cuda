@@ -121,6 +121,40 @@ void lpyr_recon_device(
     float* scratch_lo, float* scratch_hi,
     cudaStream_t stream);
 
+// Batched spatial kernels (spatial.cu) — B slices per launch via grid.z.
+void launch_corr_dn_rows_batched(const float* in, float* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_corr_dn_cols_batched(const float* in, float* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_up_conv_rows_batched(const float* in, float* out,
+                                 int in_H, int out_H, int W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_up_conv_cols_batched(const float* in, float* out,
+                                 int H, int in_W, int out_W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+
+// Scatter/gather for channel-major band layout (lpyr.cu).
+void launch_scatter_subtract(const float* a, const float* b, float* dst,
+                             const int* offsets, int n_per_slice, int B,
+                             cudaStream_t stream);
+void launch_scatter(const float* src, float* dst,
+                    const int* offsets, int n_per_slice, int B,
+                    cudaStream_t stream);
+void launch_gather_add(const float* src, const float* b, float* dst,
+                       const int* offsets, int n_per_slice, int B,
+                       cudaStream_t stream);
+void launch_gather(const float* src, float* dst,
+                   const int* offsets, int n_per_slice, int B,
+                   cudaStream_t stream);
+
 // blur_dn.cu
 void blur_dn_device(
     const float* in, int H, int W,
@@ -788,22 +822,23 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("d_filt"), py::arg("filt_len"));
 
     // --- batched lpyr_build: M planar slices -> multi-level band output -----
-    // Direct analog of batched_blur_dn_color for the motion pipeline's Stage B.
-    // lpyr_build produces a LIST of bands (one per level), not a single output
-    // image. The output buffer is laid out level-major: for each level l, a
-    // contiguous block of M * sizes[l] floats. Python reshapes after download.
+    // Processes all M=n_frames*3 slices simultaneously through the level loop.
+    // At each level, the batched spatial kernels process all M slices in one
+    // launch (grid.z = M). Band writes go through scatter_subtract (channel-
+    // major output layout has irregular per-slice offsets).
     //
-    // Scratch (3 buffers, each H*W) is allocated ONCE and reused across all M
-    // iterations — same pattern as batched_blur_dn_color.
+    // This collapses the old M-iteration host loop (~35k launches) into ~40
+    // launches total. Scratch is M-sized (4 buffers, each M*H*W floats).
     m.def("batched_lpyr_build",
         [](uintptr_t d_in, uintptr_t d_out, int n_frames, int H, int W, int levels,
            uintptr_t d_filt, int filt_len) {
-            int M = n_frames * 3;  // n frames × 3 channels
+            int M = n_frames * 3;
             auto sizes = evm::lpyr_level_sizes(H, W, levels);
-            // Per-level offset table into d_out (level-major, channel-major layout).
-            // Within each level: [chan0_frame0, chan0_frame1, ..., chan1_frame0, ...]
-            // This makes each (level, channel) a contiguous (T=n, N=lh*lw) block
-            // so Stage C can extract signals via pointer arithmetic alone.
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const float* in_base = reinterpret_cast<const float*>(d_in);
+            float* out_base = reinterpret_cast<float*>(d_out);
+
+            // Per-level offset table (host-side, for pre-computing scatter offsets).
             std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
             size_t total = 0;
             for (int l = 0; l < levels; ++l) {
@@ -811,38 +846,103 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 level_offsets[l] = total;
                 total += level_sizes_vec[l] * M;
             }
-            float* scratch_a = device_alloc<float>(static_cast<size_t>(H) * W);
-            float* scratch_b = device_alloc<float>(static_cast<size_t>(H) * W);
-            float* scratch_c = device_alloc<float>(static_cast<size_t>(H) * W);
-            const float* filt = reinterpret_cast<const float*>(d_filt);
-            float* out_base = reinterpret_cast<float*>(d_out);
-            const float* in_base = reinterpret_cast<const float*>(d_in);
-            std::vector<float*> band_ptrs(levels);  // reused across iterations
-            for (int m = 0; m < M; ++m) {
-                int frame = m / 3, chan = m % 3;
-                // Channel-major offset: chan*n_frames+frame (vs old: m)
-                size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
-                for (int l = 0; l < levels; ++l)
-                    band_ptrs[l] = out_base + level_offsets[l] + slice_off * level_sizes_vec[l];
-                evm::lpyr_build_device(
-                    in_base + static_cast<size_t>(m) * H * W,
-                    H, W, band_ptrs.data(), sizes.data(), levels,
-                    filt, filt_len, scratch_a, scratch_b, scratch_c, 0);
+
+            // 4 frame-major scratch buffers, each M*H*W floats.
+            // cur = current image, lo = corr_dn(cols), lo2 = corr_dn(rows),
+            // hi2 = upsample(lo2) back to current size (needed alive for subtract).
+            float* scratch_cur = device_alloc<float>(static_cast<size_t>(M) * H * W);
+            float* scratch_lo  = device_alloc<float>(static_cast<size_t>(M) * H * W);
+            float* scratch_lo2 = device_alloc<float>(static_cast<size_t>(M) * H * W);
+            float* scratch_hi2 = device_alloc<float>(static_cast<size_t>(M) * H * W);
+            // Device-side per-slice offset table for scatter (reused per level).
+            int* d_offsets = device_alloc<int>(M);
+
+            // cur := input (M slices, batched D2D copy).
+            CUDA_CHECK(cudaMemcpyAsync(scratch_cur, in_base,
+                                       static_cast<size_t>(M) * H * W * sizeof(float),
+                                       cudaMemcpyDeviceToDevice, 0));
+
+            for (int l = 0; l < levels - 1; ++l) {
+                const int h = sizes[l].first, w = sizes[l].second;
+                const int hn = (h + 1) / 2;
+                const int wn = (w + 1) / 2;
+
+                // lo  = corr_dn(cur, axis=1)  -> (M, h, wn)
+                evm::launch_corr_dn_cols_batched(
+                    scratch_cur, scratch_lo, h, w, filt, filt_len,
+                    h * w, h * wn, M, 0);
+                // lo2 = corr_dn(lo,  axis=0)  -> (M, hn, wn)
+                evm::launch_corr_dn_rows_batched(
+                    scratch_lo, scratch_lo2, h, wn, filt, filt_len,
+                    h * wn, hn * wn, M, 0);
+                // hi  = up_conv(lo2, axis=0, out_size=h) -> (M, h, wn)
+                //      reuse scratch_lo (lo no longer needed)
+                evm::launch_up_conv_rows_batched(
+                    scratch_lo2, scratch_lo, hn, h, wn, filt, filt_len,
+                    hn * wn, h * wn, M, 0);
+                // hi2 = up_conv(hi,  axis=1, out_size=w) -> (M, h, w)
+                evm::launch_up_conv_cols_batched(
+                    scratch_lo, scratch_hi2, h, wn, w, filt, filt_len,
+                    h * wn, h * w, M, 0);
+
+                // band[l] = cur - hi2, scattered into channel-major storage.
+                // Build per-slice offset table for this level and upload.
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                evm::launch_scatter_subtract(
+                    scratch_cur, scratch_hi2, out_base,
+                    d_offsets, h * w, M, 0);
+
+                // Descend: cur := lo2 (next level's input).
+                CUDA_CHECK(cudaMemcpyAsync(scratch_cur, scratch_lo2,
+                    static_cast<size_t>(M) * hn * wn * sizeof(float),
+                    cudaMemcpyDeviceToDevice, 0));
             }
-            device_free(scratch_a); device_free(scratch_b); device_free(scratch_c);
+
+            // Coarsest level (l = levels-1): residual lowpass = cur.
+            {
+                int l = levels - 1;
+                const int h = sizes[l].first, w = sizes[l].second;
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                evm::launch_scatter(
+                    scratch_cur, out_base, d_offsets, h * w, M, 0);
+            }
+
+            device_free(scratch_cur); device_free(scratch_lo);
+            device_free(scratch_lo2); device_free(scratch_hi2);
+            device_free(d_offsets);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("n_frames"),
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
 
     // --- batched lpyr_recon: multi-level band input -> M planar slices -----
-    // Mirror of batched_lpyr_build for the motion pipeline's Stage D. Reads
-    // the level-major band layout produced by Stage C and reconstructs M
-    // full-resolution delta images. band_ptrs are const (recon is read-only).
+    // Mirror of batched_lpyr_build for the motion pipeline's Stage D. Walks
+    // coarsest→finest, batching all M slices per spatial kernel launch. Band
+    // reads go through gather_add (channel-major input → frame-major output).
     m.def("batched_lpyr_recon",
         [](uintptr_t d_bands, uintptr_t d_out, int n_frames, int H, int W, int levels,
            uintptr_t d_filt, int filt_len) {
             int M = n_frames * 3;
             auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const float* bands_base = reinterpret_cast<const float*>(d_bands);
+            float* out_base = reinterpret_cast<float*>(d_out);
+
             std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
             size_t total = 0;
             for (int l = 0; l < levels; ++l) {
@@ -850,24 +950,70 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 level_offsets[l] = total;
                 total += level_sizes_vec[l] * M;
             }
-            float* scratch_lo = device_alloc<float>(static_cast<size_t>(H) * W);
-            float* scratch_hi = device_alloc<float>(static_cast<size_t>(H) * W);
-            const float* filt = reinterpret_cast<const float*>(d_filt);
-            const float* bands_base = reinterpret_cast<const float*>(d_bands);
-            float* out_base = reinterpret_cast<float*>(d_out);
-            std::vector<const float*> band_ptrs(levels);
-            for (int m = 0; m < M; ++m) {
-                int frame = m / 3, chan = m % 3;
-                size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
-                for (int l = 0; l < levels; ++l)
-                    band_ptrs[l] = bands_base + level_offsets[l] + slice_off * level_sizes_vec[l];
-                evm::lpyr_recon_device(
-                    band_ptrs.data(), sizes.data(), levels,
-                    filt, filt_len,
-                    out_base + static_cast<size_t>(m) * H * W,
-                    scratch_lo, scratch_hi, 0);
+
+            // 2 frame-major scratch buffers: cur (current reconstruction level)
+            // and res (up_conv output). Plus device-side offset table.
+            float* scratch_cur = device_alloc<float>(static_cast<size_t>(M) * H * W);
+            float* scratch_res = device_alloc<float>(static_cast<size_t>(M) * H * W);
+            int* d_offsets = device_alloc<int>(M);
+
+            // Start: gather coarsest band (l=levels-1) into frame-major scratch_cur.
+            {
+                int l = levels - 1;
+                const int h = sizes[l].first, w = sizes[l].second;
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                evm::launch_gather(
+                    bands_base, scratch_cur, d_offsets, h * w, M, 0);
             }
-            device_free(scratch_lo); device_free(scratch_hi);
+
+            // Walk coarsest→finest (l = levels-2 down to 0).
+            for (int l = levels - 2; l >= 0; --l) {
+                const int h = sizes[l].first, w = sizes[l].second;
+                const int ph = sizes[l + 1].first, pw = sizes[l + 1].second;
+
+                // res = up_conv(cur, axis=0, out_size=h) -> (M, h, pw)
+                evm::launch_up_conv_rows_batched(
+                    scratch_cur, scratch_res, ph, h, pw, filt, filt_len,
+                    ph * pw, h * pw, M, 0);
+                // out = up_conv(res, axis=1, out_size=w) -> (M, h, w)
+                //      write into scratch_cur (reuse, cur no longer needed)
+                evm::launch_up_conv_cols_batched(
+                    scratch_res, scratch_cur, h, pw, w, filt, filt_len,
+                    h * pw, h * w, M, 0);
+
+                // out = band[l] + res. Gather band[l] (scattered) + scratch_cur,
+                // write back into scratch_cur via gather_add.
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                // gather_add: dst[di] = src[offsets[m]+px] + b[di]
+                // src = bands_base, b = scratch_cur (res), dst = scratch_cur (in-place)
+                evm::launch_gather_add(
+                    bands_base, scratch_cur, scratch_cur,
+                    d_offsets, h * w, M, 0);
+            }
+
+            // Copy final reconstruction from scratch_cur to output.
+            CUDA_CHECK(cudaMemcpyAsync(out_base, scratch_cur,
+                static_cast<size_t>(M) * H * W * sizeof(float),
+                cudaMemcpyDeviceToDevice, 0));
+
+            device_free(scratch_cur); device_free(scratch_res);
+            device_free(d_offsets);
         }, py::arg("d_bands"), py::arg("d_out"), py::arg("n_frames"),
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
