@@ -72,6 +72,9 @@ void launch_apply_channel_gain(float* sig, int H, int W,
                                cudaStream_t stream);
 void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,
                             cudaStream_t stream);
+void launch_bilinear_upsample_3ch(const float* src, float* dst,
+                                  int M, int in_H, int in_W,
+                                  int out_H, int out_W, cudaStream_t stream);
 void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
                              unsigned char* bgr_out, int H, int W,
                              cudaStream_t stream);
@@ -815,6 +818,20 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 reinterpret_cast<unsigned char*>(d_bgr), H, W, 0);
         }, py::arg("d_ntsc"), py::arg("d_delta"), py::arg("d_bgr"),
            py::arg("H"), py::arg("W"));
+
+    // --- batched bilinear upsample: M frames (in_H,in_W,3) -> (out_H,out_W,3) -
+    // Replaces host-side cv2.resize(INTER_LINEAR) in the color pipeline render
+    // stage. Coordinate convention: half-pixel centers + replicate border,
+    // reverse-engineered to match cv2 bit-exactly.
+    m.def("batched_bilinear_upsample_3ch",
+        [](uintptr_t d_in, uintptr_t d_out, int M,
+           int in_H, int in_W, int out_H, int out_W) {
+            evm::launch_bilinear_upsample_3ch(
+                reinterpret_cast<float*>(d_in),
+                reinterpret_cast<float*>(d_out),
+                M, in_H, in_W, out_H, out_W, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
+           py::arg("in_H"), py::arg("in_W"), py::arg("out_H"), py::arg("out_W"));
 
     // --- batched ideal_bandpass: needs cuFFT plans, so orchestrate here -----
     // Same plan-create/destroy lifecycle as the numpy version, but no H2D/D2H.

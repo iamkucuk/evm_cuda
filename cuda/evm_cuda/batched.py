@@ -207,23 +207,24 @@ def magnify_color_gdown_ideal(
             d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
         filt[..., c] = d_out.download_f32(n * hl * wl).reshape(hl * wl, n).T.reshape(n, hl, wl)
 
-    # --- Stage 4: gain + per-frame upsample + add + quantize ----------------
-    # cv2.resize (INTER_LINEAR upsample hl,wl -> h,w) is host-only in this
-    # stack, so gain + upsample stay on host. But the add-back + quantize
-    # happens ON-DEVICE via batched_add_and_quantize — ntsc never leaves the
-    # GPU. Only the final uint8 output crosses PCIe (1 transfer, not 3).
+    # --- Stage 4: gain + upsample + add + quantize (ALL on-device) ----------
+    # Was: 291x host cv2.resize(INTER_LINEAR) calls + np.stack + host add +
+    # upload. Now: upload the small filt once, GPU bilinear upsample (matches
+    # cv2 half-pixel + replicate convention bit-exactly), fused add+quantize.
+    # The only host<->device transfer in this stage is the small filt upload
+    # and the final uint8 output download.
     gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
                     dtype=np.float32)
     filt = filt * gain
 
-    upsampled = np.stack([
-        cv2.resize(filt[i], (w, h), interpolation=cv2.INTER_LINEAR)
-        for i in range(n)], axis=0)
+    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
+    d_upsampled = DeviceBuffer(n * h * w * 3 * 4)
+    _evm_cuda.batched_bilinear_upsample_3ch(
+        d_filt.ptr, d_upsampled.ptr, n, hl, wl, h, w)
 
-    d_delta = DeviceBuffer.from_array(np.ascontiguousarray(upsampled))
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_delta.ptr, d_out_u8.ptr, n * h, w)
+        d_ntsc.ptr, d_upsampled.ptr, d_out_u8.ptr, n * h, w)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     _write(out_path, out, fps)

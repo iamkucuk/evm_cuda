@@ -103,6 +103,73 @@ void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,
     attenuate_chrom_kernel<<<grid, block, 0, stream>>>(delta, H, W, chrom_att);
 }
 
+// Bilinear upsample of a stack of M frames, each (in_H, in_W, 3), to
+// (out_H, out_W, 3). Replaces host-side cv2.resize(INTER_LINEAR) in the
+// color pipeline's render stage.
+//
+// Coordinate convention (reverse-engineered from cv2, bit-exact match):
+//   sx = (x + 0.5) * (in_W / out_W) - 0.5   (half-pixel centers)
+//   border: replicate (clamp to edge), NOT reflect-101.
+//
+// Each thread handles one output pixel (all 3 channels in registers).
+__global__ void bilinear_upsample_3ch_kernel(
+    const float* __restrict__ src,   // (M, in_H, in_W, 3)
+    float* __restrict__ dst,         // (M, out_H, out_W, 3)
+    int M, int in_H, int in_W, int out_H, int out_W)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = M * out_H * out_W;
+    if (idx >= total) return;
+
+    const int x = idx % out_W;
+    const int tmp = idx / out_W;
+    const int y = tmp % out_H;
+    const int m = tmp / out_H;
+
+    const float scale_x = static_cast<float>(in_W) / out_W;
+    const float scale_y = static_cast<float>(in_H) / out_H;
+    float sx = (x + 0.5f) * scale_x - 0.5f;
+    float sy = (y + 0.5f) * scale_y - 0.5f;
+
+    int x0 = static_cast<int>(floorf(sx));
+    int y0 = static_cast<int>(floorf(sy));
+    const float fx = sx - x0;
+    const float fy = sy - y0;
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+    // Replicate border (clamp to edge).
+    x0 = max(0, min(x0, in_W - 1));
+    x1 = max(0, min(x1, in_W - 1));
+    y0 = max(0, min(y0, in_H - 1));
+    y1 = max(0, min(y1, in_H - 1));
+
+    const float* s = src + static_cast<size_t>(m) * in_H * in_W * 3;
+    float* d = dst + static_cast<size_t>(m) * out_H * out_W * 3;
+
+    const float w00 = (1.0f - fx) * (1.0f - fy);
+    const float w01 = fx * (1.0f - fy);
+    const float w10 = (1.0f - fx) * fy;
+    const float w11 = fx * fy;
+
+    #pragma unroll
+    for (int c = 0; c < 3; ++c) {
+        const float v00 = s[(y0 * in_W + x0) * 3 + c];
+        const float v01 = s[(y0 * in_W + x1) * 3 + c];
+        const float v10 = s[(y1 * in_W + x0) * 3 + c];
+        const float v11 = s[(y1 * in_W + x1) * 3 + c];
+        d[(y * out_W + x) * 3 + c] = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
+    }
+}
+
+void launch_bilinear_upsample_3ch(const float* src, float* dst,
+                                  int M, int in_H, int in_W,
+                                  int out_H, int out_W, cudaStream_t stream) {
+    const int block = 256;
+    const int grid = div_up(M * out_H * out_W, block);
+    bilinear_upsample_3ch_kernel<<<grid, block, 0, stream>>>(
+        src, dst, M, in_H, in_W, out_H, out_W);
+}
+
 void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
                              unsigned char* bgr_out, int H, int W,
                              cudaStream_t stream) {
