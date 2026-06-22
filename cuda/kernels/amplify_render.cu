@@ -350,12 +350,4 @@ void launch_upsample_add_quantize(const float* ntsc, const float* filt,
         ntsc, filt, bgr_out, M, in_H, in_W, out_H, out_W, chrom_att);
 }
 
-// Plain ntsc->bgr u8 conversion for the color pipeline (where the add-back
-// has already happened in NTSC space, possibly after a CPU/GPU upsample).
-// Re-uses the canonical implementation in color_cvt.cu.
-void launch_ntsc_to_bgr_u8(const float* ntsc, unsigned char* bgr,
-                           int H, int W, cudaStream_t stream) {
-    launch_ntsc_f32_to_bgr_u8(ntsc, bgr, H, W, stream);
-}
-
 }  // namespace evm

@@ -537,13 +537,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
     // Python pipeline layer can manage pind. Input is (H, W) float32;
     // output is a list of (H_l, W_l) float32 arrays, finest-first.
 
-    m.def("lpyr_level_sizes", [](int H, int W, int levels) {
-        auto sizes = evm::lpyr_level_sizes(H, W, levels);
-        py::list out;
-        for (auto& s : sizes) out.append(py::make_tuple(s.first, s.second));
-        return out;
-    }, py::arg("H"), py::arg("W"), py::arg("levels"));
-
     m.def("lpyr_build", [](carray_t<float> img, int levels,
                            carray_t<float> filt) {
         auto b = img.request(); auto f = filt.request();
@@ -747,47 +740,12 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 H * T, W, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("H"), py::arg("W"));
 
-    m.def("batched_ntsc_f32_to_bgr_u8",
-        [](uintptr_t d_in, uintptr_t d_out, int T, int H, int W) {
-            evm::launch_ntsc_f32_to_bgr_u8(
-                reinterpret_cast<float*>(d_in),
-                reinterpret_cast<unsigned char*>(d_out),
-                H * T, W, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("H"), py::arg("W"));
-
-    // --- batched blur_dn: whole-clip downsample per channel ----------------
-    // The color pipeline applies blur_dn (level 4) per channel of per frame.
-    // Each frame's channel is independent — we launch one blur_dn per frame
-    // but keep all data device-resident (no H2D/D2H between frames).
-    m.def("batched_blur_dn_frame",
-        [](uintptr_t d_in, uintptr_t d_out, int H, int W, int nlevs,
-           uintptr_t d_filt, int filt_len, uintptr_t d_scratch_a, uintptr_t d_scratch_b) {
-            evm::blur_dn_device(
-                reinterpret_cast<float*>(d_in), H, W,
-                reinterpret_cast<float*>(d_out), nlevs,
-                reinterpret_cast<float*>(d_filt), filt_len,
-                reinterpret_cast<float*>(d_scratch_a),
-                reinterpret_cast<float*>(d_scratch_b), 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
-           py::arg("nlevs"), py::arg("d_filt"), py::arg("filt_len"),
-           py::arg("d_scratch_a"), py::arg("d_scratch_b"));
-
     // --- whole-clip planar layout transpose: (n,H,W,3) -> (n*3,H,W) --------
     // Bit-exact layout transform that lets the color pipeline operate on
-    // contiguous per-frame-channel slices via pointer offsets. Replaces the
-    // 873-call Python loop with: transpose + one batched blur + D2H.
+    // contiguous per-frame-channel slices via pointer offsets.
     m.def("batched_to_planar_3ch",
         [](uintptr_t d_in, uintptr_t d_out, int n, int H, int W) {
             evm::launch_to_planar_3ch(
-                reinterpret_cast<float*>(d_in),
-                reinterpret_cast<float*>(d_out), n, H, W, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("n"),
-           py::arg("H"), py::arg("W"));
-
-    // Inverse: (n*3,H,W) planar -> (n,H,W,3) interleaved.
-    m.def("batched_planar_to_interleaved_3ch",
-        [](uintptr_t d_in, uintptr_t d_out, int n, int H, int W) {
-            evm::launch_planar_to_interleaved_3ch(
                 reinterpret_cast<float*>(d_in),
                 reinterpret_cast<float*>(d_out), n, H, W, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("n"),
@@ -1052,13 +1010,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 reinterpret_cast<float*>(d_out), T, N, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"));
 
-    m.def("batched_nt_to_thwc",
-        [](uintptr_t d_in, uintptr_t d_out, int T, int N) {
-            evm::launch_nt_to_thwc(
-                reinterpret_cast<const float*>(d_in),
-                reinterpret_cast<float*>(d_out), T, N, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"));
-
     // Scaled transpose: folds a per-call scalar multiply into the (N,T)->(T,N)
     // transpose. Used by the motion pipeline's Stage C to apply per-level alpha
     // amplification to IIR-filtered bands without a separate scale_inplace pass.
@@ -1070,42 +1021,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"),
            py::arg("N"), py::arg("scale"));
 
-    m.def("batched_corr_dn_rows",
-        [](uintptr_t d_in, uintptr_t d_out, int H, int W,
-           uintptr_t d_filt, int filt_len) {
-            evm::launch_corr_dn_rows(
-                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
-                H, W, reinterpret_cast<float*>(d_filt), filt_len, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
-           py::arg("d_filt"), py::arg("filt_len"));
-
-    m.def("batched_corr_dn_cols",
-        [](uintptr_t d_in, uintptr_t d_out, int H, int W,
-           uintptr_t d_filt, int filt_len) {
-            evm::launch_corr_dn_cols(
-                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
-                H, W, reinterpret_cast<float*>(d_filt), filt_len, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
-           py::arg("d_filt"), py::arg("filt_len"));
-
-    m.def("batched_up_conv_rows",
-        [](uintptr_t d_in, uintptr_t d_out, int in_H, int out_H, int W,
-           uintptr_t d_filt, int filt_len) {
-            evm::launch_up_conv_rows(
-                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
-                in_H, out_H, W, reinterpret_cast<float*>(d_filt), filt_len, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("in_H"), py::arg("out_H"),
-           py::arg("W"), py::arg("d_filt"), py::arg("filt_len"));
-
-    m.def("batched_up_conv_cols",
-        [](uintptr_t d_in, uintptr_t d_out, int H, int in_W, int out_W,
-           uintptr_t d_filt, int filt_len) {
-            evm::launch_up_conv_cols(
-                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
-                H, in_W, out_W, reinterpret_cast<float*>(d_filt), filt_len, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("in_W"),
-           py::arg("out_W"), py::arg("d_filt"), py::arg("filt_len"));
-
     // --- batched temporal filters on device pointers -----------------------
     // These take (N, T) row-major float32 on device, filter in-place semantics
     // (input and output may be different buffers).
@@ -1116,47 +1031,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 T, N, r1, r2, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
            py::arg("r1"), py::arg("r2"));
-
-    m.def("batched_butter_bandpass",
-        [](uintptr_t d_in, uintptr_t d_out, int T, int N,
-           double b0_h, double b1_h, double a1_h,
-           double b0_l, double b1_l, double a1_l) {
-            evm::launch_butter_bandpass(
-                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
-                T, N, b0_h, b1_h, a1_h, b0_l, b1_l, a1_l, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
-           py::arg("b0_high"), py::arg("b1_high"), py::arg("a1_high"),
-           py::arg("b0_low"),  py::arg("b1_low"),  py::arg("a1_low"));
-
-    // --- batched amplify helpers on device pointers ------------------------
-    m.def("batched_apply_channel_gain",
-        [](uintptr_t d_sig, int H, int W, float g0, float g1, float g2) {
-            evm::launch_apply_channel_gain(
-                reinterpret_cast<float*>(d_sig), H, W, g0, g1, g2, 0);
-        }, py::arg("d_sig"), py::arg("H"), py::arg("W"),
-           py::arg("g0"), py::arg("g1"), py::arg("g2"));
-
-    m.def("batched_attenuate_chrom",
-        [](uintptr_t d_delta, int H, int W, float chrom_att) {
-            evm::launch_attenuate_chrom(
-                reinterpret_cast<float*>(d_delta), H, W, chrom_att, 0);
-        }, py::arg("d_delta"), py::arg("H"), py::arg("W"), py::arg("chrom_att"));
-
-    m.def("batched_scale_inplace",
-        [](uintptr_t d_data, int n, float scale) {
-            evm::launch_scale_inplace(
-                reinterpret_cast<float*>(d_data), n, scale, 0);
-        }, py::arg("d_data"), py::arg("n"), py::arg("scale"));
-
-    m.def("batched_add_and_quantize",
-        [](uintptr_t d_ntsc, uintptr_t d_delta, uintptr_t d_bgr,
-           int H, int W, float chrom_att) {
-            evm::launch_add_and_quantize(
-                reinterpret_cast<float*>(d_ntsc),
-                reinterpret_cast<float*>(d_delta),
-                reinterpret_cast<unsigned char*>(d_bgr), H, W, chrom_att, 0);
-        }, py::arg("d_ntsc"), py::arg("d_delta"), py::arg("d_bgr"),
-           py::arg("H"), py::arg("W"), py::arg("chrom_att"));
 
     // Fused planar-delta add + quantize (motion pipeline render). Reads delta
     // from planar (n*3,H,W) layout directly, folding the planar->interleaved

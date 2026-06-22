@@ -61,10 +61,3 @@ def butter_bandpass_coeffs(
     return h, l
 
 
-# ---------------------------------------------------------------------------
-# Convenience: numpy helpers used by pipelines.py
-# ---------------------------------------------------------------------------
-
-def to_contiguous_f32(a: np.ndarray) -> np.ndarray:
-    """Return a C-contiguous float32 view/copy of `a`."""
-    return np.ascontiguousarray(a, dtype=np.float32)

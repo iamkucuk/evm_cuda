@@ -1,4 +1,4 @@
-"""Batched (device-resident) EVM pipelines — Phase 1 optimization.
+"""Batched (device-resident) EVM pipelines.
 
 The numpy-in/numpy-out wrappers in `_evm_cuda` each do cudaMalloc + H2D +
 kernel + D2H + cudaFree per call. The profiler (docs/profile_baseline.txt)
@@ -10,11 +10,12 @@ Design principle: the ONLY host<->device transfers are:
 Everything in between stays on-device via DeviceBuffer pointers.
 
 This is harder to read than pipelines.py (explicit buffer management) but
-the profiler justifies it: 1773 binding calls -> ~20 batched calls.
+the profiler justifies it: the old per-frame API did ~1773 binding calls;
+these pipelines do ~15 batched calls with zero per-call transfers.
 
-NOTE: the pyramid build still goes through numpy for now (the lpyr_build
-host orchestrator wasn't rewritten to be device-resident). That's the next
-phase if profiling shows it's still the bottleneck.
+The spatial kernels (blur_dn, lpyr_build/recon) use batched variants that
+process all n*3 slices per launch via grid.z = M, collapsing ~35k launches
+into ~50. See bindings.cpp batched_lpyr_build / batched_blur_dn_color.
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ import cv2
 import numpy as np
 
 from . import _evm_cuda
-from .runtime import butter_bandpass_coeffs
 
 
 class DeviceBuffer:
@@ -164,15 +164,14 @@ def figure6_alpha_schedule(
 # Color pipeline (Gaussian downsample + ideal bandpass)
 # ---------------------------------------------------------------------------
 #
-# Host<->device transfer count:
-#   1 H2D (whole clip u8)
-#   1 D2H per frame per channel during blur_dn (unavoidable: the lpyr host
-#       orchestrator needs host arrays) — TODO: device-resident blur_dn
-#   1 H2D + 1 D2H per channel for ideal_bandpass
-#   1 H2D per frame for render add-back, 1 D2H per frame for output
+# Host<->device transfers (only 2 pipeline-level + 3 small bandpass round-trips):
+#   1 H2D (whole clip u8 at entry)
+#   1 D2H (final uint8 output at exit)
+#   Stage 2b: 1 D2H of the Gaussian pyramid + 3 H2D/D2H for per-channel bandpass
 #
-# Compared to the old pipeline (4 transfers per binding call), this cuts
-# transfers by ~10x for the color convert and bandpass stages.
+# Everything else (color_cvt, blur_dn, upsample, render) is fully device-resident.
+# The Stage 2b host round-trip is the remaining transfer bottleneck — see the
+# HANDOFF for the device-resident ideal_bandpass optimization opportunity.
 
 def magnify_color_gdown_ideal(
     vid_path: str | Path,
@@ -197,7 +196,7 @@ def magnify_color_gdown_ideal(
 
     # --- Stage 1: batched color convert (whole clip, 1 kernel launch) ------
     # ntsc STAYS ON DEVICE — we never download it. The add-back in stage 4
-    # happens on-device via batched_add_and_quantize, so the 1.09GB ntsc
+    # happens on-device via batched_upsample_add_quantize, so the ntsc
     # buffer never crosses PCIe. Only the final uint8 output comes down.
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
