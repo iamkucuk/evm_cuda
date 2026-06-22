@@ -28,6 +28,17 @@ from evm_cuda.batched import (  # noqa: E402
 )
 from evm_cuda import _evm_cuda  # noqa: E402
 
+
+def sync():
+    """Block until all queued GPU work finishes.
+
+    Every batched_* wrapper queues work on stream 0 and returns immediately;
+    a perf_counter() bracket around a stage would otherwise only measure the
+    host-side launch overhead. We sync at the END of each stage so the timer
+    captures real GPU execution time."""
+    _evm_cuda.device_synchronize()
+
+
 DATA = ROOT / "data"
 VID = str(DATA / "face.mp4")
 ALPHA = 50; LEVEL = 4; FL = 50/60; FH = 60/60; CHROM_ATT = 1.0; SR = 30.0
@@ -55,6 +66,7 @@ def main():
     # Warmup (one-time, excluded from total)
     t0 = t()
     _warmup_gpu_pool()
+    sync()
     timings["warmup (one-time)"] = t() - t0
 
     # Stage 1: upload + color convert (ntsc stays on device)
@@ -62,6 +74,7 @@ def main():
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
+    sync()
     timings["1) upload + color_cvt"] = t() - t0
 
     # Stage 2: planar transpose + blur_dn (on-device)
@@ -72,6 +85,7 @@ def main():
     _evm_cuda.batched_blur_dn_color(
         d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, LEVEL,
         _d_binom5_sum1(), 5)
+    sync()
     timings["2) blur_dn (on-device)"] = t() - t0
 
     # Stage 2b: D2H + reshape (needed for bandpass)

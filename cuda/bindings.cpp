@@ -21,6 +21,7 @@
 
 #include <cufft.h>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 #include <utility>
 
@@ -138,6 +139,36 @@ T* device_alloc(size_t n) {
 
 void device_free(void* p) {
     if (p) CUDA_CHECK(cudaFree(p));
+}
+
+// cuFFT plan cache for ideal_bandpass. cufftPlanMany does internal autotuning
+// (kernel selection, workspace sizing) on every call — measured at ~5-10ms
+// per plan on H200, called 2x per channel x 3 channels = ~30-60ms per
+// pipeline invocation. The plan depends only on (T, N): same length-T batched
+// over N signals. Caching by that key makes the 2nd+ pipeline call skip plan
+// creation entirely.
+//
+// Thread-safety: the GIL serializes Python-side calls into this module, so
+// the cache access is single-threaded in practice.
+struct FftPlanPair { cufftHandle fwd; cufftHandle inv; };
+std::unordered_map<long long, FftPlanPair> g_fft_cache;
+
+FftPlanPair get_or_create_fft_plans(int T, int N) {
+    // Key combines T and N into a single int64 (T in high 32 bits, N in low).
+    // T (frame count) and N (spatial locations) are both << 2^31 in practice.
+    long long key = (static_cast<long long>(T) << 32) | static_cast<long long>(N);
+    auto it = g_fft_cache.find(key);
+    if (it != g_fft_cache.end()) return it->second;
+
+    FftPlanPair p;
+    int n_arr[1] = {T};
+    int in_emb[2] = {T, 1};
+    CUFFT_CHECK(cufftPlanMany(&p.fwd, 1, n_arr,
+                              in_emb, 1, T, in_emb, 1, T, CUFFT_C2C, N));
+    CUFFT_CHECK(cufftPlanMany(&p.inv, 1, n_arr,
+                              in_emb, 1, T, in_emb, 1, T, CUFFT_C2C, N));
+    g_fft_cache[key] = p;
+    return p;
 }
 
 // RAII device memory buffer. Holds a cudaMalloc'd region for the lifetime of
@@ -955,24 +986,18 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("in_H"), py::arg("in_W"), py::arg("out_H"), py::arg("out_W"));
 
     // --- batched ideal_bandpass: needs cuFFT plans, so orchestrate here -----
-    // Same plan-create/destroy lifecycle as the numpy version, but no H2D/D2H.
+    // Plans are cached by (T, N) — cuFFT plan creation does internal autotuning
+    // (~5-10ms each on H200), and this is called 3x per pipeline (once per
+    // channel) with identical (T, N). First call pays the autotuning cost;
+    // subsequent calls (same clip, or repeated pipeline runs) skip it.
     m.def("batched_ideal_bandpass",
         [](uintptr_t d_in, uintptr_t d_out, int T, int N,
            float wl, float wh, float sampling_rate) {
-            size_t cplx_bytes = static_cast<size_t>(N) * T * sizeof(cufftComplex);
             auto* d_tmp = device_alloc<cufftComplex>(static_cast<size_t>(N) * T);
-            cufftHandle plan_fwd, plan_inv;
-            int n_arr[1] = {T};
-            int in_emb[2] = {T, 1};
-            CUFFT_CHECK(cufftPlanMany(&plan_fwd, 1, n_arr,
-                                      in_emb, 1, T, in_emb, 1, T, CUFFT_C2C, N));
-            CUFFT_CHECK(cufftPlanMany(&plan_inv, 1, n_arr,
-                                      in_emb, 1, T, in_emb, 1, T, CUFFT_C2C, N));
+            FftPlanPair plans = get_or_create_fft_plans(T, N);
             evm::launch_ideal_bandpass(
                 reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
-                d_tmp, T, N, wl, wh, sampling_rate, plan_fwd, plan_inv, 0);
-            CUFFT_CHECK(cufftDestroy(plan_fwd));
-            CUFFT_CHECK(cufftDestroy(plan_inv));
+                d_tmp, T, N, wl, wh, sampling_rate, plans.fwd, plans.inv, 0);
             device_free(d_tmp);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
            py::arg("wl"), py::arg("wh"), py::arg("sampling_rate"));
@@ -986,6 +1011,17 @@ PYBIND11_MODULE(_evm_cuda, m) {
         CUDA_CHECK(cudaMalloc(&p, nbytes));
         CUDA_CHECK(cudaFree(p));
     }, py::arg("nbytes"));
+
+    // Block the host until all outstanding async work on the default stream
+    // completes. The batched_* wrappers are all fire-and-forget (they return
+    // immediately after queueing kernels on stream 0); without an explicit
+    // sync, perf_counter() wall-clock measurements only capture host overhead
+    // and the actual GPU compute piles up at the next blocking D2H memcpy.
+    // The profilers (scripts/profile_*.py) call this between every stage so
+    // the per-stage breakdown reflects real GPU time, not host queue time.
+    m.def("device_synchronize", []() {
+        CUDA_CHECK(cudaDeviceSynchronize());
+    });
 
     // Upload the binom5 filters lazily (on first call, not at module import).
     // Allocating at import time runs cudaMalloc before any explicit device

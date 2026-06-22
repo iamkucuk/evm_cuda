@@ -28,6 +28,19 @@ from evm_cuda.batched import (  # noqa: E402
 )
 from evm_cuda import _evm_cuda  # noqa: E402
 
+
+def sync():
+    """Block until all queued GPU work finishes.
+
+    Every batched_* wrapper queues work on stream 0 and returns immediately;
+    without an explicit sync, perf_counter() brackets only capture host-side
+    launch overhead and the actual GPU compute piles up at the next blocking
+    D2H memcpy. The motion pipeline was especially affected: Stages A/B/C
+    contain NO blocking calls, so all their GPU time was being attributed to
+    Stage D's download. We sync at the END of each stage so the per-stage
+    breakdown reflects real GPU execution time."""
+    _evm_cuda.device_synchronize()
+
 DATA = ROOT / "data"
 VID = str(DATA / "baby.mp4")
 ALPHA = 10; LAMBDA_C = 16; R1 = 0.4; R2 = 0.05; CHROM_ATT = 0.1
@@ -61,6 +74,7 @@ def main():
     # Warmup (one-time, excluded from total)
     t0 = t()
     _warmup_gpu_pool_motion(n, h, w, levels)
+    sync()
     timings["warmup (one-time)"] = t() - t0
 
     # Stage A: NTSC convert (ntsc STAYS on device)
@@ -68,6 +82,7 @@ def main():
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
+    sync()
     timings["A) NTSC convert (on-device)"] = t() - t0
 
     # Stage B: planar transpose + lpyr_build (on-device)
@@ -79,6 +94,7 @@ def main():
     d_bands = DeviceBuffer(total_band_floats * 4)
     _evm_cuda.batched_lpyr_build(
         d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels, _d_binom5(), 5)
+    sync()
     timings["B) lpyr_build (on-device)"] = t() - t0
 
     # Stage C: temporal IIR (on-device, no host transfers)
@@ -103,13 +119,19 @@ def main():
             dst_off = level_offsets[l] + c * n * sz
             _evm_cuda.batched_nt_to_thwc(
                 d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz)
+    sync()
     timings["C) temporal IIR (on-device)"] = t() - t0
 
-    # Stage D: recon + device-resident render (no host transfers)
+    # Stage D1: lpyr_recon (9-level pyramid reconstruction, on-device)
     t0 = t()
     d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
     _evm_cuda.batched_lpyr_recon(
         d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
+    sync()
+    timings["D1) lpyr_recon (on-device)"] = t() - t0
+
+    # Stage D2: render (transpose + attenuate + add+quantize + D2H)
+    t0 = t()
     d_delta_interleaved = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_planar_to_interleaved_3ch(
         d_delta_planar.ptr, d_delta_interleaved.ptr, n, h, w)
@@ -119,7 +141,7 @@ def main():
     _evm_cuda.batched_add_and_quantize(
         d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr, n * h, w)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-    timings["D) recon + render (on-device)"] = t() - t0
+    timings["D2) render (transpose+att+add)"] = t() - t0
 
     # Report
     pipeline_keys = [k for k in timings if not k.startswith("warmup")]
