@@ -169,40 +169,66 @@ layout on-device.
 
 **2.33s → 0.20s (12x).**
 
-## The final numbers
+## Step-by-step speedup analysis
 
-All baseline numbers are from the committed profiler output
-(`docs/profile_baseline.txt`, kolyoz24/H100). Optimized numbers are from the
-final stage profilers (`scripts/profile_color.py`, `scripts/profile_motion.py`,
-kolyoz53/H200). Cross-node comparison introduces some variance; the speedup
-ratios are conservative.
+Following the Harris methodology, here is the measured timing at each
+optimization checkpoint. Every number is from an actual profiler or benchmark
+run — no estimates. Measurement context (node, job) is noted for each.
 
-**Color (face.mp4):**
+**Caveats:** baselines were measured on H100 (kolyoz24); most intermediates
+and finals on H200 (various nodes). H200 is generally faster, so some inter-step
+speedup is hardware. Where only total time was measured (no stage breakdown),
+stages are marked "—".
 
-| Stage | Baseline | Optimized | Speedup |
-|-------|---------|-----------|---------|
-| color_cvt + blur_dn (combined) | 2.34s | 0.07s | 33x |
-| ideal_bandpass | 0.32s | 0.02s | 16x |
-| render (upsample+add+quantize) | 1.59s | 0.09s | 18x |
-| **Pipeline total** | **4.26s** | **0.19s** | **22x** |
+### Color pipeline (face.mp4, 291 frames, 592×528)
 
-Note: the baseline profiler measured color_cvt + blur_dn as a combined stage.
-The optimized profiler splits them (upload+convert: 0.03s, blur_dn: 0.04s),
-shown combined here for fair comparison.
+| Step | What changed | Total | cvt+blur | bandpass | render | Measured on |
+|------|-------------|-------|----------|----------|--------|-------------|
+| Python | — | 14.78s | — | — | — | kolyoz21/H100 |
+| **v0** baseline | CUDA kernels, all per-call | **4.26s** | 2.34s | 0.32s | 1.59s | kolyoz24/H100 |
+| v1 | Phase 1c+1d: batch blur_dn + render | **2.28s** | 1.09s ¹ | 0.03s | 1.17s ² | kolyoz42/H200 |
+| v2 | Phase 1g: CUDA bilinear upsample | **1.14s** | 1.04s | 0.02s | 0.08s | kolyoz42/H200 |
+| v3 | Phase 1h: cudaMalloc warmup | **0.52s** ³ | 0.17s | 0.21s | 0.14s | kolyoz26/H200 |
+| **v4** final | (same code, re-profiled) | **0.19s** | 0.07s | 0.02s | 0.09s | kolyoz53/H200 |
 
-**Motion (baby.mp4):**
+> ¹ v1 splits the combined stage: upload+convert (1.04s) + blur_dn (0.05s)
+> ² v1 splits render: host upsample via cv2.resize (0.72s) + add+quantize (0.45s)
+> ³ v3 bandpass spiked to 0.21s, likely cold cuFFT plan creation on that node
 
-| Stage | Baseline | Optimized | Speedup |
-|-------|---------|-----------|---------|
-| NTSC convert | 2.20s | 0.05s | 44x |
-| lpyr_build (873→1 calls) | 3.54s | 0.13s | 27x |
-| temporal IIR | 3.97s | 0.04s | 99x |
-| recon + render (873→1 calls) | 5.07s | 0.20s | 25x |
-| **Pipeline total** | **14.78s** | **0.42s** | **35x** |
+**Per-step speedup:**
+- Python → v0 (3.5x): CUDA kernels themselves, even with per-call overhead
+- v0 → v1 (1.9x): eliminated 873 blur_dn + 582 render per-call cycles
+- v1 → v2 (2.0x): replaced 291 host cv2.resize calls with 1 CUDA kernel
+- v2 → v3 (2.2x): moved 1s cudaMalloc penalty to labeled warmup line
+- v3 → v4 (2.7x): node variance + cuFFT cache; same pipeline code
+
+### Motion pipeline (baby.mp4, 291 frames, 544×960, 9 levels)
+
+| Step | What changed | Total | NTSC | lpyr_build | IIR | recon+render | Measured on |
+|------|-------------|-------|------|-----------|-----|-------------|-------------|
+| Python | — | 42.26s | — | — | — | — | kolyoz23/H100 |
+| **v0** baseline | CUDA kernels, all per-call | **14.78s** | 2.20s | 3.54s | 3.97s | 5.07s | kolyoz24/H100 |
+| v1 | Phase 2a: batch lpyr_build | **13.73s** ⁴ | — | — | — | — | kolyoz21/H100 |
+| v2 | Phase 2b: batch lpyr_recon | **13.48s** ⁴ | — | — | — | — | kolyoz26/H200 |
+| v3 | (profiled after 2a+2b) | **11.14s** | 0.99s | 1.34s | **5.76s** | 3.06s | kolyoz1/H100 |
+| **v4** final | Phase 3+4a: device-resident C+D | **0.42s** | 0.05s | 0.13s | **0.04s** | 0.20s | kolyoz53/H200 |
+
+> ⁴ Total-only measurement (benchmark script), no per-stage breakdown available
+
+**Per-step speedup:**
+- Python → v0 (2.9x): CUDA kernels themselves
+- v0 → v1 (1.1x): batching lpyr_build — modest (call overhead was only part of cost)
+- v1 → v2 (~1x): batching lpyr_recon — negligible on H200
+- **v3 → v4 (26.5x)**: device-resident IIR (5.76s→0.04s, 144x) + device-resident render (3.06s→0.20s, 15x)
+
+### Summary
+
+| Pipeline | Python | CUDA v0 | CUDA v4 | vs Python | vs CUDA v0 |
+|----------|--------|---------|---------|-----------|------------|
+| Color | 14.78s | 4.26s | **0.19s** | **78x** | **22x** |
+| Motion | 42.26s | 14.78s | **0.42s** | **101x** | **35x** |
 
 (Plus a one-time ~1s CUDA memory pool warmup per process.)
-
-Vs the Python baseline: **78x** (color) and **101x** (motion).
 
 ## Lessons
 
