@@ -132,7 +132,7 @@ taken on NVIDIA H100 (kolyoz21, TRUBA HPC).
 | blur_dn | 4.6 ms | 5.7% | Compute. Separable filter, batched across all slices. |
 | D2H + reshape | 4.0 ms | 5.0% | PCIe bandwidth plus a host-side numpy transpose. |
 | ideal_bandpass | 4.7 ms | 5.8% | cuFFT compute. Plan is cached. |
-| **upsample + render** | **67.0 ms** | **82.8%** | **GPU memory bandwidth.** |
+| **upsample + render** | **67.0 ms** | **82.8%** | **Memory latency** (see throughput analysis below). |
 
 **Motion pipeline (baby.mp4, 291 frames, 960×544, 9 levels): 0.181s total**
 
@@ -142,26 +142,30 @@ taken on NVIDIA H100 (kolyoz21, TRUBA HPC).
 | lpyr_build | 19.6 ms | 10.8% | Compute. Separable filter, batched. |
 | temporal IIR | 40.8 ms | 22.6% | Algorithmic seriality. Each output depends on the previous two. |
 | lpyr_recon | 14.8 ms | 8.2% | Compute. Separable filter, batched. |
-| **render** | **104.4 ms** | **57.9%** | **GPU memory bandwidth.** |
+| **render** | **104.4 ms** | **57.9%** | **Memory latency** (see throughput analysis below). |
 
 ### Three bottleneck regimes
 
 The profiler data falls into three categories, each governed by different
 physics.
 
-**The render stage is memory-bandwidth bound (58 to 83% of GPU time).**
+**The render stage is memory-latency bound (58 to 83% of GPU time).**
 
 The render kernels read the full-resolution NTSC frame in float32
-(n×H×W×3 = 1.8 GB for motion) and write the uint8 output. At H100's
-~3 TB/s memory bandwidth, reading 1.8 GB should take about 0.6 ms. The
-actual measured time is 104 ms because the kernel also does bilinear
-interpolation and NTSC-to-BGR conversion per pixel, but the core limiter
-is memory traffic, not math.
+(n×H×W×3 = 1.8 GB for motion) and write the uint8 output. The arithmetic
+intensity is about 2.3 FLOPs per byte, which puts it nominally in the
+memory-bound regime on H100's roofline. But the kernel achieves only 0.4%
+of peak bandwidth. The problem isn't that the kernel moves too much data
+for the memory controller to handle. The problem is that each thread
+issues a global memory read, then stalls for 400+ cycles waiting for it,
+with no software caching to hide the latency.
 
-Kernel fusion confirmed this. Merging the bilinear upsample, add, and
-quantize into a single kernel eliminated a 1.8 GB intermediate buffer and
-one kernel launch. It produced no measurable improvement. The dominant
-NTSC frame read overwhelms any savings on the smaller delta buffer.
+Kernel fusion confirmed that the bottleneck isn't raw data volume.
+Merging the bilinear upsample, add, and quantize into a single kernel
+eliminated a 1.8 GB intermediate buffer and one kernel launch. It
+produced no measurable improvement. Eliminating reads doesn't help when
+the remaining reads still stall on latency. The fix is faster reads
+(texture units, shared memory tiling), not fewer reads.
 
 **The IIR filter is algorithmically serial (23% of motion GPU time).**
 
@@ -320,28 +324,114 @@ input upload transfer.
 
 ## Open optimization surfaces
 
-The render stage (58 to 83% of GPU time) is memory-bandwidth bound. There
-are three viable strategies, in order of estimated impact.
+The render stage (58 to 83% of GPU time) is memory-latency bound, achieving
+under 1% of peak bandwidth. The kernel stalls on global memory read latency
+because it uses no software caching. Three strategies address this directly.
+
+**Texture memory for NTSC reads.** `cudaTextureObject_t` provides hardware-
+managed L1 texture cache. The render kernel currently reads the NTSC frame
+from raw global memory (L2 to DRAM path). Texture units would cache the
+reads in L1, turning 400+ cycle DRAM latency into ~30 cycle L1 hits on
+spatially local accesses. Since adjacent threads read adjacent pixels, the
+texture cache hit rate should be high. This is the most direct fix for a
+latency-bound kernel and requires no algorithmic change.
+
+**Shared memory tiling.** Load a block of the NTSC frame into shared memory
+cooperatively, then have each thread read from shared memory. This is the
+classic solution to the latency problem that Harris describes in the
+reduction paper. It requires a tiled kernel rewrite but gives full control
+over the caching behavior.
 
 **FP16 NTSC storage.** Storing the NTSC frame in half-precision halves the
-read bandwidth. The NTSC values are in [0, 1] with roughly 10⁻⁶ precision
-requirements. FP16's 11-bit mantissa is likely sufficient but needs
-tolerance validation against the Python baseline.
+bytes per read, which doubles the effective bandwidth for the same latency.
+The NTSC values are in [0, 1] with roughly 10⁻⁶ precision requirements.
+FP16's 11-bit mantissa is likely sufficient but needs tolerance validation
+against the Python baseline.
 
-**Texture memory for NTSC reads.** `cudaTextureObject_t` with
-`cudaReadModeElementType` provides cached reads with hardware spatial
-locality. The render kernel reads each NTSC pixel exactly once, but the
-texture cache path is backed by L2 and may improve effective bandwidth.
-
-**Eliminate the NTSC intermediate.** Fuse the BGR-to-NTSC conversion into
-the render kernel, reading BGR uint8 directly and converting inline. This
-eliminates the 1.8 GB NTSC buffer entirely but requires reordering the
-pipeline, since NTSC is currently computed early and reused.
+**Eliminate the NTSC intermediate entirely.** Fuse the BGR-to-NTSC conversion
+into the render kernel, reading BGR uint8 (1 byte per channel) directly
+instead of NTSC float32 (4 bytes per channel). This cuts the read volume by
+4× and eliminates the 1.8 GB NTSC buffer, but requires reordering the
+pipeline since NTSC is currently computed early and reused by both the
+filter and render stages.
 
 For the IIR stage, the algorithmic seriality can only be addressed by
 replacing the recursive filter with a block-parallel formulation (cyclic
 reduction or scan-based IIR). That changes the numerical characteristics
 and would require re-validation.
+
+## Throughput and theoretical limits
+
+### Measured throughput
+
+The GPU pipeline processes pixels at the following rates (whole pipeline,
+not just render):
+
+| Pipeline | Resolution | Time (291 frames) | Throughput |
+|----------|-----------|-------------------|------------|
+| Color | 528×592 | 0.081s | **1.12 Gpx/s** (0.89 ns/px) |
+| Motion | 960×544 | 0.181s | **0.84 Gpx/s** (1.19 ns/px) |
+
+Motion is slower per pixel because the Laplacian pyramid does 9 levels of
+decomposition and reconstruction, plus the IIR filter is sequential per
+location.
+
+### Realtime performance projection
+
+Scaling linearly by pixel count (the bottleneck stages scale with pixels):
+
+| Resolution | Color | Motion | Realtime (30 fps)? |
+|-----------|-------|--------|---------------------|
+| 1080p (1920×1080) | 542 fps | 405 fps | **18× and 13× headroom** |
+| 4K (3840×2160) | 135 fps | 101 fps | **4.5× and 3.4× headroom** |
+| Max @ 30 fps | 8156×4588 | 7052×3966 | Beyond 8K |
+
+At 1080p, a single H100 could run the full color pipeline at 542 fps and
+motion at 405 fps. Even at 4K, both pipelines exceed 30 fps with 3× to 4×
+margin. The maximum resolution for 30 fps realtime exceeds 8K for color
+and approaches 8K for motion.
+
+These are GPU-only numbers. The end-to-end pipeline (including video
+decode and encode) is currently bottlenecked by the CPU codec at about
+2.7s per clip, which limits realtime throughput to roughly 0.1 fps
+regardless of GPU speed.
+
+### Resource utilization: why the render stage is slow
+
+The render stage dominates GPU time (58 to 83%), yet it achieves only
+**0.4% of the H100's peak memory bandwidth** and **0.003% of peak FP32
+throughput**. Neither resource is saturated.
+
+The arithmetic intensity is about 2.3 FLOPs per byte. On the roofline
+model, the crossover between memory-bound and compute-bound on H100 is
+at ~3.4 FLOPs/byte, so the kernel is nominally in the memory-bound
+regime. But achieving only 0.4% of peak bandwidth means it isn't actually
+saturating memory. The real limiter is **memory latency**, not bandwidth.
+
+Each thread reads ~12 bytes from the NTSC frame (3 floats), does about 35
+FLOPs of math (bilinear interpolation plus NTSC-to-BGR matrix multiply),
+and writes 3 bytes. The reads go through L2 cache to DRAM with no
+software caching (no shared memory, no texture units). A global memory
+read takes 400 to 600 cycles. The thread's 35 FLOPs finish in about 35
+cycles. Without enough concurrent threads in flight to overlap, the SM
+stalls on the read latency for 90%+ of the time.
+
+This explains why kernel fusion didn't help. Eliminating an intermediate
+buffer read doesn't matter when the threads are already stalled on the
+remaining reads. The fix is not fewer reads but faster reads: texture
+units (hardware-managed L1 cache), shared memory tiling (load a block to
+shared memory once, compute from it), or processing multiple output
+pixels per thread to amortize the read latency.
+
+### Theoretical ceiling
+
+If the render kernel could achieve 50% of peak memory bandwidth (a
+typical achievable fraction for well-optimized kernels), the render stage
+would drop from 67 ms to under 1 ms for color, and from 104 ms to under
+2 ms for motion. The full pipelines would drop to roughly 15 ms (color)
+and 40 ms (motion), processing 1080p at over 2,000 fps.
+
+That is the headroom. The current implementation uses less than 1% of it.
 
 ## Methodology
 
