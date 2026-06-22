@@ -276,6 +276,56 @@ memory bandwidth, and the only way past it is to change the data format
 (FP16), change the access pattern (texture cache), or eliminate the data
 movement entirely.
 
+### Phase 5d: Warp-level micro-optimizations (small wins, hard lessons)
+
+With launch overhead gone and kernel fusion exhausted, the next tier of
+Harris-style techniques is warp-level: register allocation, occupancy hints,
+constant memory. We tried two.
+
+**Register hoisting for filter taps** — the batched spatial kernels read the
+5-tap binom5 filter from a global-memory pointer inside the convolution loop.
+Loading all 5 taps into a local array at kernel entry (with `#pragma unroll`)
+forces them into registers, eliminating 5 global reads per output pixel.
+
+| Stage | Before | After | Speedup |
+|---|---|---|---|
+| blur_dn | 0.0052s | 0.0046s | **−12%** |
+| lpyr_build | 0.0222s | 0.0196s | **−12%** |
+| lpyr_recon | 0.0164s | 0.0148s | **−10%** |
+
+Real, reproducible gains — consistent across all iterations and multiple runs.
+These three stages use the 5-tap filter heaviest, so the effect is exactly
+where expected.
+
+**`__launch_bounds__`** — we added occupancy hints to every hot-path kernel,
+then measured. The results were a textbook lesson in *why you must profile
+every change*:
+
+| Kernel | `__launch_bounds__` | Effect | Kept? |
+|---|---|---|---|
+| Batched spatial (1024 threads) | `(1024, 2)` | Neutral-to-positive | ✅ Kept |
+| IIR (256 threads) | `(256, 8)` | **+21% regression** — register spills! | ❌ Removed |
+| Render (256 threads) | `(256, 4)` | ±10% (within noise) | ❌ Removed |
+| Transpose/color_cvt | `(256, 4)` / `(1024, 2)` | No measurable effect | ❌ Removed |
+
+The IIR regression was the sharpest lesson. The IIR kernel uses 32 registers
+in its sequential per-thread loop. `__launch_bounds__(256, 8)` demands
+256 × 8 = 2048 threads per SM, needing 32 × 2048 = 65536 registers — exactly
+the SM's maximum. The compiler achieved this by **spilling registers to local
+memory** (slow global memory), which made the sequential loop slower. Higher
+occupancy achieved via spills is *worse*, not better — a point Harris makes
+explicitly in the presentation but is easy to forget when applying the hint
+mechanically.
+
+The render kernels showed ±10% run-to-run variance regardless of
+`__launch_bounds__`, confirming they're purely memory-bandwidth bound.
+Occupancy hints can't help a kernel that's waiting on memory, not compute.
+
+**Net impact: small.** The spatial gains (10-12% on ~20% of GPU time) moved
+the total motion pipeline by ~2%. The dominant render stage (57-83%) didn't
+budge. This is the fundamental wall: Harris-style compute optimizations
+address compute and launch overhead, not memory bandwidth.
+
 ---
 
 ## The full picture
@@ -287,22 +337,22 @@ movement entirely.
 | Component | CUDA v0 | Now (steady) | Speedup |
 |---|---:|---:|---:|
 | color_cvt | ~1.0s | 0.0006s | ~1700× |
-| blur_dn | ~1.3s | 0.005s | ~260× |
+| blur_dn | ~1.3s | 0.0046s | ~280× |
 | D2H + reshape | — | 0.004s | — |
-| ideal_bandpass | 0.32s | 0.005s | 64× |
-| upsample + render | 1.59s | 0.070s | 23× |
-| **Total** | **4.26s** | **0.085s** | **50×** |
+| ideal_bandpass | 0.32s | 0.0047s | 68× |
+| upsample + render | 1.59s | 0.067s | 24× |
+| **Total** | **4.26s** | **0.081s** | **53×** |
 
 **Motion pipeline (baby.mp4, 291 frames, 960×544, 9 levels):**
 
 | Component | CUDA v0 | Now (steady) | Speedup |
 |---|---:|---:|---:|
 | NTSC convert | 2.20s | 0.0009s | 2444× |
-| lpyr_build | 3.54s | 0.022s | 161× |
+| lpyr_build | 3.54s | 0.020s | 177× |
 | temporal IIR | 3.97s | 0.041s | 97× |
-| lpyr_recon | ~2.5s | 0.016s | ~156× |
+| lpyr_recon | ~2.5s | 0.015s | ~167× |
 | render | ~2.6s | 0.104s | ~25× |
-| **Total** | **14.78s** | **0.184s** | **80×** |
+| **Total** | **14.78s** | **0.181s** | **82×** |
 
 (Steady-state = median of 5 iterations, warmup run excluded, device buffers
 pre-allocated, decode/encode excluded. v0 numbers include decode/encode, so
@@ -310,15 +360,15 @@ the real end-to-end speedup is somewhat less.)
 
 ### Where the time goes now
 
-The GPU pipeline is now extremely fast (0.08s color, 0.19s motion). But the
+The GPU pipeline is now extremely fast (0.081s color, 0.181s motion). But the
 **full end-to-end pipeline call** — including video decode and encode — tells
 a different story:
 
 | Component | Color (face.mp4) | Motion (baby.mp4) |
 |---|---|---|
-| GPU pipeline (steady-state, profiled) | 0.08s | 0.19s |
-| Full pipeline call (incl. decode + encode) | 2.79s | 2.71s |
-| **Implied decode + encode overhead** | **~2.7s** | **~2.5s** |
+| GPU pipeline (steady-state, profiled) | 0.081s | 0.181s |
+| Full pipeline call (incl. decode + encode) | 2.65s | 2.85s |
+| **Implied decode + encode overhead** | **~2.6s** | **~2.7s** |
 
 The cv2.VideoWriter encode (mp4v codec, CPU-side) is roughly **10× slower
 than the entire GPU pipeline**. We optimized the GPU to the point where the
@@ -326,7 +376,7 @@ video codec — which we didn't touch at all — is now the dominant cost by an
 order of magnitude. NVENC (GPU hardware encode) is the clear next target for
 end-to-end throughput.
 
-Within the GPU pipeline itself, the render stage dominates (81% color, 57%
+Within the GPU pipeline itself, the render stage dominates (83% color, 58%
 motion). It is **memory-bandwidth bound**: reading the full-res NTSC frame
 (1.8GB for motion) + writing 455MB uint8 output. Every other stage has been
 optimized to near-zero.
@@ -375,11 +425,25 @@ kernel).
    `to_planar_3ch` / `thwc_to_nt` / scatter/gather kernels were the enablers.
 
 7. **The thing you didn't optimize becomes the bottleneck.** We spent two
-   phases optimizing the GPU pipeline (0.08s color, 0.19s motion). Then we
+   phases optimizing the GPU pipeline (0.081s color, 0.181s motion). Then we
    measured the full end-to-end call: 2.7s. The video codec — cv2.VideoWriter
    with mp4v on the CPU — is 10× slower than the entire GPU pipeline. We never
    touched it because it wasn't the bottleneck. Now it is. The lesson: always
    measure the full end-to-end path, not just the part you're optimizing.
+
+8. **Higher occupancy via register spills is worse, not better.**
+   `__launch_bounds__(256, 8)` on the IIR kernel demanded 65536 registers
+   per SM — exactly the maximum — so the compiler spilled to local memory to
+   fit. The result: a 21% *regression*. More concurrent threads that run
+   slower is a net loss. The IIR kernel's sequential per-thread loop doesn't
+   benefit from occupancy anyway — there's no memory latency to hide when
+   the thread is doing pure arithmetic. Removed the hint, recovered the speed.
+
+9. **Register hoisting helps compute-bound stages, not bandwidth-bound ones.**
+   Loading the 5-tap filter into registers gave 10-12% gains on the spatial
+   kernels (which do real convolution work). The same technique on the render
+   kernel would be meaningless — it's waiting on memory, not re-reading
+   filter taps. Match the optimization to the bottleneck type.
 
 ## Methodology credit
 
