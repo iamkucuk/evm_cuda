@@ -95,42 +95,66 @@ __global__ void add_and_quantize_kernel(
 // layout, folding the transpose inline and eliminating the intermediate buffer
 // + one full-res kernel pass.
 //
+// Fused add + NTSC->BGR quantize reading delta from PLANAR layout.
+//
+// The motion pipeline's lpyr_recon outputs delta in planar (n*3, H, W) layout
+// (frame-major, then channel). The existing add_and_quantize expects interleaved
+// (n, H, W, 3) delta, requiring a separate planar_to_interleaved_3ch transpose
+// pass first. This variant reads the 3 delta channels directly from planar
+// layout, folding the transpose inline and eliminating the intermediate buffer
+// + one full-res kernel pass.
+//
 // Planar delta layout: delta[(f*3 + c) * H * W + y * W + x] for frame f, chan c.
 //
-// Grid: (ceil(W/32), ceil(H/32), n)  Block: (32, 32, 1)  — grid.z = frame index.
+// Grid: (ceil(W/(32*ELEMS)), ceil(H/32), n)  Block: (32, 32, 1)
+// Each thread processes ELEMS adjacent pixels along x (Harris V6: multiple
+// elements per thread). This amortizes the per-pixel overhead and gives the
+// compiler independent memory operations to pipeline for latency hiding.
+constexpr int ADD_PLANAR_ELEMS = 4;
+
 __global__ void add_planar_quantize_kernel(
     const float* __restrict__ ntsc,       // (n, H, W, 3) interleaved
     const float* __restrict__ delta_planar,  // (n*3, H, W) planar
     unsigned char* __restrict__ bgr_out,  // (n, H, W, 3)
     int n, int H, int W, float chrom_att)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int x0 = blockIdx.x * blockDim.x * ADD_PLANAR_ELEMS + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
     const int f = blockIdx.z;  // frame index
-    if (x >= W || y >= H || f >= n) return;
+    if (y >= H || f >= n) return;
 
-    const int spatial = y * W + x;          // index within one (H,W) plane
-    const int px = (f * H * W + spatial) * 3;  // interleaved ntsc/bgr index
-
-    // Read delta from planar layout: channel c is at plane (f*3 + c).
+    const int spatial_base = y * W + x0;
+    const int px_base = (f * H * W + spatial_base) * 3;
     const float* dplane = delta_planar + static_cast<size_t>(f) * 3 * H * W;
-    float dy = dplane[0 * H * W + spatial];
-    float di = dplane[1 * H * W + spatial] * chrom_att;
-    float dq = dplane[2 * H * W + spatial] * chrom_att;
+    const float* dy_plane = dplane;
+    const float* di_plane = dplane + H * W;
+    const float* dq_plane = dplane + 2 * H * W;
 
-    float y_ = ntsc[px + 0] + dy;
-    float i_ = ntsc[px + 1] + di;
-    float q_ = ntsc[px + 2] + dq;
+    #pragma unroll
+    for (int e = 0; e < ADD_PLANAR_ELEMS; ++e) {
+        const int x = x0 + e * 32;  // stride by warp width for coalescing
+        if (x >= W) break;
+        const int spatial = spatial_base + e * 32;
+        const int px = px_base + e * 32 * 3;
 
-    float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
-    float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
-    float b = kYiqToRgb[2][0]*y_ + kYiqToRgb[2][1]*i_ + kYiqToRgb[2][2]*q_;
-    r = fminf(fmaxf(r, 0.0f), 1.0f);
-    g = fminf(fmaxf(g, 0.0f), 1.0f);
-    b = fminf(fmaxf(b, 0.0f), 1.0f);
-    bgr_out[px + 0] = static_cast<unsigned char>(rintf(b * 255.0f));
-    bgr_out[px + 1] = static_cast<unsigned char>(rintf(g * 255.0f));
-    bgr_out[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
+        float dy = dy_plane[spatial];
+        float di = di_plane[spatial] * chrom_att;
+        float dq = dq_plane[spatial] * chrom_att;
+
+        float y_ = ntsc[px + 0] + dy;
+        float i_ = ntsc[px + 1] + di;
+        float q_ = ntsc[px + 2] + dq;
+
+        float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
+        float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
+        float b = kYiqToRgb[2][0]*y_ + kYiqToRgb[2][1]*i_ + kYiqToRgb[2][2]*q_;
+        r = fminf(fmaxf(r, 0.0f), 1.0f);
+        g = fminf(fmaxf(g, 0.0f), 1.0f);
+        b = fminf(fmaxf(b, 0.0f), 1.0f);
+        bgr_out[px + 0] = static_cast<unsigned char>(rintf(b * 255.0f));
+        bgr_out[px + 1] = static_cast<unsigned char>(rintf(g * 255.0f));
+        bgr_out[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
+    }
 }
 
 // Scale the I,Q channels of a delta buffer by chromAtt (motion pipelines).
@@ -259,7 +283,7 @@ void launch_add_planar_quantize(const float* ntsc, const float* delta_planar,
                                 int n, int H, int W, float chrom_att,
                                 cudaStream_t stream) {
     dim3 block(32, 32, 1);
-    dim3 grid(div_up(W, 32), div_up(H, 32), n);
+    dim3 grid(div_up(W, 32 * ADD_PLANAR_ELEMS), div_up(H, 32), n);
     add_planar_quantize_kernel<<<grid, block, 0, stream>>>(
         ntsc, delta_planar, bgr_out, n, H, W, chrom_att);
 }
@@ -275,77 +299,82 @@ void launch_add_planar_quantize(const float* ntsc, const float* delta_planar,
 // signal at the pyramid level), interpolates inline, reads ntsc[px], adds,
 // and writes directly to the uint8 output. No intermediate buffer, one launch.
 //
+// Each thread processes UPSAMPLE_ELEMS adjacent pixels along x (Harris V6),
+// amortizing the per-pixel overhead and giving the compiler independent
+// memory operations to pipeline for latency hiding.
+//
 // Coordinate convention: same as bilinear_upsample_3ch_kernel (half-pixel
 // centers + replicate border — bit-exact match to cv2 INTER_LINEAR).
-// Grid: (ceil(M*out_H*out_W/256))  Block: (256, 1, 1)
+// Grid: (ceil(out_W/(32*UPSAMPLE_ELEMS)), ceil(out_H/32), M)
+// Block: (32, 32, 1)
+constexpr int UPSAMPLE_ELEMS = 4;
+
 __global__ void upsample_add_quantize_kernel(
     const float* __restrict__ ntsc,   // (M, out_H, out_W, 3)
     const float* __restrict__ filt,   // (M, in_H, in_W, 3)
     unsigned char* __restrict__ bgr_out,  // (M, out_H, out_W, 3)
     int M, int in_H, int in_W, int out_H, int out_W, float chrom_att)
 {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    const int total = M * out_H * out_W;
-    if (idx >= total) return;
+    const int x0 = blockIdx.x * blockDim.x * UPSAMPLE_ELEMS + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int m = blockIdx.z;
+    if (y >= out_H || m >= M) return;
 
-    const int x = idx % out_W;
-    const int tmp = idx / out_W;
-    const int y = tmp % out_H;
-    const int m = tmp / out_H;
-
-    // Bilinear source coordinates (half-pixel centers, replicate border).
     const float scale_x = static_cast<float>(in_W) / out_W;
     const float scale_y = static_cast<float>(in_H) / out_H;
-    float sx = (x + 0.5f) * scale_x - 0.5f;
-    float sy = (y + 0.5f) * scale_y - 0.5f;
-
-    int x0 = static_cast<int>(floorf(sx));
-    int y0 = static_cast<int>(floorf(sy));
-    const float fx = sx - x0;
-    const float fy = sy - y0;
-    int x1 = x0 + 1;
-    int y1 = y0 + 1;
-    x0 = max(0, min(x0, in_W - 1));
-    x1 = max(0, min(x1, in_W - 1));
-    y0 = max(0, min(y0, in_H - 1));
-    y1 = max(0, min(y1, in_H - 1));
-
     const float* f = filt + static_cast<size_t>(m) * in_H * in_W * 3;
-    const float w00 = (1.0f - fx) * (1.0f - fy);
-    const float w01 = fx * (1.0f - fy);
-    const float w10 = (1.0f - fx) * fy;
-    const float w11 = fx * fy;
-
-    // Bilinear-interpolate the filtered signal (inline, no intermediate write).
-    const int px = (y * out_W + x) * 3;
     const float* n = ntsc + static_cast<size_t>(m) * out_H * out_W * 3;
-
-    float y_ = n[px + 0];
-    float i_ = 0.0f;
-    float q_ = 0.0f;
-    for (int c = 0; c < 3; ++c) {
-        const float v00 = f[(y0 * in_W + x0) * 3 + c];
-        const float v01 = f[(y0 * in_W + x1) * 3 + c];
-        const float v10 = f[(y1 * in_W + x0) * 3 + c];
-        const float v11 = f[(y1 * in_W + x1) * 3 + c];
-        float delta = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
-        // Channel 0 is Y (no chrom_att), 1/2 are I/Q (scaled by chrom_att).
-        if (c == 0) y_ += delta;
-        else if (c == 1) i_ = n[px + 1] + delta * chrom_att;
-        else             q_ = n[px + 2] + delta * chrom_att;
-    }
-
-    // NTSC -> BGR u8 (clip, *255, banker's round) — same as add_and_quantize.
-    float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
-    float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
-    float b = kYiqToRgb[2][0]*y_ + kYiqToRgb[2][1]*i_ + kYiqToRgb[2][2]*q_;
-    r = fminf(fmaxf(r, 0.0f), 1.0f);
-    g = fminf(fmaxf(g, 0.0f), 1.0f);
-    b = fminf(fmaxf(b, 0.0f), 1.0f);
     unsigned char* o = bgr_out + static_cast<size_t>(m) * out_H * out_W * 3;
-    o[px + 0] = static_cast<unsigned char>(rintf(b * 255.0f));
-    o[px + 1] = static_cast<unsigned char>(rintf(g * 255.0f));
-    o[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
+    const int px_row = (y * out_W + x0) * 3;
+
+    #pragma unroll
+    for (int e = 0; e < UPSAMPLE_ELEMS; ++e) {
+        const int x = x0 + e * 32;
+        if (x >= out_W) break;
+        const int px = px_row + e * 32 * 3;
+
+        float sx = (x + 0.5f) * scale_x - 0.5f;
+        float sy = (y + 0.5f) * scale_y - 0.5f;
+        int sx0 = static_cast<int>(floorf(sx));
+        int sy0 = static_cast<int>(floorf(sy));
+        const float fx = sx - sx0;
+        const float fy = sy - sy0;
+        int sx1 = sx0 + 1;
+        int sy1 = sy0 + 1;
+        sx0 = max(0, min(sx0, in_W - 1));
+        sx1 = max(0, min(sx1, in_W - 1));
+        sy0 = max(0, min(sy0, in_H - 1));
+        sy1 = max(0, min(sy1, in_H - 1));
+
+        const float w00 = (1.0f - fx) * (1.0f - fy);
+        const float w01 = fx * (1.0f - fy);
+        const float w10 = (1.0f - fx) * fy;
+        const float w11 = fx * fy;
+
+        float y_ = n[px + 0];
+        float i_ = 0.0f;
+        float q_ = 0.0f;
+        for (int c = 0; c < 3; ++c) {
+            const float v00 = f[(sy0 * in_W + sx0) * 3 + c];
+            const float v01 = f[(sy0 * in_W + sx1) * 3 + c];
+            const float v10 = f[(sy1 * in_W + sx0) * 3 + c];
+            const float v11 = f[(sy1 * in_W + sx1) * 3 + c];
+            float delta = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
+            if (c == 0) y_ += delta;
+            else if (c == 1) i_ = n[px + 1] + delta * chrom_att;
+            else             q_ = n[px + 2] + delta * chrom_att;
+        }
+
+        float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
+        float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
+        float b = kYiqToRgb[2][0]*y_ + kYiqToRgb[2][1]*i_ + kYiqToRgb[2][2]*q_;
+        r = fminf(fmaxf(r, 0.0f), 1.0f);
+        g = fminf(fmaxf(g, 0.0f), 1.0f);
+        b = fminf(fmaxf(b, 0.0f), 1.0f);
+        o[px + 0] = static_cast<unsigned char>(rintf(b * 255.0f));
+        o[px + 1] = static_cast<unsigned char>(rintf(g * 255.0f));
+        o[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
+    }
 }
 
 void launch_upsample_add_quantize(const float* ntsc, const float* filt,
@@ -353,8 +382,8 @@ void launch_upsample_add_quantize(const float* ntsc, const float* filt,
                                   int M, int in_H, int in_W,
                                   int out_H, int out_W, float chrom_att,
                                   cudaStream_t stream) {
-    const int block = 256;
-    const int grid = div_up(M * out_H * out_W, block);
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(out_W, 32 * UPSAMPLE_ELEMS), div_up(out_H, 32), M);
     upsample_add_quantize_kernel<<<grid, block, 0, stream>>>(
         ntsc, filt, bgr_out, M, in_H, in_W, out_H, out_W, chrom_att);
 }
