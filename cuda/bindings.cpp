@@ -59,6 +59,8 @@ void launch_thwc_to_nt(const float* src, float* dst, int T, int N,
                        cudaStream_t stream);
 void launch_nt_to_thwc(const float* src, float* dst, int T, int N,
                        cudaStream_t stream);
+void launch_to_planar_3ch(const float* src, float* dst, int n, int H, int W,
+                          cudaStream_t stream);
 void launch_iir_bandpass(const float* in, float* out, int T, int N,
                          double r1, double r2, cudaStream_t stream);
 void launch_butter_bandpass(const float* in, float* out, int T, int N,
@@ -604,26 +606,31 @@ PYBIND11_MODULE(_evm_cuda, m) {
             return std::make_unique<DeviceBuffer>(nbytes);
         }), py::arg("nbytes"))
         .def(py::init([](py::array arr) {
-            // Accept any contiguous numpy array; copy raw bytes to device.
-            // Force C-contiguity (forcecast handles the conversion if needed).
-            auto buf = py::array_t<char, py::array::c_style | py::array::forcecast>::ensure(arr);
-            if (!buf)
-                throw std::runtime_error("DeviceBuffer: input must be a numpy array");
-            auto b = buf.request();
-            auto db = std::make_unique<DeviceBuffer>(b.size * b.itemsize);
-            CUDA_CHECK(cudaMemcpy(db->ptr, b.ptr, b.size * b.itemsize,
+            // Treat the input as raw bytes — NO dtype cast. We must NOT use
+            // py::array_t<char>::ensure() with forcecast: that would CAST each
+            // element to char (1 byte), truncating float32 data (e.g. 0.5 -> 0).
+            // Require C-contiguity (callers in our pipeline always satisfy this)
+            // and copy raw bytes via the buffer protocol — no Python calls.
+            if (!(arr.flags() & py::array::c_style))
+                throw std::runtime_error(
+                    "DeviceBuffer: input must be C-contiguous; call numpy.ascontiguousarray first");
+            auto info = arr.request();
+            size_t nbytes = arr.nbytes();
+            auto db = std::make_unique<DeviceBuffer>(nbytes);
+            CUDA_CHECK(cudaMemcpy(db->ptr, info.ptr, nbytes,
                                   cudaMemcpyHostToDevice));
             return db;
         }), py::arg("array"))
         .def("upload", [](DeviceBuffer& self, py::array arr) {
-            auto buf = py::array_t<char, py::array::c_style | py::array::forcecast>::ensure(arr);
-            if (!buf)
-                throw std::runtime_error("DeviceBuffer.upload: input must be a numpy array");
-            auto b = buf.request();
-            size_t nbytes = b.size * b.itemsize;
+            // Same raw-bytes semantics as the constructor (see comment above).
+            if (!(arr.flags() & py::array::c_style))
+                throw std::runtime_error(
+                    "DeviceBuffer.upload: input must be C-contiguous");
+            auto info = arr.request();
+            size_t nbytes = arr.nbytes();
             if (nbytes > self.nbytes)
                 throw std::runtime_error("DeviceBuffer.upload: buffer too small");
-            CUDA_CHECK(cudaMemcpy(self.ptr, b.ptr, nbytes, cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(self.ptr, info.ptr, nbytes, cudaMemcpyHostToDevice));
         }, py::arg("array"))
         .def("download_f32", [](DeviceBuffer& self, py::ssize_t count) {
             carray_t<float> out(count);
@@ -682,6 +689,50 @@ PYBIND11_MODULE(_evm_cuda, m) {
         }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
            py::arg("nlevs"), py::arg("d_filt"), py::arg("filt_len"),
            py::arg("d_scratch_a"), py::arg("d_scratch_b"));
+
+    // --- whole-clip planar layout transpose: (n,H,W,3) -> (n*3,H,W) --------
+    // Bit-exact layout transform that lets the color pipeline operate on
+    // contiguous per-frame-channel slices via pointer offsets. Replaces the
+    // 873-call Python loop with: transpose + one batched blur + D2H.
+    m.def("batched_to_planar_3ch",
+        [](uintptr_t d_in, uintptr_t d_out, int n, int H, int W) {
+            evm::launch_to_planar_3ch(
+                reinterpret_cast<float*>(d_in),
+                reinterpret_cast<float*>(d_out), n, H, W, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("n"),
+           py::arg("H"), py::arg("W"));
+
+    // --- batched blur_dn over M=n*3 contiguous planar slices ----------------
+    // Replaces the 873-call Python loop (color pipeline hotspot, 55% of time).
+    // d_in/d_out are (M,H,W)/(M,hl,wl) row-major; each slice is offset by
+    // pointer arithmetic. Scratch is allocated ONCE and reused — the only
+    // per-iteration cost is the kernel launch itself (microseconds on H100).
+    //
+    // M = n*3 (frame-major then channel). Both blur_dn_device's scratch_a/b
+    // and the per-slice out pointer must not alias; since out = d_out + m*hl*wl
+    // and the scratches are standalone allocations, this is safe. Iterations
+    // serialize on the default stream, so each m fully completes first.
+    m.def("batched_blur_dn_color",
+        [](uintptr_t d_in, uintptr_t d_out, int M, int H, int W, int nlevs,
+           uintptr_t d_filt, int filt_len) {
+            int hl = H, wl = W;
+            for (int l = 0; l < nlevs; ++l) { hl = (hl + 1) / 2; wl = (wl + 1) / 2; }
+            float* scratch_a = device_alloc<float>(static_cast<size_t>(H) * W);
+            float* scratch_b = device_alloc<float>(static_cast<size_t>(H) * W);
+            const float* in_p  = reinterpret_cast<const float*>(d_in);
+            float*       out_p = reinterpret_cast<float*>(d_out);
+            const float* filt  = reinterpret_cast<const float*>(d_filt);
+            for (int m = 0; m < M; ++m) {
+                evm::blur_dn_device(in_p  + static_cast<size_t>(m) * H  * W,
+                                    H, W,
+                                    out_p + static_cast<size_t>(m) * hl * wl,
+                                    nlevs, filt, filt_len,
+                                    scratch_a, scratch_b, 0);
+            }
+            device_free(scratch_a); device_free(scratch_b);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
+           py::arg("H"), py::arg("W"), py::arg("nlevs"),
+           py::arg("d_filt"), py::arg("filt_len"));
 
     // --- batched spatial primitives: corr_dn / up_conv on device pointers ---
     m.def("batched_corr_dn_rows",

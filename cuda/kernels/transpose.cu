@@ -60,4 +60,37 @@ void launch_nt_to_thwc(const float* src, float* dst, int T, int N,
     nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N);
 }
 
+// (n,H,W,3) interleaved  ->  (n*3,H,W) planar (frame-major, then channel).
+// Used by the batched color pipeline so each frame-channel is a contiguous
+// (H,W) block that blur_dn_device can consume directly via pointer offset.
+// Bit-exact layout transform — no FP, no tolerance implications.
+//
+// Each thread handles one pixel (n,y,x): reads 3 contiguous floats from the
+// interleaved source, scatters them to 3 separate planes.
+__global__ void to_planar_3ch_kernel(
+    const float* __restrict__ src,  // (n,H,W,3) row-major
+    float* __restrict__ dst,        // (n*3,H,W) row-major
+    int n, int H, int W)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = n * H * W;
+    if (idx >= total) return;
+    const int x = idx % W;
+    const int yw = idx / W;
+    const int y = yw % H;
+    const int f = yw / H;
+    const float* s = src + (yw * W + x) * 3;
+    const int plane_off = (f * 3) * H * W + y * W + x;
+    dst[plane_off + 0 * H * W] = s[0];
+    dst[plane_off + 1 * H * W] = s[1];
+    dst[plane_off + 2 * H * W] = s[2];
+}
+
+void launch_to_planar_3ch(const float* src, float* dst, int n, int H, int W,
+                          cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(n * H * W, block);
+    to_planar_3ch_kernel<<<grid, block, 0, stream>>>(src, dst, n, H, W);
+}
+
 }  // namespace evm

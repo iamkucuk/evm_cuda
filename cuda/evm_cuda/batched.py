@@ -163,28 +163,37 @@ def magnify_color_gdown_ideal(
     clip_u8 = np.stack(frames, axis=0)  # (n, h, w, 3) uint8 BGR, C-contiguous
 
     # --- Stage 1: batched color convert (whole clip, 1 kernel launch) ------
+    # ntsc STAYS ON DEVICE — we never download it. The add-back in stage 4
+    # happens on-device via batched_add_and_quantize, so the 1.09GB ntsc
+    # buffer never crosses PCIe. Only the final uint8 output comes down.
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
 
-    # Pull NTSC back to host for the pyramid/downsample stage (still uses
-    # numpy-in/out wrappers). This is ONE D2H of the whole clip — far better
-    # than the old per-frame round-trips.
-    ntsc = d_ntsc.download_f32(n * h * w * 3).reshape(n, h, w, 3)
-
-    # --- Stage 2: per-frame blur_dn downsample (still numpy-in/out for now) -
+    # --- Stage 2: batched blur_dn downsample (whole clip on-device) ---------
+    # Was: 873-call Python loop (291 frames * 3 channels), each call doing
+    # cudaMalloc*5 + H2D*2 + kernel + D2H + cudaFree*5 = the color pipeline's
+    # biggest hotspot (55% of time per the profiler).
+    #
+    # Now: 1 planar transpose kernel + 1 batched C++ loop over n*3 contiguous
+    # slices (scratch allocated once). Data stays on-device the whole time.
     hl, wl = h, w
     for _ in range(level):
         hl = (hl + 1) // 2
         wl = (wl + 1) // 2
 
-    binom5_sum1 = np.array(_evm_cuda.binom5_sum1(), dtype=np.float32)
-    gdown = np.empty((n, hl, wl, 3), dtype=np.float32)
-    for i in range(n):
-        for c in range(3):
-            gdown[i, :, :, c] = _evm_cuda.blur_dn(
-                np.ascontiguousarray(ntsc[i, :, :, c], dtype=np.float32),
-                level, binom5_sum1)
+    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+    _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+
+    d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)
+    _evm_cuda.batched_blur_dn_color(
+        d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
+        _d_binom5_sum1(), 5)
+
+    # D2H once: reshape planar (n,3,hl,wl) -> interleaved (n,hl,wl,3) for the
+    # bandpass stage, which expects channel as the last axis.
+    gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
+    gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
 
     # --- Stage 3: ideal bandpass per channel (batched over all pixels) ------
     # ONE H2D + ONE kernel + ONE D2H per channel (3 total), vs n*1 in the old
@@ -199,17 +208,23 @@ def magnify_color_gdown_ideal(
         filt[..., c] = d_out.download_f32(n * hl * wl).reshape(hl * wl, n).T.reshape(n, hl, wl)
 
     # --- Stage 4: gain + per-frame upsample + add + quantize ----------------
-    # The upsample is cv2 (host-side), so we need the filtered data on host.
+    # cv2.resize (INTER_LINEAR upsample hl,wl -> h,w) is host-only in this
+    # stack, so gain + upsample stay on host. But the add-back + quantize
+    # happens ON-DEVICE via batched_add_and_quantize — ntsc never leaves the
+    # GPU. Only the final uint8 output crosses PCIe (1 transfer, not 3).
     gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
                     dtype=np.float32)
     filt = filt * gain
 
-    out = np.empty((n, h, w, 3), dtype=np.uint8)
-    for i in range(n):
-        upsampled = cv2.resize(filt[i].astype(np.float32), (w, h),
-                               interpolation=cv2.INTER_LINEAR)
-        rendered = ntsc[i] + upsampled
-        out[i] = _evm_cuda.ntsc_f32_to_bgr_u8(rendered)
+    upsampled = np.stack([
+        cv2.resize(filt[i], (w, h), interpolation=cv2.INTER_LINEAR)
+        for i in range(n)], axis=0)
+
+    d_delta = DeviceBuffer.from_array(np.ascontiguousarray(upsampled))
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
+    _evm_cuda.batched_add_and_quantize(
+        d_ntsc.ptr, d_delta.ptr, d_out_u8.ptr, n * h, w)
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
