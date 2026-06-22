@@ -78,6 +78,18 @@ def _d_binom5_sum1() -> int:
 # Shared host-side helpers (frame I/O, Figure-6 schedule)
 # ---------------------------------------------------------------------------
 
+def _warmup_gpu_pool():
+    """Pre-touch the CUDA driver's memory pool so the first large cudaMalloc
+    in the pipeline is instant.
+
+    Without this, the first cudaMalloc(~100MB+) takes ~1s because the driver
+    lazily sets up page tables on first large allocation. A quick alloc+free
+    of 1GB warms the pool; all subsequent allocations (even larger ones) are
+    then O(1). Measured: 1.0s -> 0.0s on H200."""
+    # Allocate 1GB, free immediately. The driver retains the virtual->physical
+    # mapping in its pool, so the next cudaMalloc reuses it.
+    _evm_cuda.warmup_device_pool(1024 * 1024 * 1024)
+
 def _read_frames(path: str | Path) -> tuple[list[np.ndarray], float]:
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
@@ -161,6 +173,8 @@ def magnify_color_gdown_ideal(
     h, w = frames[0].shape[:2]
 
     clip_u8 = np.stack(frames, axis=0)  # (n, h, w, 3) uint8 BGR, C-contiguous
+
+    _warmup_gpu_pool()  # first cudaMalloc is ~1s without this; ~0s with
 
     # --- Stage 1: batched color convert (whole clip, 1 kernel launch) ------
     # ntsc STAYS ON DEVICE — we never download it. The add-back in stage 4

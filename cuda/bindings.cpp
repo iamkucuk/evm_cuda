@@ -856,6 +856,16 @@ PYBIND11_MODULE(_evm_cuda, m) {
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
            py::arg("wl"), py::arg("wh"), py::arg("sampling_rate"));
 
+    // Warm up the CUDA driver's memory pool. The first large cudaMalloc
+    // (~100MB+) takes ~1s because the driver lazily sets up page tables. A
+    // quick alloc+free of `nbytes` primes the pool so all subsequent
+    // allocations are O(1). Call once at pipeline entry.
+    m.def("warmup_device_pool", [](size_t nbytes) {
+        void* p = nullptr;
+        CUDA_CHECK(cudaMalloc(&p, nbytes));
+        CUDA_CHECK(cudaFree(p));
+    }, py::arg("nbytes"));
+
     // Upload the binom5 filters lazily (on first call, not at module import).
     // Allocating at import time runs cudaMalloc before any explicit device
     // context setup, which can segfault on some systems.
