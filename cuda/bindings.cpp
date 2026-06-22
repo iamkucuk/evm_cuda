@@ -61,6 +61,8 @@ void launch_nt_to_thwc(const float* src, float* dst, int T, int N,
                        cudaStream_t stream);
 void launch_to_planar_3ch(const float* src, float* dst, int n, int H, int W,
                           cudaStream_t stream);
+void launch_planar_to_interleaved_3ch(const float* src, float* dst,
+                                      int n, int H, int W, cudaStream_t stream);
 void launch_iir_bandpass(const float* in, float* out, int T, int N,
                          double r1, double r2, cudaStream_t stream);
 void launch_butter_bandpass(const float* in, float* out, int T, int N,
@@ -701,6 +703,15 @@ PYBIND11_MODULE(_evm_cuda, m) {
     m.def("batched_to_planar_3ch",
         [](uintptr_t d_in, uintptr_t d_out, int n, int H, int W) {
             evm::launch_to_planar_3ch(
+                reinterpret_cast<float*>(d_in),
+                reinterpret_cast<float*>(d_out), n, H, W, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("n"),
+           py::arg("H"), py::arg("W"));
+
+    // Inverse: (n*3,H,W) planar -> (n,H,W,3) interleaved.
+    m.def("batched_planar_to_interleaved_3ch",
+        [](uintptr_t d_in, uintptr_t d_out, int n, int H, int W) {
+            evm::launch_planar_to_interleaved_3ch(
                 reinterpret_cast<float*>(d_in),
                 reinterpret_cast<float*>(d_out), n, H, W, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("n"),

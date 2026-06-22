@@ -93,4 +93,34 @@ void launch_to_planar_3ch(const float* src, float* dst, int n, int H, int W,
     to_planar_3ch_kernel<<<grid, block, 0, stream>>>(src, dst, n, H, W);
 }
 
+// (n*3,H,W) planar  ->  (n,H,W,3) interleaved (inverse of to_planar_3ch).
+// Used by the motion pipeline's Stage D to convert recon output back to
+// interleaved for attenuate_chrom + add_and_quantize.
+// Bit-exact layout transform — no FP, no tolerance implications.
+__global__ void planar_to_interleaved_3ch_kernel(
+    const float* __restrict__ src,  // (n*3,H,W) row-major
+    float* __restrict__ dst,        // (n,H,W,3) row-major
+    int n, int H, int W)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = n * H * W;
+    if (idx >= total) return;
+    const int x = idx % W;
+    const int yw = idx / W;
+    const int y = yw % H;
+    const int f = yw / H;
+    const int plane_off = (f * 3) * H * W + y * W + x;
+    float* d = dst + (yw * W + x) * 3;
+    d[0] = src[plane_off + 0 * H * W];
+    d[1] = src[plane_off + 1 * H * W];
+    d[2] = src[plane_off + 2 * H * W];
+}
+
+void launch_planar_to_interleaved_3ch(const float* src, float* dst,
+                                      int n, int H, int W, cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(n * H * W, block);
+    planar_to_interleaved_3ch_kernel<<<grid, block, 0, stream>>>(src, dst, n, H, W);
+}
+
 }  // namespace evm

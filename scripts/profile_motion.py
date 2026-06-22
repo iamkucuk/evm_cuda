@@ -63,13 +63,12 @@ def main():
     _warmup_gpu_pool_motion(n, h, w, levels)
     timings["warmup (one-time)"] = t() - t0
 
-    # Stage A: NTSC convert + download
+    # Stage A: NTSC convert (ntsc STAYS on device)
     t0 = t()
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
-    ntsc = d_ntsc.download_f32(n * h * w * 3).reshape(n, h, w, 3)
-    timings["A) NTSC convert + D2H"] = t() - t0
+    timings["A) NTSC convert (on-device)"] = t() - t0
 
     # Stage B: planar transpose + lpyr_build (on-device)
     t0 = t()
@@ -106,19 +105,21 @@ def main():
                 d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz)
     timings["C) temporal IIR (on-device)"] = t() - t0
 
-    # Stage D: recon + download + render
+    # Stage D: recon + device-resident render (no host transfers)
     t0 = t()
     d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
     _evm_cuda.batched_lpyr_recon(
         d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
-    delta_planar = d_delta_planar.download_f32(n * 3 * h * w).reshape(n, 3, h, w)
-    delta = np.ascontiguousarray(delta_planar.transpose(0, 2, 3, 1))
-    out = np.empty((n, h, w, 3), dtype=np.uint8)
-    for i in range(n):
-        d = _evm_cuda.attenuate_chrom(
-            np.ascontiguousarray(delta[i], dtype=np.float32), CHROM_ATT)
-        out[i] = _evm_cuda.add_and_quantize(ntsc[i], d)
-    timings["D) recon + render"] = t() - t0
+    d_delta_interleaved = DeviceBuffer(n * h * w * 3 * 4)
+    _evm_cuda.batched_planar_to_interleaved_3ch(
+        d_delta_planar.ptr, d_delta_interleaved.ptr, n, h, w)
+    _evm_cuda.batched_attenuate_chrom(
+        d_delta_interleaved.ptr, n * h, w, CHROM_ATT)
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
+    _evm_cuda.batched_add_and_quantize(
+        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr, n * h, w)
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    timings["D) recon + render (on-device)"] = t() - t0
 
     # Report
     pipeline_keys = [k for k in timings if not k.startswith("warmup")]

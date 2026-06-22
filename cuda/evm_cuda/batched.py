@@ -302,10 +302,10 @@ def magnify_motion_lpyr_iir(
     _warmup_gpu_pool_motion(n, h, w, levels)  # motion uses larger buffers
 
     # --- Stage A: batched NTSC convert (whole clip, 1 launch) --------------
+    # ntsc STAYS ON DEVICE — used by Stage D's add_and_quantize (device-resident).
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
-    ntsc = d_ntsc.download_f32(n * h * w * 3).reshape(n, h, w, 3)
 
     # --- Stage B: batched Laplacian pyramid build (whole clip on-device) ----
     # Bands stay on-device through Stage C (IIR) and Stage D (recon). The ONLY
@@ -355,20 +355,32 @@ def magnify_motion_lpyr_iir(
             _evm_cuda.batched_nt_to_thwc(
                 d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz)
 
-    # --- Stage D: batched recon + per-frame chromAtt + add + quantize --------
+    # --- Stage D: batched recon + device-resident render --------------------
+    # Was: per-frame loop (291 attenuate_chrom + 291 add_and_quantize calls)
+    # plus a 1.8GB delta D2H and ntsc D2H. Now: ntsc stays on-device from
+    # Stage A (remove its download), recon output stays on-device, attenuate
+    # and add+quantize are batched. Only the final uint8 output is downloaded.
     d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
     _evm_cuda.batched_lpyr_recon(
         d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
 
-    # Download + reshape: planar (n,3,H,W) -> interleaved (n,H,W,3)
-    delta_planar = d_delta_planar.download_f32(n * 3 * h * w).reshape(n, 3, h, w)
-    delta = np.ascontiguousarray(delta_planar.transpose(0, 2, 3, 1))
+    # Attenuate chroma on-device: planar (n*3, H, W) treated as (n*3*H, W, 1)?
+    # No — attenuate_chrom expects (H, W, 3) interleaved. The recon output is
+    # planar (n*3, H, W). We need to transpose to interleaved first.
+    # Use a device-to-device planar->interleaved transpose (inverse of to_planar_3ch).
+    d_delta_interleaved = DeviceBuffer(n * h * w * 3 * 4)
+    _evm_cuda.batched_planar_to_interleaved_3ch(
+        d_delta_planar.ptr, d_delta_interleaved.ptr, n, h, w)
 
-    out = np.empty((n, h, w, 3), dtype=np.uint8)
-    for i in range(n):
-        d = _evm_cuda.attenuate_chrom(
-            np.ascontiguousarray(delta[i], dtype=np.float32), chrom_attenuation)
-        out[i] = _evm_cuda.add_and_quantize(ntsc[i], d)
+    # Batched attenuate_chrom: whole clip as (n*H, W, 3)
+    _evm_cuda.batched_attenuate_chrom(
+        d_delta_interleaved.ptr, n * h, w, chrom_attenuation)
+
+    # Batched add+quantize with device-resident ntsc (keep d_ntsc from Stage A)
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
+    _evm_cuda.batched_add_and_quantize(
+        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr, n * h, w)
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
