@@ -20,6 +20,7 @@
 #include <pybind11/stl.h>
 
 #include <cufft.h>
+#include <memory>
 #include <vector>
 #include <utility>
 
@@ -130,6 +131,19 @@ T* device_alloc(size_t n) {
 void device_free(void* p) {
     if (p) CUDA_CHECK(cudaFree(p));
 }
+
+// RAII device memory buffer. Holds a cudaMalloc'd region for the lifetime of
+// a pipeline call; the Python-facing DeviceBuffer class wraps this.
+struct DeviceBuffer {
+    void* ptr = nullptr;
+    size_t nbytes = 0;
+    explicit DeviceBuffer(size_t n) : nbytes(n) {
+        if (n > 0) CUDA_CHECK(cudaMalloc(&ptr, n));
+    }
+    ~DeviceBuffer() { if (ptr) cudaFree(ptr); }
+    DeviceBuffer(const DeviceBuffer&) = delete;
+    DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+};
 
 // Validate a numpy array is C-contiguous float32 with a trailing channel
 // axis of size 3.
@@ -573,4 +587,226 @@ PYBIND11_MODULE(_evm_cuda, m) {
     m.def("binom5_sum1", []() { return std::vector<float>(evm::kBinom5Sum1, evm::kBinom5Sum1 + 5); });
     m.attr("drop_last")            = evm::kDropLast;
     m.attr("exaggeration_factor")  = evm::kExaggerationFactor;
+
+    // =====================================================================
+    // Phase 1: device-resident API for batched (whole-clip) execution.
+    //
+    // The numpy wrappers above each do cudaMalloc + H2D + kernel + D2H +
+    // cudaFree per call. The profiler (docs/profile_baseline.txt) showed
+    // >95% of wall time is that overhead. The DeviceTensor below is a
+    // GC-managed device buffer; the batched_* wrappers take device pointers
+    // (as ints) and do NO host transfers. The whole clip stays on-device
+    // from upload at pipeline entry to download at pipeline exit.
+    // =====================================================================
+
+    py::class_<DeviceBuffer>(m, "DeviceBuffer")
+        .def(py::init([](size_t nbytes) {
+            return std::make_unique<DeviceBuffer>(nbytes);
+        }), py::arg("nbytes"))
+        .def(py::init([](py::array arr) {
+            // Accept any contiguous numpy array; copy raw bytes to device.
+            // Force C-contiguity (forcecast handles the conversion if needed).
+            auto buf = py::array_t<char, py::array::c_style | py::array::forcecast>::ensure(arr);
+            if (!buf)
+                throw std::runtime_error("DeviceBuffer: input must be a numpy array");
+            auto b = buf.request();
+            auto db = std::make_unique<DeviceBuffer>(b.size * b.itemsize);
+            CUDA_CHECK(cudaMemcpy(db->ptr, b.ptr, b.size * b.itemsize,
+                                  cudaMemcpyHostToDevice));
+            return db;
+        }), py::arg("array"))
+        .def("upload", [](DeviceBuffer& self, py::array arr) {
+            auto buf = py::array_t<char, py::array::c_style | py::array::forcecast>::ensure(arr);
+            if (!buf)
+                throw std::runtime_error("DeviceBuffer.upload: input must be a numpy array");
+            auto b = buf.request();
+            size_t nbytes = b.size * b.itemsize;
+            if (nbytes > self.nbytes)
+                throw std::runtime_error("DeviceBuffer.upload: buffer too small");
+            CUDA_CHECK(cudaMemcpy(self.ptr, b.ptr, nbytes, cudaMemcpyHostToDevice));
+        }, py::arg("array"))
+        .def("download_f32", [](DeviceBuffer& self, py::ssize_t count) {
+            carray_t<float> out(count);
+            auto o = out.request();
+            size_t nbytes = count * sizeof(float);
+            if (nbytes > self.nbytes)
+                throw std::runtime_error("DeviceBuffer.download_f32: too much");
+            CUDA_CHECK(cudaMemcpy(o.ptr, self.ptr, nbytes, cudaMemcpyDeviceToHost));
+            return out;
+        }, py::arg("count"))
+        .def("download_u8", [](DeviceBuffer& self, py::ssize_t count) {
+            carray_t<unsigned char> out(count);
+            auto o = out.request();
+            size_t nbytes = count;
+            if (nbytes > self.nbytes)
+                throw std::runtime_error("DeviceBuffer.download_u8: too much");
+            CUDA_CHECK(cudaMemcpy(o.ptr, self.ptr, nbytes, cudaMemcpyDeviceToHost));
+            return out;
+        }, py::arg("count"))
+        .def_readonly("nbytes", &DeviceBuffer::nbytes)
+        .def_property_readonly("ptr", [](DeviceBuffer& self) {
+            return reinterpret_cast<uintptr_t>(self.ptr);
+        });
+
+    // --- batched color_cvt: whole clip (T,H,W,3) at once -------------------
+    // Per-pixel independent op; treat the clip as a (T*H, W, 3) image.
+    m.def("batched_bgr_u8_to_ntsc_f32",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int H, int W) {
+            evm::launch_bgr_u8_to_ntsc_f32(
+                reinterpret_cast<unsigned char*>(d_in),
+                reinterpret_cast<float*>(d_out),
+                H * T, W, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("H"), py::arg("W"));
+
+    m.def("batched_ntsc_f32_to_bgr_u8",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int H, int W) {
+            evm::launch_ntsc_f32_to_bgr_u8(
+                reinterpret_cast<float*>(d_in),
+                reinterpret_cast<unsigned char*>(d_out),
+                H * T, W, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("H"), py::arg("W"));
+
+    // --- batched blur_dn: whole-clip downsample per channel ----------------
+    // The color pipeline applies blur_dn (level 4) per channel of per frame.
+    // Each frame's channel is independent — we launch one blur_dn per frame
+    // but keep all data device-resident (no H2D/D2H between frames).
+    m.def("batched_blur_dn_frame",
+        [](uintptr_t d_in, uintptr_t d_out, int H, int W, int nlevs,
+           uintptr_t d_filt, int filt_len, uintptr_t d_scratch_a, uintptr_t d_scratch_b) {
+            evm::blur_dn_device(
+                reinterpret_cast<float*>(d_in), H, W,
+                reinterpret_cast<float*>(d_out), nlevs,
+                reinterpret_cast<float*>(d_filt), filt_len,
+                reinterpret_cast<float*>(d_scratch_a),
+                reinterpret_cast<float*>(d_scratch_b), 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
+           py::arg("nlevs"), py::arg("d_filt"), py::arg("filt_len"),
+           py::arg("d_scratch_a"), py::arg("d_scratch_b"));
+
+    // --- batched spatial primitives: corr_dn / up_conv on device pointers ---
+    m.def("batched_corr_dn_rows",
+        [](uintptr_t d_in, uintptr_t d_out, int H, int W,
+           uintptr_t d_filt, int filt_len) {
+            evm::launch_corr_dn_rows(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                H, W, reinterpret_cast<float*>(d_filt), filt_len, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
+    m.def("batched_corr_dn_cols",
+        [](uintptr_t d_in, uintptr_t d_out, int H, int W,
+           uintptr_t d_filt, int filt_len) {
+            evm::launch_corr_dn_cols(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                H, W, reinterpret_cast<float*>(d_filt), filt_len, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
+    m.def("batched_up_conv_rows",
+        [](uintptr_t d_in, uintptr_t d_out, int in_H, int out_H, int W,
+           uintptr_t d_filt, int filt_len) {
+            evm::launch_up_conv_rows(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                in_H, out_H, W, reinterpret_cast<float*>(d_filt), filt_len, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("in_H"), py::arg("out_H"),
+           py::arg("W"), py::arg("d_filt"), py::arg("filt_len"));
+
+    m.def("batched_up_conv_cols",
+        [](uintptr_t d_in, uintptr_t d_out, int H, int in_W, int out_W,
+           uintptr_t d_filt, int filt_len) {
+            evm::launch_up_conv_cols(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                H, in_W, out_W, reinterpret_cast<float*>(d_filt), filt_len, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("in_W"),
+           py::arg("out_W"), py::arg("d_filt"), py::arg("filt_len"));
+
+    // --- batched temporal filters on device pointers -----------------------
+    // These take (N, T) row-major float32 on device, filter in-place semantics
+    // (input and output may be different buffers).
+    m.def("batched_iir_bandpass",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int N, double r1, double r2) {
+            evm::launch_iir_bandpass(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                T, N, r1, r2, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
+           py::arg("r1"), py::arg("r2"));
+
+    m.def("batched_butter_bandpass",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int N,
+           double b0_h, double b1_h, double a1_h,
+           double b0_l, double b1_l, double a1_l) {
+            evm::launch_butter_bandpass(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                T, N, b0_h, b1_h, a1_h, b0_l, b1_l, a1_l, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
+           py::arg("b0_high"), py::arg("b1_high"), py::arg("a1_high"),
+           py::arg("b0_low"),  py::arg("b1_low"),  py::arg("a1_low"));
+
+    // --- batched amplify helpers on device pointers ------------------------
+    m.def("batched_apply_channel_gain",
+        [](uintptr_t d_sig, int H, int W, float g0, float g1, float g2) {
+            evm::launch_apply_channel_gain(
+                reinterpret_cast<float*>(d_sig), H, W, g0, g1, g2, 0);
+        }, py::arg("d_sig"), py::arg("H"), py::arg("W"),
+           py::arg("g0"), py::arg("g1"), py::arg("g2"));
+
+    m.def("batched_attenuate_chrom",
+        [](uintptr_t d_delta, int H, int W, float chrom_att) {
+            evm::launch_attenuate_chrom(
+                reinterpret_cast<float*>(d_delta), H, W, chrom_att, 0);
+        }, py::arg("d_delta"), py::arg("H"), py::arg("W"), py::arg("chrom_att"));
+
+    m.def("batched_add_and_quantize",
+        [](uintptr_t d_ntsc, uintptr_t d_delta, uintptr_t d_bgr, int H, int W) {
+            evm::launch_add_and_quantize(
+                reinterpret_cast<float*>(d_ntsc),
+                reinterpret_cast<float*>(d_delta),
+                reinterpret_cast<unsigned char*>(d_bgr), H, W, 0);
+        }, py::arg("d_ntsc"), py::arg("d_delta"), py::arg("d_bgr"),
+           py::arg("H"), py::arg("W"));
+
+    // --- batched ideal_bandpass: needs cuFFT plans, so orchestrate here -----
+    // Same plan-create/destroy lifecycle as the numpy version, but no H2D/D2H.
+    m.def("batched_ideal_bandpass",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int N,
+           float wl, float wh, float sampling_rate) {
+            size_t cplx_bytes = static_cast<size_t>(N) * T * sizeof(cufftComplex);
+            auto* d_tmp = device_alloc<cufftComplex>(static_cast<size_t>(N) * T);
+            cufftHandle plan_fwd, plan_inv;
+            int n_arr[1] = {T};
+            int in_emb[2] = {T, 1};
+            CUFFT_CHECK(cufftPlanMany(&plan_fwd, 1, n_arr,
+                                      in_emb, 1, T, in_emb, 1, T, CUFFT_C2C, N));
+            CUFFT_CHECK(cufftPlanMany(&plan_inv, 1, n_arr,
+                                      in_emb, 1, T, in_emb, 1, T, CUFFT_C2C, N));
+            evm::launch_ideal_bandpass(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                d_tmp, T, N, wl, wh, sampling_rate, plan_fwd, plan_inv, 0);
+            CUFFT_CHECK(cufftDestroy(plan_fwd));
+            CUFFT_CHECK(cufftDestroy(plan_inv));
+            device_free(d_tmp);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
+           py::arg("wl"), py::arg("wh"), py::arg("sampling_rate"));
+
+    // Upload the binom5 filters lazily (on first call, not at module import).
+    // Allocating at import time runs cudaMalloc before any explicit device
+    // context setup, which can segfault on some systems.
+    m.def("d_binom5_ptr", []() -> uintptr_t {
+        static float* p = nullptr;
+        if (!p) {
+            p = device_alloc<float>(5);
+            CUDA_CHECK(cudaMemcpy(p, evm::kBinom5, 5 * sizeof(float),
+                                  cudaMemcpyHostToDevice));
+        }
+        return reinterpret_cast<uintptr_t>(p);
+    });
+    m.def("d_binom5_sum1_ptr", []() -> uintptr_t {
+        static float* p = nullptr;
+        if (!p) {
+            p = device_alloc<float>(5);
+            CUDA_CHECK(cudaMemcpy(p, evm::kBinom5Sum1, 5 * sizeof(float),
+                                  cudaMemcpyHostToDevice));
+        }
+        return reinterpret_cast<uintptr_t>(p);
+    });
 }
