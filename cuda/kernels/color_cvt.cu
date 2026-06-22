@@ -23,7 +23,6 @@
 
 namespace evm {
 
-__launch_bounds__(1024, 2)
 __global__ void bgr_u8_to_ntsc_f32_kernel(
     const unsigned char* __restrict__ bgr,  // (H*W*3) uint8, BGR order
     float* __restrict__ yiq,                // (H*W*3) float32, YIQ order
@@ -47,7 +46,6 @@ __global__ void bgr_u8_to_ntsc_f32_kernel(
     yiq[px + 2] = kRgbToYiq[2][0] * r + kRgbToYiq[2][1] * g + kRgbToYiq[2][2] * b;
 }
 
-__launch_bounds__(1024, 2)
 __global__ void ntsc_f32_to_bgr_u8_kernel(
     const float* __restrict__ yiq,          // (H*W*3) float32, YIQ order
     unsigned char* __restrict__ bgr,        // (H*W*3) uint8, BGR order
