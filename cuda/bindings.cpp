@@ -84,6 +84,11 @@ void launch_bilinear_upsample_3ch(const float* src, float* dst,
 void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
                              unsigned char* bgr_out, int H, int W,
                              float chrom_att, cudaStream_t stream);
+void launch_upsample_add_quantize(const float* ntsc, const float* filt,
+                                  unsigned char* bgr_out,
+                                  int M, int in_H, int in_W,
+                                  int out_H, int out_W, float chrom_att,
+                                  cudaStream_t stream);
 
 // ideal_bandpass.cu — self-contained cuFFT fwd+mask+inv pipeline.
 void launch_ideal_bandpass(
@@ -998,6 +1003,23 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 M, in_H, in_W, out_H, out_W, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
            py::arg("in_H"), py::arg("in_W"), py::arg("out_H"), py::arg("out_W"));
+
+    // --- batched fused upsample+add+quantize (color pipeline render) -------
+    // Combines bilinear_upsample_3ch + add_and_quantize into one kernel that
+    // reads the small filtered signal + the full-res NTSC frame, interpolates
+    // inline, adds, and writes the uint8 output. Eliminates the M*out_H*out_W*3
+    // float32 intermediate buffer and one kernel launch.
+    m.def("batched_upsample_add_quantize",
+        [](uintptr_t d_ntsc, uintptr_t d_filt, uintptr_t d_bgr,
+           int M, int in_H, int in_W, int out_H, int out_W, float chrom_att) {
+            evm::launch_upsample_add_quantize(
+                reinterpret_cast<float*>(d_ntsc),
+                reinterpret_cast<float*>(d_filt),
+                reinterpret_cast<unsigned char*>(d_bgr),
+                M, in_H, in_W, out_H, out_W, chrom_att, 0);
+        }, py::arg("d_ntsc"), py::arg("d_filt"), py::arg("d_bgr"),
+           py::arg("M"), py::arg("in_H"), py::arg("in_W"),
+           py::arg("out_H"), py::arg("out_W"), py::arg("chrom_att"));
 
     // --- batched ideal_bandpass: needs cuFFT plans, so orchestrate here -----
     // Plans are cached by (T, N) — cuFFT plan creation does internal autotuning

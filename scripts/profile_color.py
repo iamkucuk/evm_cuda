@@ -107,16 +107,14 @@ def main():
             hl * wl, n).T.reshape(n, hl, wl)
     timings["3) ideal_bandpass"] = t() - t0
 
-    # Stage 4: gain + upload + upsample + add+quantize + D2H
+    # Stage 4: gain + upload + fused upsample+add+quantize + D2H
     t0 = t()
     filt = filt * gain
     d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
-    d_upsampled = DeviceBuffer(n * h * w * 3 * 4)
-    _evm_cuda.batched_bilinear_upsample_3ch(
-        d_filt.ptr, d_upsampled.ptr, n, hl, wl, h, w)
     d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_upsampled.ptr, d_out_u8.ptr, n * h, w, 1.0)
+    _evm_cuda.batched_upsample_add_quantize(
+        d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
+        n, hl, wl, h, w, 1.0)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
     timings["4) upsample + render"] = t() - t0
 

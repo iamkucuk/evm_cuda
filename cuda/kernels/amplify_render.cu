@@ -201,6 +201,100 @@ void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
         ntsc_frame, delta, bgr_out, H, W, chrom_att);
 }
 
+// Fused bilinear-upsample + add + NTSC->BGR quantize (color pipeline render).
+//
+// Combines what was previously two kernels with a full-res intermediate
+// (M, out_H, out_W, 3) float32 buffer between them:
+//   1. bilinear_upsample_3ch_kernel: filt (M,in_H,in_W,3) -> upsampled float
+//   2. add_and_quantize_kernel:      ntsc + upsampled -> bgr u8
+//
+// Each output pixel now reads 4 source taps from `filt` (the small filtered
+// signal at the pyramid level), interpolates inline, reads ntsc[px], adds,
+// and writes directly to the uint8 output. No intermediate buffer, one launch.
+//
+// Coordinate convention: same as bilinear_upsample_3ch_kernel (half-pixel
+// centers + replicate border — bit-exact match to cv2 INTER_LINEAR).
+__global__ void upsample_add_quantize_kernel(
+    const float* __restrict__ ntsc,   // (M, out_H, out_W, 3)
+    const float* __restrict__ filt,   // (M, in_H, in_W, 3)
+    unsigned char* __restrict__ bgr_out,  // (M, out_H, out_W, 3)
+    int M, int in_H, int in_W, int out_H, int out_W, float chrom_att)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = M * out_H * out_W;
+    if (idx >= total) return;
+
+    const int x = idx % out_W;
+    const int tmp = idx / out_W;
+    const int y = tmp % out_H;
+    const int m = tmp / out_H;
+
+    // Bilinear source coordinates (half-pixel centers, replicate border).
+    const float scale_x = static_cast<float>(in_W) / out_W;
+    const float scale_y = static_cast<float>(in_H) / out_H;
+    float sx = (x + 0.5f) * scale_x - 0.5f;
+    float sy = (y + 0.5f) * scale_y - 0.5f;
+
+    int x0 = static_cast<int>(floorf(sx));
+    int y0 = static_cast<int>(floorf(sy));
+    const float fx = sx - x0;
+    const float fy = sy - y0;
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+    x0 = max(0, min(x0, in_W - 1));
+    x1 = max(0, min(x1, in_W - 1));
+    y0 = max(0, min(y0, in_H - 1));
+    y1 = max(0, min(y1, in_H - 1));
+
+    const float* f = filt + static_cast<size_t>(m) * in_H * in_W * 3;
+    const float w00 = (1.0f - fx) * (1.0f - fy);
+    const float w01 = fx * (1.0f - fy);
+    const float w10 = (1.0f - fx) * fy;
+    const float w11 = fx * fy;
+
+    // Bilinear-interpolate the filtered signal (inline, no intermediate write).
+    const int px = (y * out_W + x) * 3;
+    const float* n = ntsc + static_cast<size_t>(m) * out_H * out_W * 3;
+
+    float y_ = n[px + 0];
+    float i_ = 0.0f;
+    float q_ = 0.0f;
+    for (int c = 0; c < 3; ++c) {
+        const float v00 = f[(y0 * in_W + x0) * 3 + c];
+        const float v01 = f[(y0 * in_W + x1) * 3 + c];
+        const float v10 = f[(y1 * in_W + x0) * 3 + c];
+        const float v11 = f[(y1 * in_W + x1) * 3 + c];
+        float delta = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
+        // Channel 0 is Y (no chrom_att), 1/2 are I/Q (scaled by chrom_att).
+        if (c == 0) y_ += delta;
+        else if (c == 1) i_ = n[px + 1] + delta * chrom_att;
+        else             q_ = n[px + 2] + delta * chrom_att;
+    }
+
+    // NTSC -> BGR u8 (clip, *255, banker's round) — same as add_and_quantize.
+    float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
+    float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
+    float b = kYiqToRgb[2][0]*y_ + kYiqToRgb[2][1]*i_ + kYiqToRgb[2][2]*q_;
+    r = fminf(fmaxf(r, 0.0f), 1.0f);
+    g = fminf(fmaxf(g, 0.0f), 1.0f);
+    b = fminf(fmaxf(b, 0.0f), 1.0f);
+    unsigned char* o = bgr_out + static_cast<size_t>(m) * out_H * out_W * 3;
+    o[px + 0] = static_cast<unsigned char>(rintf(b * 255.0f));
+    o[px + 1] = static_cast<unsigned char>(rintf(g * 255.0f));
+    o[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
+}
+
+void launch_upsample_add_quantize(const float* ntsc, const float* filt,
+                                  unsigned char* bgr_out,
+                                  int M, int in_H, int in_W,
+                                  int out_H, int out_W, float chrom_att,
+                                  cudaStream_t stream) {
+    const int block = 256;
+    const int grid = div_up(M * out_H * out_W, block);
+    upsample_add_quantize_kernel<<<grid, block, 0, stream>>>(
+        ntsc, filt, bgr_out, M, in_H, in_W, out_H, out_W, chrom_att);
+}
+
 // Plain ntsc->bgr u8 conversion for the color pipeline (where the add-back
 // has already happened in NTSC space, possibly after a CPU/GPU upsample).
 // Re-uses the canonical implementation in color_cvt.cu.

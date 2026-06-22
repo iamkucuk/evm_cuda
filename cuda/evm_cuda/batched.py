@@ -251,13 +251,13 @@ def magnify_color_gdown_ideal(
     filt = filt * gain
 
     d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
-    d_upsampled = DeviceBuffer(n * h * w * 3 * 4)
-    _evm_cuda.batched_bilinear_upsample_3ch(
-        d_filt.ptr, d_upsampled.ptr, n, hl, wl, h, w)
-
+    # Fused upsample + add + quantize: reads the small filtered signal + the
+    # full-res NTSC frame, interpolates inline, writes uint8 output directly.
+    # Eliminates the n*h*w*3*4 float32 intermediate buffer + 1 kernel launch.
     d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_upsampled.ptr, d_out_u8.ptr, n * h, w, 1.0)
+    _evm_cuda.batched_upsample_add_quantize(
+        d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
+        n, hl, wl, h, w, 1.0)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     _write(out_path, out, fps)
