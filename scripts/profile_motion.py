@@ -115,10 +115,9 @@ def main():
             d_filt_nt = DeviceBuffer(n * sz * 4)
             _evm_cuda.batched_iir_bandpass(
                 d_nt.ptr, d_filt_nt.ptr, n, sz, R1, R2)
-            _evm_cuda.batched_scale_inplace(d_filt_nt.ptr, n * sz, alpha_sched[l])
             dst_off = level_offsets[l] + c * n * sz
-            _evm_cuda.batched_nt_to_thwc(
-                d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz)
+            _evm_cuda.batched_nt_to_thwc_scaled(
+                d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
     sync()
     timings["C) temporal IIR (on-device)"] = t() - t0
 

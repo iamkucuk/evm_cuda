@@ -332,15 +332,16 @@ def magnify_motion_lpyr_iir(
     # --- Stage C: temporal IIR (fully on-device, no host round-trip) ---------
     # Was: 27 H2D+kernel+D2H cycles (~5.8s, 52% of pipeline).
     # Now: per (level, channel), the n frames are a contiguous (T,N) block in
-    # d_bands. Transpose to (N,T) on-device, run IIR, scale by alpha, transpose
-    # back. All device-to-device — zero host transfers.
+    # d_bands. Transpose to (N,T) on-device, run IIR, transpose back with
+    # per-level alpha folded into the transpose (no separate scale pass).
+    # All device-to-device — zero host transfers.
     d_filtered = DeviceBuffer(total_band_floats * 4)
     for l in range(levels):
         sz = lvl_sizes[l]
         for c in range(3):
             # Source: channel c's n frames at this level (T=n, N=sz), contiguous
             sig_off = level_offsets[l] + c * n * sz
-            # Temp buffers for transpose (N,T) <-> (T,N)
+            # Temp buffer for transpose (N,T)
             d_nt = DeviceBuffer(n * sz * 4)
             _evm_cuda.batched_thwc_to_nt(
                 d_bands.ptr_at(sig_off), d_nt.ptr, n, sz)
@@ -348,12 +349,11 @@ def magnify_motion_lpyr_iir(
             d_filt_nt = DeviceBuffer(n * sz * 4)
             _evm_cuda.batched_iir_bandpass(
                 d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
-            # Scale by alpha_sched[l]
-            _evm_cuda.batched_scale_inplace(d_filt_nt.ptr, n * sz, alpha_sched[l])
-            # Transpose back (N,T) -> (T,N) into d_filtered
+            # Transpose back (N,T) -> (T,N) with alpha_sched[l] folded in —
+            # replaces a separate scale_inplace launch.
             dst_off = level_offsets[l] + c * n * sz
-            _evm_cuda.batched_nt_to_thwc(
-                d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz)
+            _evm_cuda.batched_nt_to_thwc_scaled(
+                d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
 
     # --- Stage D: batched recon + device-resident render --------------------
     # Was: per-frame loop (291 attenuate_chrom + 291 add_and_quantize calls)

@@ -60,6 +60,8 @@ void launch_thwc_to_nt(const float* src, float* dst, int T, int N,
                        cudaStream_t stream);
 void launch_nt_to_thwc(const float* src, float* dst, int T, int N,
                        cudaStream_t stream);
+void launch_nt_to_thwc_scaled(const float* src, float* dst, int T, int N,
+                              float scale, cudaStream_t stream);
 void launch_to_planar_3ch(const float* src, float* dst, int n, int H, int W,
                           cudaStream_t stream);
 void launch_planar_to_interleaved_3ch(const float* src, float* dst,
@@ -883,6 +885,17 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 reinterpret_cast<const float*>(d_in),
                 reinterpret_cast<float*>(d_out), T, N, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"));
+
+    // Scaled transpose: folds a per-call scalar multiply into the (N,T)->(T,N)
+    // transpose. Used by the motion pipeline's Stage C to apply per-level alpha
+    // amplification to IIR-filtered bands without a separate scale_inplace pass.
+    m.def("batched_nt_to_thwc_scaled",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int N, float scale) {
+            evm::launch_nt_to_thwc_scaled(
+                reinterpret_cast<const float*>(d_in),
+                reinterpret_cast<float*>(d_out), T, N, scale, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"),
+           py::arg("N"), py::arg("scale"));
 
     m.def("batched_corr_dn_rows",
         [](uintptr_t d_in, uintptr_t d_out, int H, int W,

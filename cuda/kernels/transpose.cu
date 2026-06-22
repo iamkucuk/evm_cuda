@@ -32,17 +32,21 @@ __global__ void thwc_to_nt_kernel(
 }
 
 // (N,T) row-major -> (T,H,W,C) row-major (inverse of the above).
+// The optional `scale` folds a per-call scalar multiply into the transpose
+// (motion pipeline Stage C: applies per-level alpha amplification to the
+// IIR-filtered bands without a separate scale_inplace kernel launch).
+// scale=1.0 makes this bit-identical to a plain transpose.
 __global__ void nt_to_thwc_kernel(
     const float* __restrict__ src,  // (N, T)
     float* __restrict__ dst,        // (T, N) with leading stride N
-    int T, int N)
+    int T, int N, float scale)
 {
     const int n = blockIdx.x * blockDim.x + threadIdx.x;
     if (n >= N) return;
     const float* s = src + n * T;
     float* d = dst + n;
     for (int t = 0; t < T; ++t) {
-        d[t * N] = s[t];
+        d[t * N] = s[t] * scale;
     }
 }
 
@@ -57,7 +61,17 @@ void launch_nt_to_thwc(const float* src, float* dst, int T, int N,
                        cudaStream_t stream) {
     int block = 256;
     int grid = div_up(N, block);
-    nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N);
+    nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N, 1.0f);
+}
+
+// Transpose (N,T) -> (T,N) with a per-call scalar multiply. Used by the
+// motion pipeline to fold per-level alpha amplification into the transpose
+// back from temporal-filter layout, saving a separate scale_inplace pass.
+void launch_nt_to_thwc_scaled(const float* src, float* dst, int T, int N,
+                              float scale, cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(N, block);
+    nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N, scale);
 }
 
 // (n,H,W,3) interleaved  ->  (n*3,H,W) planar (frame-major, then channel).
