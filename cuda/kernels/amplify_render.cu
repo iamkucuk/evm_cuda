@@ -98,6 +98,7 @@ __global__ void add_and_quantize_kernel(
 // Planar delta layout: delta[(f*3 + c) * H * W + y * W + x] for frame f, chan c.
 //
 // Grid: (ceil(W/32), ceil(H/32), n)  Block: (32, 32, 1)  — grid.z = frame index.
+__launch_bounds__(1024, 2)
 __global__ void add_planar_quantize_kernel(
     const float* __restrict__ ntsc,       // (n, H, W, 3) interleaved
     const float* __restrict__ delta_planar,  // (n*3, H, W) planar
@@ -278,6 +279,7 @@ void launch_add_planar_quantize(const float* ntsc, const float* delta_planar,
 // Coordinate convention: same as bilinear_upsample_3ch_kernel (half-pixel
 // centers + replicate border — bit-exact match to cv2 INTER_LINEAR).
 // Grid: (ceil(M*out_H*out_W/256))  Block: (256, 1, 1)
+__launch_bounds__(256, 4)
 __global__ void upsample_add_quantize_kernel(
     const float* __restrict__ ntsc,   // (M, out_H, out_W, 3)
     const float* __restrict__ filt,   // (M, in_H, in_W, 3)

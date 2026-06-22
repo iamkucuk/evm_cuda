@@ -179,6 +179,7 @@ void launch_up_conv_cols(const float* in, float* out,
 // ===========================================================================
 
 // Batched corr_dn along axis=0 (rows). B slices, each (H,W) -> ((H+1)/2, W).
+__launch_bounds__(1024, 2)
 __global__ void corr_dn_rows_batched_kernel(
     const float* __restrict__ in,   // (B, H*W)
     float* __restrict__ out,        // (B, ((H+1)/2)*W)
@@ -191,18 +192,24 @@ __global__ void corr_dn_rows_batched_kernel(
     const int Ho = (H + 1) / 2;
     if (x >= W || yo >= Ho || b >= B) return;
 
+    // Load filter taps into registers once (global -> register, not per-iter).
+    float f[5];
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = filt[k];
     const int src_center = 2 * yo;
     const int pad = filt_len / 2;
     const float* sin = in + b * slice_stride_in;
     float acc = 0.0f;
-    for (int k = 0; k < filt_len; ++k) {
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) {
         int src = reflect1(src_center + (k - pad), H);
-        acc += filt[k] * sin[src * W + x];
+        acc += f[k] * sin[src * W + x];
     }
     out[b * slice_stride_out + yo * W + x] = acc;
 }
 
 // Batched corr_dn along axis=1 (cols). B slices, each (H,W) -> (H, (W+1)/2).
+__launch_bounds__(1024, 2)
 __global__ void corr_dn_cols_batched_kernel(
     const float* __restrict__ in,
     float* __restrict__ out,
@@ -215,18 +222,23 @@ __global__ void corr_dn_cols_batched_kernel(
     const int Wo = (W + 1) / 2;
     if (xo >= Wo || y >= H || b >= B) return;
 
+    float f[5];
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = filt[k];
     const int src_center = 2 * xo;
     const int pad = filt_len / 2;
     const float* sin = in + b * slice_stride_in;
     float acc = 0.0f;
-    for (int k = 0; k < filt_len; ++k) {
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) {
         int src = reflect1(src_center + (k - pad), W);
-        acc += filt[k] * sin[y * W + src];
+        acc += f[k] * sin[y * W + src];
     }
     out[b * slice_stride_out + y * Wo + xo] = acc;
 }
 
 // Batched up_conv along axis=0 (rows). B slices, each (in_H,W) -> (out_H,W).
+__launch_bounds__(1024, 2)
 __global__ void up_conv_rows_batched_kernel(
     const float* __restrict__ in,
     float* __restrict__ out,
@@ -239,22 +251,27 @@ __global__ void up_conv_rows_batched_kernel(
     const int b = blockIdx.z;
     if (x >= W || yo >= out_H || b >= B) return;
 
+    float f[5];
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = filt[k];
     const int pad = filt_len / 2;
     const int up_H = 2 * in_H;
     const float* sin = in + b * slice_stride_in;
     float acc = 0.0f;
-    for (int k = 0; k < filt_len; ++k) {
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) {
         int u_idx = yo + (k - pad);
         int r = reflect1(u_idx, up_H);
         if ((r & 1) == 0) {
             int src = r / 2;
-            acc += filt[k] * sin[src * W + x];
+            acc += f[k] * sin[src * W + x];
         }
     }
     out[b * slice_stride_out + yo * W + x] = acc;
 }
 
 // Batched up_conv along axis=1 (cols). B slices, each (H,in_W) -> (H,out_W).
+__launch_bounds__(1024, 2)
 __global__ void up_conv_cols_batched_kernel(
     const float* __restrict__ in,
     float* __restrict__ out,
@@ -267,16 +284,20 @@ __global__ void up_conv_cols_batched_kernel(
     const int b = blockIdx.z;
     if (xo >= out_W || y >= H || b >= B) return;
 
+    float f[5];
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = filt[k];
     const int pad = filt_len / 2;
     const int up_W = 2 * in_W;
     const float* sin = in + b * slice_stride_in;
     float acc = 0.0f;
-    for (int k = 0; k < filt_len; ++k) {
+    #pragma unroll
+    for (int k = 0; k < 5; ++k) {
         int u_idx = xo + (k - pad);
         int r = reflect1(u_idx, up_W);
         if ((r & 1) == 0) {
             int src = r / 2;
-            acc += filt[k] * sin[y * in_W + src];
+            acc += f[k] * sin[y * in_W + src];
         }
     }
     out[b * slice_stride_out + y * out_W + xo] = acc;

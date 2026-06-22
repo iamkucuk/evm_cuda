@@ -17,6 +17,7 @@ namespace evm {
 
 // (T,H,W,C) row-major  ->  (N,T) row-major, where N = H*W*C.
 // src[n*T_strided + t] -> dst[t*N + n]   with T_strided = H*W*C.
+__launch_bounds__(256, 4)
 __global__ void thwc_to_nt_kernel(
     const float* __restrict__ src,  // (T, H*W*C) row-major, stride N between frames
     float* __restrict__ dst,        // (N, T)     row-major
@@ -36,6 +37,7 @@ __global__ void thwc_to_nt_kernel(
 // (motion pipeline Stage C: applies per-level alpha amplification to the
 // IIR-filtered bands without a separate scale_inplace kernel launch).
 // scale=1.0 makes this bit-identical to a plain transpose.
+__launch_bounds__(256, 4)
 __global__ void nt_to_thwc_kernel(
     const float* __restrict__ src,  // (N, T)
     float* __restrict__ dst,        // (T, N) with leading stride N
@@ -81,6 +83,7 @@ void launch_nt_to_thwc_scaled(const float* src, float* dst, int T, int N,
 //
 // Each thread handles one pixel (n,y,x): reads 3 contiguous floats from the
 // interleaved source, scatters them to 3 separate planes.
+__launch_bounds__(256, 4)
 __global__ void to_planar_3ch_kernel(
     const float* __restrict__ src,  // (n,H,W,3) row-major
     float* __restrict__ dst,        // (n*3,H,W) row-major
