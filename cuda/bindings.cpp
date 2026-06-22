@@ -794,32 +794,50 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("H"), py::arg("W"));
 
     // --- batched blur_dn over M=n*3 contiguous planar slices ----------------
-    // Replaces the 873-call Python loop (color pipeline hotspot, 55% of time).
-    // d_in/d_out are (M,H,W)/(M,hl,wl) row-major; each slice is offset by
-    // pointer arithmetic. Scratch is allocated ONCE and reused — the only
-    // per-iteration cost is the kernel launch itself (microseconds on H100).
+    // Processes all M slices simultaneously through the level loop using the
+    // batched spatial kernels (grid.z = M). Collapses the old M-iteration host
+    // loop into nlevs iterations, each with 2 batched kernel launches.
     //
-    // M = n*3 (frame-major then channel). Both blur_dn_device's scratch_a/b
-    // and the per-slice out pointer must not alias; since out = d_out + m*hl*wl
-    // and the scratches are standalone allocations, this is safe. Iterations
-    // serialize on the default stream, so each m fully completes first.
+    // Output is frame-major (M, hl, wl) — regular strides, no scatter needed.
+    // Scratch: 2 M-sized buffers (ping-pong between downsample passes).
     m.def("batched_blur_dn_color",
         [](uintptr_t d_in, uintptr_t d_out, int M, int H, int W, int nlevs,
            uintptr_t d_filt, int filt_len) {
-            int hl = H, wl = W;
-            for (int l = 0; l < nlevs; ++l) { hl = (hl + 1) / 2; wl = (wl + 1) / 2; }
-            float* scratch_a = device_alloc<float>(static_cast<size_t>(H) * W);
-            float* scratch_b = device_alloc<float>(static_cast<size_t>(H) * W);
             const float* in_p  = reinterpret_cast<const float*>(d_in);
             float*       out_p = reinterpret_cast<float*>(d_out);
             const float* filt  = reinterpret_cast<const float*>(d_filt);
-            for (int m = 0; m < M; ++m) {
-                evm::blur_dn_device(in_p  + static_cast<size_t>(m) * H  * W,
-                                    H, W,
-                                    out_p + static_cast<size_t>(m) * hl * wl,
-                                    nlevs, filt, filt_len,
-                                    scratch_a, scratch_b, 0);
+
+            // 2 frame-major scratch buffers, each M*H*W floats.
+            float* scratch_a = device_alloc<float>(static_cast<size_t>(M) * H * W);
+            float* scratch_b = device_alloc<float>(static_cast<size_t>(M) * H * W);
+
+            // cur := input (M slices, batched D2D copy).
+            CUDA_CHECK(cudaMemcpyAsync(scratch_a, in_p,
+                static_cast<size_t>(M) * H * W * sizeof(float),
+                cudaMemcpyDeviceToDevice, 0));
+
+            float* cur = scratch_a;
+            float* nxt = scratch_b;
+            int ch = H, cw = W;
+            for (int l = 0; l < nlevs; ++l) {
+                int wn = (cw + 1) / 2;
+                int hn = (ch + 1) / 2;
+                // cols downsample: cur (M, ch, cw) -> nxt (M, ch, wn)
+                evm::launch_corr_dn_cols_batched(
+                    cur, nxt, ch, cw, filt, filt_len,
+                    ch * cw, ch * wn, M, 0);
+                // rows downsample: nxt (M, ch, wn) -> cur (M, hn, wn)
+                evm::launch_corr_dn_rows_batched(
+                    nxt, cur, ch, wn, filt, filt_len,
+                    ch * wn, hn * wn, M, 0);
+                ch = hn; cw = wn;
             }
+
+            // Copy final result to output.
+            CUDA_CHECK(cudaMemcpyAsync(out_p, cur,
+                static_cast<size_t>(M) * ch * cw * sizeof(float),
+                cudaMemcpyDeviceToDevice, 0));
+
             device_free(scratch_a); device_free(scratch_b);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
            py::arg("H"), py::arg("W"), py::arg("nlevs"),
