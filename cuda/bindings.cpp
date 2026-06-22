@@ -81,7 +81,7 @@ void launch_bilinear_upsample_3ch(const float* src, float* dst,
                                   int out_H, int out_W, cudaStream_t stream);
 void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
                              unsigned char* bgr_out, int H, int W,
-                             cudaStream_t stream);
+                             float chrom_att, cudaStream_t stream);
 
 // ideal_bandpass.cu — self-contained cuFFT fwd+mask+inv pipeline.
 void launch_ideal_bandpass(
@@ -430,7 +430,7 @@ PYBIND11_MODULE(_evm_cuda, m) {
         auto* d_o = device_alloc<unsigned char>(H * W * 3);
         CUDA_CHECK(cudaMemcpy(d_f, bf.ptr, H * W * 3 * sizeof(float), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_d, bd.ptr, H * W * 3 * sizeof(float), cudaMemcpyHostToDevice));
-        evm::launch_add_and_quantize(d_f, d_d, d_o, H, W, 0);
+        evm::launch_add_and_quantize(d_f, d_d, d_o, H, W, 1.0f, 0);
         CUDA_CHECK(cudaMemcpy(bo.ptr, d_o, H * W * 3 * sizeof(unsigned char), cudaMemcpyDeviceToHost));
         device_free(d_f); device_free(d_d); device_free(d_o);
         return bgr;
@@ -963,13 +963,14 @@ PYBIND11_MODULE(_evm_cuda, m) {
         }, py::arg("d_data"), py::arg("n"), py::arg("scale"));
 
     m.def("batched_add_and_quantize",
-        [](uintptr_t d_ntsc, uintptr_t d_delta, uintptr_t d_bgr, int H, int W) {
+        [](uintptr_t d_ntsc, uintptr_t d_delta, uintptr_t d_bgr,
+           int H, int W, float chrom_att) {
             evm::launch_add_and_quantize(
                 reinterpret_cast<float*>(d_ntsc),
                 reinterpret_cast<float*>(d_delta),
-                reinterpret_cast<unsigned char*>(d_bgr), H, W, 0);
+                reinterpret_cast<unsigned char*>(d_bgr), H, W, chrom_att, 0);
         }, py::arg("d_ntsc"), py::arg("d_delta"), py::arg("d_bgr"),
-           py::arg("H"), py::arg("W"));
+           py::arg("H"), py::arg("W"), py::arg("chrom_att"));
 
     // --- batched bilinear upsample: M frames (in_H,in_W,3) -> (out_H,out_W,3) -
     // Replaces host-side cv2.resize(INTER_LINEAR) in the color pipeline render

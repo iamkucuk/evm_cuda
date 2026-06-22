@@ -257,7 +257,7 @@ def magnify_color_gdown_ideal(
 
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_upsampled.ptr, d_out_u8.ptr, n * h, w)
+        d_ntsc.ptr, d_upsampled.ptr, d_out_u8.ptr, n * h, w, 1.0)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     _write(out_path, out, fps)
@@ -364,22 +364,18 @@ def magnify_motion_lpyr_iir(
     _evm_cuda.batched_lpyr_recon(
         d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
 
-    # Attenuate chroma on-device: planar (n*3, H, W) treated as (n*3*H, W, 1)?
-    # No — attenuate_chrom expects (H, W, 3) interleaved. The recon output is
-    # planar (n*3, H, W). We need to transpose to interleaved first.
-    # Use a device-to-device planar->interleaved transpose (inverse of to_planar_3ch).
+    # Transpose planar recon output to interleaved (H,W,3) for the render
+    # kernel. Chroma attenuation is folded INTO add_and_quantize below — one
+    # fewer full-res kernel pass over the delta buffer.
     d_delta_interleaved = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_planar_to_interleaved_3ch(
         d_delta_planar.ptr, d_delta_interleaved.ptr, n, h, w)
 
-    # Batched attenuate_chrom: whole clip as (n*H, W, 3)
-    _evm_cuda.batched_attenuate_chrom(
-        d_delta_interleaved.ptr, n * h, w, chrom_attenuation)
-
-    # Batched add+quantize with device-resident ntsc (keep d_ntsc from Stage A)
+    # Batched add+quantize with chromAtt folded in (keep d_ntsc from Stage A).
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr, n * h, w)
+        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr,
+        n * h, w, chrom_attenuation)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     _write(out_path, out, fps)

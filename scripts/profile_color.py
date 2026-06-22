@@ -116,7 +116,7 @@ def main():
         d_filt.ptr, d_upsampled.ptr, n, hl, wl, h, w)
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_upsampled.ptr, d_out_u8.ptr, n * h, w)
+        d_ntsc.ptr, d_upsampled.ptr, d_out_u8.ptr, n * h, w, 1.0)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
     timings["4) upsample + render"] = t() - t0
 

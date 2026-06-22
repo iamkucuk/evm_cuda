@@ -130,16 +130,15 @@ def main():
     sync()
     timings["D1) lpyr_recon (on-device)"] = t() - t0
 
-    # Stage D2: render (transpose + attenuate + add+quantize + D2H)
+    # Stage D2: render (transpose + add+quantize with fused chromAtt + D2H)
     t0 = t()
     d_delta_interleaved = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_planar_to_interleaved_3ch(
         d_delta_planar.ptr, d_delta_interleaved.ptr, n, h, w)
-    _evm_cuda.batched_attenuate_chrom(
-        d_delta_interleaved.ptr, n * h, w, CHROM_ATT)
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr, n * h, w)
+        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr,
+        n * h, w, CHROM_ATT)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
     timings["D2) render (transpose+att+add)"] = t() - t0
 

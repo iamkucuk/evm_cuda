@@ -46,23 +46,31 @@ __global__ void apply_channel_gain_kernel(
     sig[px + 2] *= g2;
 }
 
-// Add the (already-gained and chromAtt-attenuated) filtered delta to the
-// NTSC frame, then convert to BGR u8. Single fused kernel saves a global
-// write/read pair vs. add-then-convert.
+// Add the (already-gained and optionally chromAtt-attenuated) filtered delta
+// to the NTSC frame, then convert to BGR u8. Single fused kernel saves a
+// global write/read pair vs. add-then-convert.
+//
+// chrom_att scales the I,Q channels of delta BEFORE the add. When chrom_att=1
+// (color pipeline) this is a no-op and the kernel is identical to the old
+// version. For the motion pipeline, passing chrom_attenuation here lets us
+// skip the separate attenuate_chrom kernel launch entirely (one fewer
+// full-res pass over the delta buffer).
 __global__ void add_and_quantize_kernel(
     const float* __restrict__ ntsc_frame,  // (H,W,3)
     const float* __restrict__ delta,       // (H,W,3) — reconstruction
     unsigned char* __restrict__ bgr_out,   // (H,W,3)
-    int H, int W)
+    int H, int W, float chrom_att)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= W || y >= H) return;
     const int px = (y * W + x) * 3;
 
+    // Fold chromAtt into the delta read (motion pipeline). chrom_att=1.0
+    // (color pipeline) makes this a plain copy.
     float y_ = ntsc_frame[px + 0] + delta[px + 0];
-    float i_ = ntsc_frame[px + 1] + delta[px + 1];
-    float q_ = ntsc_frame[px + 2] + delta[px + 2];
+    float i_ = ntsc_frame[px + 1] + delta[px + 1] * chrom_att;
+    float q_ = ntsc_frame[px + 2] + delta[px + 2] * chrom_att;
 
     float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
     float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
@@ -186,11 +194,11 @@ void launch_bilinear_upsample_3ch(const float* src, float* dst,
 
 void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
                              unsigned char* bgr_out, int H, int W,
-                             cudaStream_t stream) {
+                             float chrom_att, cudaStream_t stream) {
     dim3 block(32, 32, 1);
     dim3 grid(div_up(W, 32), div_up(H, 32), 1);
     add_and_quantize_kernel<<<grid, block, 0, stream>>>(
-        ntsc_frame, delta, bgr_out, H, W);
+        ntsc_frame, delta, bgr_out, H, W, chrom_att);
 }
 
 // Plain ntsc->bgr u8 conversion for the color pipeline (where the add-back
