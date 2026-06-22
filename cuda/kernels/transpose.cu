@@ -6,8 +6,19 @@
 // N = H*W*C, so a length-T 1-D filter over a location reads N consecutive
 // floats.
 //
-// Grid: (ceil(N/256))  Block: (256, 1, 1). Each thread copies one location's
-// full length-T series (a strided gather from src, contiguous scatter to dst).
+// Access pattern analysis for (N,T) <-> (T,N) transpose:
+//   thwc_to_nt: reads src[t*N + n] (coalesced), writes dst[n*T + t] (stride-T)
+//   nt_to_thwc: reads src[n*T + t] (coalesced), writes dst[t*N + n] (coalesced)
+//
+// The classic shared-memory tiled matrix transpose doesn't apply here because
+// T is small (~291) and N is large (~500K): a [TILE_T][TILE_N] 2D tile would
+// need 291*256*4 = 288 KB of shared memory, exceeding the H100's 228 KB per SM.
+//
+// Instead, each thread processes ELEMS_PER_THREAD spatial locations (Harris V6:
+// "multiple elements per thread"). This amortizes the per-thread loop overhead
+// and gives the compiler more independent memory operations to pipeline,
+// improving instruction-level parallelism and hiding latency through the
+// warp scheduler rather than through occupancy.
 //
 // This is a layout transform only — bit-exact, no tolerance implications.
 
@@ -15,62 +26,69 @@
 
 namespace evm {
 
-// (T,H,W,C) row-major  ->  (N,T) row-major, where N = H*W*C.
-// src[n*T_strided + t] -> dst[t*N + n]   with T_strided = H*W*C.
+constexpr int ELEMS_PER_THREAD = 4;
+
+// (T,H,W,C) -> (N,T): each thread handles ELEMS_PER_THREAD locations.
 __global__ void thwc_to_nt_kernel(
-    const float* __restrict__ src,  // (T, H*W*C) row-major, stride N between frames
-    float* __restrict__ dst,        // (N, T)     row-major
+    const float* __restrict__ src,
+    float* __restrict__ dst,
     int T, int N)
 {
-    const int n = blockIdx.x * blockDim.x + threadIdx.x;
-    if (n >= N) return;
-    const float* s = src + n;
-    float* d = dst + n * T;
-    for (int t = 0; t < T; ++t) {
-        d[t] = s[t * N];
+    const int base_n = blockIdx.x * blockDim.x * ELEMS_PER_THREAD;
+    const int tid = threadIdx.x;
+    #pragma unroll
+    for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
+        const int n = base_n + tid + e * blockDim.x;
+        if (n >= N) return;
+        const float* s = src + n;
+        float* d = dst + n * T;
+        #pragma unroll
+        for (int t = 0; t < T; ++t) {
+            d[t] = s[t * N];
+        }
     }
 }
 
-// (N,T) row-major -> (T,H,W,C) row-major (inverse of the above).
-// The optional `scale` folds a per-call scalar multiply into the transpose
-// (motion pipeline Stage C: applies per-level alpha amplification to the
-// IIR-filtered bands without a separate scale_inplace kernel launch).
-// scale=1.0 makes this bit-identical to a plain transpose.
+// (N,T) -> (T,N) with optional scale (folds alpha amplification into the
+// transpose for the motion pipeline's Stage C).
 __global__ void nt_to_thwc_kernel(
-    const float* __restrict__ src,  // (N, T)
-    float* __restrict__ dst,        // (T, N) with leading stride N
+    const float* __restrict__ src,
+    float* __restrict__ dst,
     int T, int N, float scale)
 {
-    const int n = blockIdx.x * blockDim.x + threadIdx.x;
-    if (n >= N) return;
-    const float* s = src + n * T;
-    float* d = dst + n;
-    for (int t = 0; t < T; ++t) {
-        d[t * N] = s[t] * scale;
+    const int base_n = blockIdx.x * blockDim.x * ELEMS_PER_THREAD;
+    const int tid = threadIdx.x;
+    #pragma unroll
+    for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
+        const int n = base_n + tid + e * blockDim.x;
+        if (n >= N) return;
+        const float* s = src + n * T;
+        float* d = dst + n;
+        #pragma unroll
+        for (int t = 0; t < T; ++t) {
+            d[t * N] = s[t] * scale;
+        }
     }
 }
 
 void launch_thwc_to_nt(const float* src, float* dst, int T, int N,
                        cudaStream_t stream) {
     int block = 256;
-    int grid = div_up(N, block);
+    int grid = div_up(N, block * ELEMS_PER_THREAD);
     thwc_to_nt_kernel<<<grid, block, 0, stream>>>(src, dst, T, N);
 }
 
 void launch_nt_to_thwc(const float* src, float* dst, int T, int N,
                        cudaStream_t stream) {
     int block = 256;
-    int grid = div_up(N, block);
+    int grid = div_up(N, block * ELEMS_PER_THREAD);
     nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N, 1.0f);
 }
 
-// Transpose (N,T) -> (T,N) with a per-call scalar multiply. Used by the
-// motion pipeline to fold per-level alpha amplification into the transpose
-// back from temporal-filter layout, saving a separate scale_inplace pass.
 void launch_nt_to_thwc_scaled(const float* src, float* dst, int T, int N,
                               float scale, cudaStream_t stream) {
     int block = 256;
-    int grid = div_up(N, block);
+    int grid = div_up(N, block * ELEMS_PER_THREAD);
     nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N, scale);
 }
 
@@ -108,8 +126,6 @@ void launch_to_planar_3ch(const float* src, float* dst, int n, int H, int W,
 }
 
 // (n*3,H,W) planar  ->  (n,H,W,3) interleaved (inverse of to_planar_3ch).
-// Used by the motion pipeline's Stage D to convert recon output back to
-// interleaved for attenuate_chrom + add_and_quantize.
 // Bit-exact layout transform — no FP, no tolerance implications.
 __global__ void planar_to_interleaved_3ch_kernel(
     const float* __restrict__ src,  // (n*3,H,W) row-major
