@@ -33,6 +33,7 @@ void launch_ntsc_f32_to_bgr_u8(const float* yiq, unsigned char* bgr,
 
 // Apply per-channel gain to a filtered signal (color pipeline).
 // in-place: gain[0]*Y, gain[1]*I, gain[2]*Q.
+// Grid: (ceil(W/32), ceil(H/32))  Block: (32, 32, 1)
 __global__ void apply_channel_gain_kernel(
     float* __restrict__ sig, int H, int W,
     float g0, float g1, float g2)
@@ -55,6 +56,8 @@ __global__ void apply_channel_gain_kernel(
 // version. For the motion pipeline, passing chrom_attenuation here lets us
 // skip the separate attenuate_chrom kernel launch entirely (one fewer
 // full-res pass over the delta buffer).
+//
+// Grid: (ceil(W/32), ceil(H/32))  Block: (32, 32, 1)
 __global__ void add_and_quantize_kernel(
     const float* __restrict__ ntsc_frame,  // (H,W,3)
     const float* __restrict__ delta,       // (H,W,3) — reconstruction
@@ -93,6 +96,8 @@ __global__ void add_and_quantize_kernel(
 // + one full-res kernel pass.
 //
 // Planar delta layout: delta[(f*3 + c) * H * W + y * W + x] for frame f, chan c.
+//
+// Grid: (ceil(W/32), ceil(H/32), n)  Block: (32, 32, 1)  — grid.z = frame index.
 __global__ void add_planar_quantize_kernel(
     const float* __restrict__ ntsc,       // (n, H, W, 3) interleaved
     const float* __restrict__ delta_planar,  // (n*3, H, W) planar
@@ -130,6 +135,7 @@ __global__ void add_planar_quantize_kernel(
 
 // Scale the I,Q channels of a delta buffer by chromAtt (motion pipelines).
 // Y is left untouched. evm/magnify.py:_amplify_lpyr_stack.
+// Grid: (ceil(W/32), ceil(H/32))  Block: (32, 32, 1)
 __global__ void attenuate_chrom_kernel(
     float* __restrict__ delta, int H, int W, float chrom_att)
 {
@@ -158,6 +164,7 @@ void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,
 
 // Scale a flat float32 array by a scalar. Used to apply per-level alpha
 // amplification to IIR-filtered pyramid bands on-device.
+// Grid: (ceil(n/256))  Block: (256, 1, 1)
 __global__ void scale_inplace_kernel(float* __restrict__ data, int n, float scale) {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n) return;
@@ -179,6 +186,7 @@ void launch_scale_inplace(float* data, int n, float scale, cudaStream_t stream) 
 //   border: replicate (clamp to edge), NOT reflect-101.
 //
 // Each thread handles one output pixel (all 3 channels in registers).
+// Grid: (ceil(M*out_H*out_W/256))  Block: (256, 1, 1)
 __global__ void bilinear_upsample_3ch_kernel(
     const float* __restrict__ src,   // (M, in_H, in_W, 3)
     float* __restrict__ dst,         // (M, out_H, out_W, 3)
@@ -269,6 +277,7 @@ void launch_add_planar_quantize(const float* ntsc, const float* delta_planar,
 //
 // Coordinate convention: same as bilinear_upsample_3ch_kernel (half-pixel
 // centers + replicate border — bit-exact match to cv2 INTER_LINEAR).
+// Grid: (ceil(M*out_H*out_W/256))  Block: (256, 1, 1)
 __global__ void upsample_add_quantize_kernel(
     const float* __restrict__ ntsc,   // (M, out_H, out_W, 3)
     const float* __restrict__ filt,   // (M, in_H, in_W, 3)

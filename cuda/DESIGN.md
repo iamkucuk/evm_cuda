@@ -26,24 +26,28 @@ cuda/
 │   └── evm_check.cuh      # CUDA_CHECK / CUFFT_CHECK macros (abort on error)
 ├── kernels/
 │   ├── color_cvt.cu       # bgr_u8 <-> ntsc_f32 (per-pixel matvec + quantize)
-│   ├── spatial.cu         # corr_dn / up_conv (separable, reflect1, 5-tap)
-│   ├── transpose.cu       # (T,H,W,C) <-> (N,T) for temporal coalescing
+│   ├── spatial.cu         # corr_dn / up_conv (single-slice + batched variants)
+│   ├── transpose.cu       # (T,H,W,C) <-> (N,T), planar<->interleaved, scaled transpose
 │   ├── iir_bandpass.cu    # per-pixel FP64-state r1/r2 recursion
 │   ├── butter_bandpass.cu # 1st-order Butter via scipy coeffs (host)
 │   ├── ideal_bandpass.cu  # cuFFT C2C batched + mask kernel + 1/T normalize
-│   ├── lpyr.cu            # build_lpyr / recon_lpyr (host loop over levels)
-│   ├── blur_dn.cu         # blur_dn (host loop of corr_dn)
-│   └── amplify_render.cu  # apply_channel_gain, attenuate_chrom, add+quantize
-├── bindings.cpp           # pybind11 module: thin per-kernel wrappers
+│   ├── lpyr.cu            # build/recon (single-slice) + scatter/gather (batched)
+│   ├── blur_dn.cu         # blur_dn (single-slice; batched variant is in bindings.cpp)
+│   └── amplify_render.cu  # add+quantize, fused upsample+add, fused planar+add
+├── bindings.cpp           # pybind11 module: per-kernel + batched_* wrappers,
+│                          # cuFFT plan cache, batched lpyr/blur orchestration
 ├── evm_cuda/              # Python wrapper package
 │   ├── __init__.py        # lazy surface for the 4 magnify_* pipelines
-│   ├── runtime.py         # have_cuda probe, butter coeffs, to_contiguous_f32
-│   └── pipelines.py       # the 4 magnify_* orchestrators
+│   ├── runtime.py         # have_cuda probe, butter coeffs
+│   ├── pipelines.py       # non-batched magnify_* (ideal/butter motion pipelines)
+│   └── batched.py         # optimized device-resident magnify_* (color/iir)
 ├── CMakeLists.txt         # enable_language(CUDA), CUDAToolkit, pybind11
 └── setup.py               # pip-installable; shells out to CMake
 ```
 
 ## Kernel-by-kernel mapping
+
+**Single-slice kernels** (used by `pipelines.py` and unit tests):
 
 | Python baseline | CUDA kernel | Grid / Block | Tolerance |
 |---|---|---|---|
@@ -59,8 +63,22 @@ cuda/
 | `evm.iir_bandpass` | `iir_bandpass.cu:iir_bandpass_kernel` | `(⌈N/256⌉) / (256,1,1)` | `<1e-5` |
 | `evm.butter_bandpass` | `butter_bandpass.cu:butter_bandpass_kernel` | same | `<1e-5` |
 | `evm.ideal_bandpass` | `ideal_bandpass.cu` (3 sub-kernels + cuFFT) | mask: `(⌈TN/256⌉) / (256,1,1)` | `<1e-4` |
-| `evm.figure6_alpha_schedule` | host-side, in `pipelines.py` | n/a (small host array) | n/a |
+| `evm.figure6_alpha_schedule` | host-side, in `batched.py`/`pipelines.py` | n/a (small host array) | n/a |
 | `evm._amplify_lpyr_stack` add+quantize | `amplify_render.cu:add_and_quantize_kernel` | `(⌈W/32⌉,⌈H/32⌉) / (32,32,1)` | `<1e-6` (≤1 LSB on u8) |
+
+**Batched kernels** (used by `batched.py` — the optimized production path):
+
+| Operation | CUDA kernel | Grid / Block | Notes |
+|---|---|---|---|
+| Batched corr_dn/up_conv | `spatial.cu:*_batched_kernel` | `(⌈W/32⌉,⌈Ho/32⌉,B) / (32,32,1)` | B=M slices via grid.z; identical per-thread math |
+| Batched lpyr_build | `bindings.cpp:batched_lpyr_build` | host loop over levels | scatter_subtract for channel-major band writes |
+| Batched lpyr_recon | `bindings.cpp:batched_lpyr_recon` | host loop over levels | gather/gather_add for channel-major band reads |
+| Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | frame-major output, no scatter needed |
+| Scatter/gather | `lpyr.cu:scatter_subtract/gather/gather_add/scatter` | `(⌈n/256⌉,B) / (256,1,1)` | bridges frame-major scratch ↔ channel-major bands |
+| Scaled transpose | `transpose.cu:nt_to_thwc_kernel` (+scale param) | `(⌈N/256⌉) / (256,1,1)` | folds alpha amplification into transpose |
+| Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; eliminates intermediate buffer |
+| Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion pipeline render; reads planar delta inline |
+| cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N); eliminates per-call plan creation |
 
 ## Precision rationale
 
@@ -120,30 +138,32 @@ For cuFFT, the `(N,T)` layout maps directly onto `cufftPlanMany` with
 
 ## Pipeline composition
 
-The four magnify pipelines (`magnify_color_gdown_ideal`,
-`magnify_motion_lpyr_ideal`/`_butter`/`_iir`) live in
-`cuda/evm_cuda/pipelines.py`. They mirror the structure of
-`evm/magnify.py` line-for-line: frame read → drop-last-10 → NTSC convert →
-pyramid build → temporal filter → amplify → recon → add → quantize.
+Two pipeline implementations exist:
 
-What's on-device vs on-host:
+- **`pipelines.py`** — the non-batched reference path (per-frame H2D/D2H per
+  binding call). Used for `magnify_motion_lpyr_ideal` and
+  `magnify_motion_lpyr_butter` (which `batched.py` doesn't implement).
+  Matches `evm/magnify.py` line-for-line.
+- **`batched.py`** — the optimized device-resident path for
+  `magnify_color_gdown_ideal` and `magnify_motion_lpyr_iir`. Upload once,
+  keep data on-device through all stages (batched spatial kernels, on-device
+  transpose+IIR, fused render), download only the final uint8 output.
+
+What's on-device vs on-host (batched.py):
 
 | Step | Where | Why |
 |---|---|---|
 | Frame read, drop-last-10, fps | Host | I/O-bound, OpenCV VideoCapture |
-| NTSC convert | Device | Per-pixel matvec |
-| Pyramid build/recon, blur_dn | Device (host-orchestrated) | Each level = spatial kernel launch |
-| Temporal filter | Device | The hot per-pixel loop |
+| NTSC convert | Device (batched) | Per-pixel matvec, all frames at once |
+| Pyramid build/recon, blur_dn | Device (batched spatial kernels) | grid.z = M slices per launch |
+| Temporal filter | Device | On-device transpose + IIR, alpha folded into transpose |
 | Figure-6 schedule | Host | Small `n_levels`-length float array |
-| Add + quantize + clip | Device | Per-pixel |
+| Fused render (upsample/planar + add + quant) | Device | Eliminates intermediate buffers |
 | Video encode | Host | OpenCV VideoWriter |
 
-The host orchestration does mean per-frame device↔host round-trips for the
-pyramid bands (each frame's pyramid is copied back, stacked, then re-uploaded
-for the temporal filter). A follow-up optimization can stage whole-clip
-pyramid stacks on-device and avoid the round-trip; this is a perf
-optimization, not a correctness concern, and is left for after the
-validation lands.
+The only remaining host round-trip in the color pipeline is Stage 2b
+(downsampled clip D2H + reshape for the per-channel ideal_bandpass). The
+motion pipeline is fully device-resident through Stages A–D.
 
 ## Known divergences from MATLAB (intentional)
 
@@ -159,16 +179,17 @@ rule. The Python baseline is the oracle.
    matching `numpy.round`. Verified in `tests/cuda/test_color_cvt.py` to
    within ≤1 LSB.
 
-3. **cuFFT plan lifecycle** is per-call (created and destroyed inside
-   `_evm_cuda.ideal_bandpass`). This is acceptable for the accuracy
-   comparison; a production-realtime path should cache plans across calls.
+3. **cuFFT plan lifecycle**: plans are cached by `(T, N)` in `bindings.cpp`'s
+   `g_fft_cache`. The first call creates the plan; subsequent calls (same
+   clip dimensions) reuse it. This eliminates the ~5-10ms autotuning cost
+   per plan that the per-call lifecycle incurred.
 
 ## Validation strategy
 
 1. **Build succeeds on TRUBA.** `bash deploy/build.sh` produces
    `cuda/evm_cuda/_evm_cuda.so`.
 2. **Each kernel matches the Python baseline within its tolerance.**
-   `tests/cuda/test_*.py` (30 tests).
+   `tests/cuda/test_*.py` (74 tests: 66 original + 8 batched kernel tests).
 3. **End-to-end pipelines match the Python baseline within `<0.01` RMSE** on
    synthetic clips and on `face.mp4` / `baby.mp4` (`test_pipelines.py`).
 4. **Python baseline still matches MIT.** The existing
