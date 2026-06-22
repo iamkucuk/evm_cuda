@@ -310,8 +310,8 @@ def magnify_motion_lpyr_iir(
             d_sig = DeviceBuffer.from_array(
                 np.ascontiguousarray(sig.reshape(n, lh * lw).T))
             d_out = DeviceBuffer(n * lh * lw * 4)
-            _evm_cuda.batched_iir_bandpass(d_sig.ptr, d_out.ptr, n, lh * wl, r1, r2)
-            out = d_out.download_f32(n * lh * wl).reshape(lh * lw, n).T
+            _evm_cuda.batched_iir_bandpass(d_sig.ptr, d_out.ptr, n, lh * lw, r1, r2)
+            out = d_out.download_f32(n * lh * lw).reshape(lh * lw, n).T
             chans_out.append(np.ascontiguousarray(out).reshape(n, lh, lw) * alpha_sched[l])
         filtered.append(chans_out)
 
