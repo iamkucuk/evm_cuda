@@ -90,6 +90,21 @@ def _warmup_gpu_pool():
     # mapping in its pool, so the next cudaMalloc reuses it.
     _evm_cuda.warmup_device_pool(1024 * 1024 * 1024)
 
+
+def _warmup_gpu_pool_motion(n: int, h: int, w: int, levels: int):
+    """Motion pipeline allocates larger buffers (up to ~2.5GB for baby.mp4).
+    Warm up a pool big enough to cover the largest single allocation."""
+    # Largest single alloc: band data = sum of level_sizes * n * 3 floats
+    ch, cw = h, w
+    total_per_slice = 0
+    for _ in range(levels):
+        total_per_slice += ch * cw
+        ch, cw = (ch + 1) // 2, (cw + 1) // 2
+    largest = total_per_slice * n * 3 * 4  # bytes
+    # Round up to next GB
+    nbytes = max(1024 * 1024 * 1024, ((largest + 1024*1024*1024 - 1) // (1024*1024*1024)) * (1024*1024*1024))
+    _evm_cuda.warmup_device_pool(nbytes)
+
 def _read_frames(path: str | Path) -> tuple[list[np.ndarray], float]:
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
@@ -280,7 +295,7 @@ def magnify_motion_lpyr_iir(
 
     clip_u8 = np.stack(frames, axis=0)
 
-    _warmup_gpu_pool()  # first cudaMalloc is ~1s without this; ~0s with
+    _warmup_gpu_pool_motion(n, h, w, levels)  # motion uses larger buffers
 
     # --- Stage A: batched NTSC convert (whole clip, 1 launch) --------------
     d_clip = DeviceBuffer.from_array(clip_u8)
@@ -336,19 +351,38 @@ def magnify_motion_lpyr_iir(
             chans_out.append(np.ascontiguousarray(out).reshape(n, lh, lw) * alpha_sched[l])
         filtered.append(chans_out)
 
-    # --- Stage D: per-frame recon + chromAtt + add + quantize --------------
-    binom5 = np.array(_evm_cuda.binom5(), dtype=np.float32)
+    # --- Stage D: batched recon + per-frame chromAtt + add + quantize --------
+    # Was: 873 lpyr_recon calls (291 frames x 3 channels), each doing
+    # cudaMalloc*8 + H2D + multi-level kernels + D2H + cudaFree*8.
+    # Now: pack filtered into level-major layout, one batched_lpyr_recon call.
+    # attenuate_chrom + add_and_quantize stay per-frame (291 calls each).
+    lvl_sizes = [s[0] * s[1] for s in level_sizes]
+    total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
+    bands_packed = np.empty(total_band_floats, dtype=np.float32)
+    offset = 0
+    for l in range(levels):
+        lh, lw = level_sizes[l]
+        sz = lvl_sizes[l]
+        chunk = bands_packed[offset:offset + sz * n * 3].reshape(n * 3, lh, lw)
+        offset += sz * n * 3
+        for m in range(n * 3):
+            frame, chan = divmod(m, 3)
+            chunk[m] = filtered[l][chan][frame]
+
+    d_bands = DeviceBuffer.from_array(np.ascontiguousarray(bands_packed))
+    d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
+    _evm_cuda.batched_lpyr_recon(
+        d_bands.ptr, d_delta_planar.ptr, n * 3, h, w, levels, _d_binom5(), 5)
+
+    # Download + reshape: planar (n,3,H,W) -> interleaved (n,H,W,3)
+    delta_planar = d_delta_planar.download_f32(n * 3 * h * w).reshape(n, 3, h, w)
+    delta = np.ascontiguousarray(delta_planar.transpose(0, 2, 3, 1))
+
     out = np.empty((n, h, w, 3), dtype=np.uint8)
     for i in range(n):
-        delta_chans = []
-        for c in range(3):
-            bands = [filtered[l][c][i] for l in range(levels)]
-            recon = _evm_cuda.lpyr_recon(bands, binom5)
-            delta_chans.append(recon)
-        delta = np.stack(delta_chans, axis=-1)
-        delta = _evm_cuda.attenuate_chrom(
-            np.ascontiguousarray(delta, dtype=np.float32), chrom_attenuation)
-        out[i] = _evm_cuda.add_and_quantize(ntsc[i], delta)
+        d = _evm_cuda.attenuate_chrom(
+            np.ascontiguousarray(delta[i], dtype=np.float32), chrom_attenuation)
+        out[i] = _evm_cuda.add_and_quantize(ntsc[i], d)
 
     _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0

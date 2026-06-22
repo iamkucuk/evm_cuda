@@ -776,6 +776,41 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
 
+    // --- batched lpyr_recon: multi-level band input -> M planar slices -----
+    // Mirror of batched_lpyr_build for the motion pipeline's Stage D. Reads
+    // the level-major band layout produced by Stage C and reconstructs M
+    // full-resolution delta images. band_ptrs are const (recon is read-only).
+    m.def("batched_lpyr_recon",
+        [](uintptr_t d_bands, uintptr_t d_out, int M, int H, int W, int levels,
+           uintptr_t d_filt, int filt_len) {
+            auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
+            size_t total = 0;
+            for (int l = 0; l < levels; ++l) {
+                level_sizes_vec[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_offsets[l] = total;
+                total += level_sizes_vec[l] * M;
+            }
+            float* scratch_lo = device_alloc<float>(static_cast<size_t>(H) * W);
+            float* scratch_hi = device_alloc<float>(static_cast<size_t>(H) * W);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const float* bands_base = reinterpret_cast<const float*>(d_bands);
+            float* out_base = reinterpret_cast<float*>(d_out);
+            std::vector<const float*> band_ptrs(levels);
+            for (int m = 0; m < M; ++m) {
+                for (int l = 0; l < levels; ++l)
+                    band_ptrs[l] = bands_base + level_offsets[l] + m * level_sizes_vec[l];
+                evm::lpyr_recon_device(
+                    band_ptrs.data(), sizes.data(), levels,
+                    filt, filt_len,
+                    out_base + static_cast<size_t>(m) * H * W,
+                    scratch_lo, scratch_hi, 0);
+            }
+            device_free(scratch_lo); device_free(scratch_hi);
+        }, py::arg("d_bands"), py::arg("d_out"), py::arg("M"),
+           py::arg("H"), py::arg("W"), py::arg("levels"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
     // --- batched spatial primitives: corr_dn / up_conv on device pointers ---
     m.def("batched_corr_dn_rows",
         [](uintptr_t d_in, uintptr_t d_out, int H, int W,
