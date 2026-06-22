@@ -25,3 +25,5 @@ cuda/build/
 .vscode/
 .idea/
 .DS_Store
+
+reduction.pdf
