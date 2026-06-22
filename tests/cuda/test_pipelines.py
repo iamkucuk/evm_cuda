@@ -26,6 +26,7 @@ from conftest import TOL, have_cuda, skip_no_cuda  # noqa: E402
 
 if have_cuda:
     from evm_cuda import pipelines as cu  # noqa: E402
+    from evm_cuda import batched as cu_batched  # noqa: E402
 
 DATA = ROOT / "data"
 TMP = ROOT / "output" / "_test"
@@ -132,3 +133,52 @@ def test_baby_iir_cuda_matches_python(tmp_path):
     )
     assert py.shape == cu_out.shape
     assert _rmse(py, cu_out) < TOL["end_to_end_rmse"]
+
+
+# --- optimized (batched) pipeline vs Python baseline -----------------------
+#
+# The batched pipeline (evm_cuda.batched) is the speed-optimized path. It
+# uses a different code flow (to_planar_3ch, batched_blur_dn_color, CUDA
+# bilinear upsample, device-resident NTSC) but must produce the same output
+# as the Python baseline within the end-to-end RMSE tolerance.
+
+
+@skip_no_cuda
+def test_batched_color_matches_python_synth(tmp_path):
+    """Batched color pipeline vs Python baseline on a synthetic pulse clip."""
+    src = tmp_path / "pulse.mp4"
+    _write_synth(src, _pulse_clip())
+    py = evm.magnify_color_gdown_ideal(
+        str(src), str(tmp_path / "py.mp4"),
+        alpha=30, level=2, fl=0.5, fh=1.5, chrom_attenuation=1.0)
+    batched = cu_batched.magnify_color_gdown_ideal(
+        str(src), str(tmp_path / "batched.mp4"),
+        alpha=30, level=2, fl=0.5, fh=1.5, chrom_attenuation=1.0)
+    assert py.shape == batched.shape
+    assert _rmse(py, batched) < TOL["end_to_end_rmse"]
+
+
+@skip_no_cuda
+@pytest.mark.skipif(
+    not _have("face.mp4"),
+    reason="download data/face.mp4 first (python scripts/download_samples.py face)",
+)
+def test_batched_color_matches_python_face(tmp_path):
+    """The OPTIMIZED batched color pipeline vs Python baseline on face.mp4.
+
+    This is the critical end-to-end validation for the speed-optimized path:
+    it exercises every Phase 1c-1h change (planar transpose, batched blur_dn,
+    CUDA bilinear upsample, device-resident NTSC, cudaMalloc warmup) and must
+    still match the baseline within RMSE < 0.01."""
+    py = evm.magnify_color_gdown_ideal(
+        str(DATA / "face.mp4"), str(tmp_path / "py.mp4"),
+        alpha=50, level=4, fl=50/60, fh=60/60, chrom_attenuation=1.0,
+        sampling_rate=30.0,
+    )
+    batched = cu_batched.magnify_color_gdown_ideal(
+        str(DATA / "face.mp4"), str(tmp_path / "batched.mp4"),
+        alpha=50, level=4, fl=50/60, fh=60/60, chrom_attenuation=1.0,
+        sampling_rate=30.0,
+    )
+    assert py.shape == batched.shape
+    assert _rmse(py, batched) < TOL["end_to_end_rmse"]
