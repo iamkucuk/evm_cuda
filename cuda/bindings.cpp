@@ -84,6 +84,10 @@ void launch_bilinear_upsample_3ch(const float* src, float* dst,
 void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
                              unsigned char* bgr_out, int H, int W,
                              float chrom_att, cudaStream_t stream);
+void launch_add_planar_quantize(const float* ntsc, const float* delta_planar,
+                                unsigned char* bgr_out,
+                                int n, int H, int W, float chrom_att,
+                                cudaStream_t stream);
 void launch_upsample_add_quantize(const float* ntsc, const float* filt,
                                   unsigned char* bgr_out,
                                   int M, int in_H, int in_W,
@@ -1135,6 +1139,21 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 reinterpret_cast<unsigned char*>(d_bgr), H, W, chrom_att, 0);
         }, py::arg("d_ntsc"), py::arg("d_delta"), py::arg("d_bgr"),
            py::arg("H"), py::arg("W"), py::arg("chrom_att"));
+
+    // Fused planar-delta add + quantize (motion pipeline render). Reads delta
+    // from planar (n*3,H,W) layout directly, folding the planar->interleaved
+    // transpose inline. Eliminates the intermediate interleaved buffer + one
+    // full-res kernel pass.
+    m.def("batched_add_planar_quantize",
+        [](uintptr_t d_ntsc, uintptr_t d_delta_planar, uintptr_t d_bgr,
+           int n, int H, int W, float chrom_att) {
+            evm::launch_add_planar_quantize(
+                reinterpret_cast<float*>(d_ntsc),
+                reinterpret_cast<float*>(d_delta_planar),
+                reinterpret_cast<unsigned char*>(d_bgr),
+                n, H, W, chrom_att, 0);
+        }, py::arg("d_ntsc"), py::arg("d_delta_planar"), py::arg("d_bgr"),
+           py::arg("n"), py::arg("H"), py::arg("W"), py::arg("chrom_att"));
 
     // --- batched bilinear upsample: M frames (in_H,in_W,3) -> (out_H,out_W,3) -
     // Replaces host-side cv2.resize(INTER_LINEAR) in the color pipeline render

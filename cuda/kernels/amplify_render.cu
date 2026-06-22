@@ -83,6 +83,51 @@ __global__ void add_and_quantize_kernel(
     bgr_out[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
 }
 
+// Fused add + NTSC->BGR quantize reading delta from PLANAR layout.
+//
+// The motion pipeline's lpyr_recon outputs delta in planar (n*3, H, W) layout
+// (frame-major, then channel). The existing add_and_quantize expects interleaved
+// (n, H, W, 3) delta — requiring a separate planar_to_interleaved_3ch transpose
+// pass first. This variant reads the 3 delta channels directly from planar
+// layout, folding the transpose inline and eliminating the intermediate buffer
+// + one full-res kernel pass.
+//
+// Planar delta layout: delta[(f*3 + c) * H * W + y * W + x] for frame f, chan c.
+__global__ void add_planar_quantize_kernel(
+    const float* __restrict__ ntsc,       // (n, H, W, 3) interleaved
+    const float* __restrict__ delta_planar,  // (n*3, H, W) planar
+    unsigned char* __restrict__ bgr_out,  // (n, H, W, 3)
+    int n, int H, int W, float chrom_att)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int f = blockIdx.z;  // frame index
+    if (x >= W || y >= H || f >= n) return;
+
+    const int spatial = y * W + x;          // index within one (H,W) plane
+    const int px = (f * H * W + spatial) * 3;  // interleaved ntsc/bgr index
+
+    // Read delta from planar layout: channel c is at plane (f*3 + c).
+    const float* dplane = delta_planar + static_cast<size_t>(f) * 3 * H * W;
+    float dy = dplane[0 * H * W + spatial];
+    float di = dplane[1 * H * W + spatial] * chrom_att;
+    float dq = dplane[2 * H * W + spatial] * chrom_att;
+
+    float y_ = ntsc[px + 0] + dy;
+    float i_ = ntsc[px + 1] + di;
+    float q_ = ntsc[px + 2] + dq;
+
+    float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
+    float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
+    float b = kYiqToRgb[2][0]*y_ + kYiqToRgb[2][1]*i_ + kYiqToRgb[2][2]*q_;
+    r = fminf(fmaxf(r, 0.0f), 1.0f);
+    g = fminf(fmaxf(g, 0.0f), 1.0f);
+    b = fminf(fmaxf(b, 0.0f), 1.0f);
+    bgr_out[px + 0] = static_cast<unsigned char>(rintf(b * 255.0f));
+    bgr_out[px + 1] = static_cast<unsigned char>(rintf(g * 255.0f));
+    bgr_out[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
+}
+
 // Scale the I,Q channels of a delta buffer by chromAtt (motion pipelines).
 // Y is left untouched. evm/magnify.py:_amplify_lpyr_stack.
 __global__ void attenuate_chrom_kernel(
@@ -199,6 +244,16 @@ void launch_add_and_quantize(const float* ntsc_frame, const float* delta,
     dim3 grid(div_up(W, 32), div_up(H, 32), 1);
     add_and_quantize_kernel<<<grid, block, 0, stream>>>(
         ntsc_frame, delta, bgr_out, H, W, chrom_att);
+}
+
+void launch_add_planar_quantize(const float* ntsc, const float* delta_planar,
+                                unsigned char* bgr_out,
+                                int n, int H, int W, float chrom_att,
+                                cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(W, 32), div_up(H, 32), n);
+    add_planar_quantize_kernel<<<grid, block, 0, stream>>>(
+        ntsc, delta_planar, bgr_out, n, H, W, chrom_att);
 }
 
 // Fused bilinear-upsample + add + NTSC->BGR quantize (color pipeline render).

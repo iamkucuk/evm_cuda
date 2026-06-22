@@ -356,26 +356,19 @@ def magnify_motion_lpyr_iir(
                 d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
 
     # --- Stage D: batched recon + device-resident render --------------------
-    # Was: per-frame loop (291 attenuate_chrom + 291 add_and_quantize calls)
-    # plus a 1.8GB delta D2H and ntsc D2H. Now: ntsc stays on-device from
-    # Stage A (remove its download), recon output stays on-device, attenuate
-    # and add+quantize are batched. Only the final uint8 output is downloaded.
+    # lpyr_recon output stays on-device in planar (n*3, H, W) layout. The render
+    # kernel reads delta directly from planar layout (folding the transpose
+    # inline), adds to NTSC with chromAtt, and writes uint8 BGR. No intermediate
+    # interleaved buffer, no separate transpose pass.
     d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
     _evm_cuda.batched_lpyr_recon(
         d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
 
-    # Transpose planar recon output to interleaved (H,W,3) for the render
-    # kernel. Chroma attenuation is folded INTO add_and_quantize below — one
-    # fewer full-res kernel pass over the delta buffer.
-    d_delta_interleaved = DeviceBuffer(n * h * w * 3 * 4)
-    _evm_cuda.batched_planar_to_interleaved_3ch(
-        d_delta_planar.ptr, d_delta_interleaved.ptr, n, h, w)
-
-    # Batched add+quantize with chromAtt folded in (keep d_ntsc from Stage A).
+    # Fused planar-delta add + quantize (keep d_ntsc from Stage A).
     d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr,
-        n * h, w, chrom_attenuation)
+    _evm_cuda.batched_add_planar_quantize(
+        d_ntsc.ptr, d_delta_planar.ptr, d_out_u8.ptr,
+        n, h, w, chrom_attenuation)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     _write(out_path, out, fps)

@@ -129,17 +129,14 @@ def main():
     sync()
     timings["D1) lpyr_recon (on-device)"] = t() - t0
 
-    # Stage D2: render (transpose + add+quantize with fused chromAtt + D2H)
+    # Stage D2: render (fused planar-delta add+quantize + D2H)
     t0 = t()
-    d_delta_interleaved = DeviceBuffer(n * h * w * 3 * 4)
-    _evm_cuda.batched_planar_to_interleaved_3ch(
-        d_delta_planar.ptr, d_delta_interleaved.ptr, n, h, w)
     d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_and_quantize(
-        d_ntsc.ptr, d_delta_interleaved.ptr, d_out_u8.ptr,
-        n * h, w, CHROM_ATT)
+    _evm_cuda.batched_add_planar_quantize(
+        d_ntsc.ptr, d_delta_planar.ptr, d_out_u8.ptr,
+        n, h, w, CHROM_ATT)
     out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-    timings["D2) render (transpose+att+add)"] = t() - t0
+    timings["D2) render (planar add+quant)"] = t() - t0
 
     # Report
     pipeline_keys = [k for k in timings if not k.startswith("warmup")]
