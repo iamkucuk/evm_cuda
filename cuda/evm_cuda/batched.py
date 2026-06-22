@@ -280,23 +280,44 @@ def magnify_motion_lpyr_iir(
 
     clip_u8 = np.stack(frames, axis=0)
 
+    _warmup_gpu_pool()  # first cudaMalloc is ~1s without this; ~0s with
+
     # --- Stage A: batched NTSC convert (whole clip, 1 launch) --------------
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
     _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
     ntsc = d_ntsc.download_f32(n * h * w * 3).reshape(n, h, w, 3)
 
-    # --- Stage B: per-frame pyramid build (numpy-in/out for now) ------------
-    binom5 = np.array(_evm_cuda.binom5(), dtype=np.float32)
-    pyrs = []
-    for i in range(n):
-        fp = []
-        for c in range(3):
-            bands, _ = _evm_cuda.lpyr_build(
-                np.ascontiguousarray(ntsc[i, :, :, c], dtype=np.float32),
-                levels, binom5)
-            fp.append([np.ascontiguousarray(b, dtype=np.float32) for b in bands])
-        pyrs.append(fp)
+    # --- Stage B: batched Laplacian pyramid build (whole clip on-device) ----
+    # Was: 873-call Python loop (291 frames x 3 channels), each doing
+    # cudaMalloc*8 + H2D + multi-level kernels + D2H + cudaFree*8.
+    # Now: 1 planar transpose + 1 batched C++ loop (scratch allocated once).
+    # Same pattern as color pipeline's Phase 1c (batched_blur_dn_color).
+    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+    _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+
+    lvl_sizes = [s[0] * s[1] for s in level_sizes]
+    total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
+    d_bands = DeviceBuffer(total_band_floats * 4)
+    _evm_cuda.batched_lpyr_build(
+        d_ntsc_planar.ptr, d_bands.ptr, n * 3, h, w, levels,
+        _d_binom5(), 5)
+
+    # Download + reshape into pyrs[frame][channel][level] for Stage C.
+    # Output layout is level-major: for each level, M=n*3 contiguous slices.
+    bands_flat = d_bands.download_f32(total_band_floats)
+    pyrs = [[None] * 3 for _ in range(n)]
+    offset = 0
+    for l in range(levels):
+        lh, lw = level_sizes[l]
+        sz = lvl_sizes[l]
+        chunk = bands_flat[offset:offset + sz * n * 3].reshape(n * 3, lh, lw)
+        offset += sz * n * 3
+        for m in range(n * 3):
+            frame, chan = divmod(m, 3)
+            if pyrs[frame][chan] is None:
+                pyrs[frame][chan] = [None] * levels
+            pyrs[frame][chan][l] = np.ascontiguousarray(chunk[m])
 
     # --- Stage C: temporal IIR per level per channel (batched over space) ---
     # ONE H2D + kernel + D2H per (level, channel) — 27 total vs 27 in old path,
@@ -316,6 +337,7 @@ def magnify_motion_lpyr_iir(
         filtered.append(chans_out)
 
     # --- Stage D: per-frame recon + chromAtt + add + quantize --------------
+    binom5 = np.array(_evm_cuda.binom5(), dtype=np.float32)
     out = np.empty((n, h, w, 3), dtype=np.uint8)
     for i in range(n):
         delta_chans = []

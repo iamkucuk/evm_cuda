@@ -737,6 +737,45 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("H"), py::arg("W"), py::arg("nlevs"),
            py::arg("d_filt"), py::arg("filt_len"));
 
+    // --- batched lpyr_build: M planar slices -> multi-level band output -----
+    // Direct analog of batched_blur_dn_color for the motion pipeline's Stage B.
+    // lpyr_build produces a LIST of bands (one per level), not a single output
+    // image. The output buffer is laid out level-major: for each level l, a
+    // contiguous block of M * sizes[l] floats. Python reshapes after download.
+    //
+    // Scratch (3 buffers, each H*W) is allocated ONCE and reused across all M
+    // iterations — same pattern as batched_blur_dn_color.
+    m.def("batched_lpyr_build",
+        [](uintptr_t d_in, uintptr_t d_out, int M, int H, int W, int levels,
+           uintptr_t d_filt, int filt_len) {
+            auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            // Per-level offset table into d_out (level-major layout).
+            std::vector<size_t> level_offsets(levels), level_sizes(levels);
+            size_t total = 0;
+            for (int l = 0; l < levels; ++l) {
+                level_sizes[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_offsets[l] = total;
+                total += level_sizes[l] * M;
+            }
+            float* scratch_a = device_alloc<float>(static_cast<size_t>(H) * W);
+            float* scratch_b = device_alloc<float>(static_cast<size_t>(H) * W);
+            float* scratch_c = device_alloc<float>(static_cast<size_t>(H) * W);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            float* out_base = reinterpret_cast<float*>(d_out);
+            std::vector<float*> band_ptrs(levels);  // reused across iterations
+            for (int m = 0; m < M; ++m) {
+                for (int l = 0; l < levels; ++l)
+                    band_ptrs[l] = out_base + level_offsets[l] + m * level_sizes[l];
+                evm::lpyr_build_device(
+                    reinterpret_cast<const float*>(d_in) + static_cast<size_t>(m) * H * W,
+                    H, W, band_ptrs.data(), sizes.data(), levels,
+                    filt, filt_len, scratch_a, scratch_b, scratch_c, 0);
+            }
+            device_free(scratch_a); device_free(scratch_b); device_free(scratch_c);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
+           py::arg("H"), py::arg("W"), py::arg("levels"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
     // --- batched spatial primitives: corr_dn / up_conv on device pointers ---
     m.def("batched_corr_dn_rows",
         [](uintptr_t d_in, uintptr_t d_out, int H, int W,
