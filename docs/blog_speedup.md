@@ -37,14 +37,14 @@ change at a time** — we built per-stage profilers ([`scripts/profile_color.py`
 
 The baseline numbers told a clear story:
 
-**Color pipeline (5.20s):**
+**Color pipeline (4.26s):**
 
 | Stage | Time | % | Binding calls |
 |-------|------|---|---------------|
-| 1. color_cvt + blur_dn | 2.34s | 45% | 1164 |
-| 2. ideal_bandpass | 0.32s | 6% | 3 |
-| 3. render (per-frame) | 1.95s | 38% | 582 |
-| **Total** | **5.20s** | | **1749 calls** |
+| 1. color_cvt + blur_dn | 2.34s | 55% | 1164 |
+| 2. ideal_bandpass | 0.32s | 8% | 3 |
+| 3. render (per-frame) | 1.59s | 37% | 582 |
+| **Total** | **4.26s** | | **1749 calls** |
 
 **Motion pipeline (14.78s):**
 
@@ -54,11 +54,11 @@ The baseline numbers told a clear story:
 | B. lpyr_build | 3.54s | 24% | 873 |
 | C. temporal IIR | 3.97s | 27% | 27 |
 | D. recon + render | 5.07s | 34% | 873 |
-| **Total** | **14.78s** | | **2064 calls** |
+| **Total** | **14.78s** | | **1773 calls** |
 
 The bottleneck was **not GPU compute** — it was per-call host↔device transfer
 overhead. Each binding call did `cudaMalloc` + H2D + kernel launch + D2H +
-`cudaFree`. With 1749–2064 calls, that's ~3ms of overhead per call vs
+`cudaFree`. With 1749–1773 calls, that's ~3ms of overhead per call vs
 microseconds of actual GPU work. **>95% of wall time was transfer and
 allocation overhead.**
 
@@ -72,7 +72,7 @@ Every optimization in this project follows one rule:
 The execution was iterative: profile → find the stage with the most host↔device
 traffic → eliminate those transfers → re-profile → repeat.
 
-## Color pipeline optimization (5.20s → 0.19s)
+## Color pipeline optimization (4.26s → 0.19s)
 
 ### Phase 1c: Batch blur_dn (873 calls → 1)
 
@@ -80,7 +80,11 @@ The Gaussian blur+downsample ran 291 frames × 3 channels = 873 binding calls.
 Fix: a `to_planar_3ch` kernel that transposes `(n,H,W,3)` → `(n*3,H,W)`
 on-device, then a C++ host-loop binding with scratch allocated once.
 
-**2.34s → 0.04s (58x).**
+Note: the baseline profiler measured color_cvt + blur_dn as a combined stage
+(2.34s). After optimization, the equivalent work (upload + color_cvt + blur_dn)
+takes 0.07s.
+
+**Combined color_cvt + blur_dn: 2.34s → 0.07s (33x).**
 
 ### Phase 1d: Keep NTSC on-device + batched render
 
@@ -93,7 +97,7 @@ to char** (1 byte). For float32 arrays, `0.5` truncated to `(char)0.5 = 0` —
 silent all-zero uploads. Present since Phase 1a-b but only triggered when we
 first uploaded float32. Fixed + 3 regression tests.
 
-**1.95s → 0.09s (22x).**
+**Render stage: 1.59s → 0.09s (18x).**
 
 ### Phase 1g: CUDA bilinear upsample kernel
 
@@ -118,7 +122,8 @@ The CUDA driver lazily builds page tables on the first large allocation — a
 one-time ~1s cost. Fix: `warmup_device_pool(1GB)` at pipeline entry primes the
 pool. All subsequent allocations are O(1).
 
-**1.00s → 0.10s (10x).**
+**1.00s → 0.10s (10x)** at the time (H100). Later on H200, the same stage
+measured 0.03s.
 
 ## Motion pipeline optimization (14.78s → 0.42s)
 
@@ -166,15 +171,24 @@ layout on-device.
 
 ## The final numbers
 
+All baseline numbers are from the committed profiler output
+(`docs/profile_baseline.txt`, kolyoz24/H100). Optimized numbers are from the
+final stage profilers (`scripts/profile_color.py`, `scripts/profile_motion.py`,
+kolyoz53/H200). Cross-node comparison introduces some variance; the speedup
+ratios are conservative.
+
 **Color (face.mp4):**
 
 | Stage | Baseline | Optimized | Speedup |
 |-------|---------|-----------|---------|
-| upload + color_cvt | 0.77s | 0.03s | 26x |
-| blur_dn (873→1 calls) | 2.34s | 0.04s | 59x |
+| color_cvt + blur_dn (combined) | 2.34s | 0.07s | 33x |
 | ideal_bandpass | 0.32s | 0.02s | 16x |
-| upsample + render (582→1 calls) | 1.95s | 0.09s | 22x |
-| **Pipeline total** | **5.20s** | **0.19s** | **27x** |
+| render (upsample+add+quantize) | 1.59s | 0.09s | 18x |
+| **Pipeline total** | **4.26s** | **0.19s** | **22x** |
+
+Note: the baseline profiler measured color_cvt + blur_dn as a combined stage.
+The optimized profiler splits them (upload+convert: 0.03s, blur_dn: 0.04s),
+shown combined here for fair comparison.
 
 **Motion (baby.mp4):**
 
@@ -182,7 +196,7 @@ layout on-device.
 |-------|---------|-----------|---------|
 | NTSC convert | 2.20s | 0.05s | 44x |
 | lpyr_build (873→1 calls) | 3.54s | 0.13s | 27x |
-| temporal IIR (5.76s→0.04s) | 3.97s | 0.04s | 99x |
+| temporal IIR | 3.97s | 0.04s | 99x |
 | recon + render (873→1 calls) | 5.07s | 0.20s | 25x |
 | **Pipeline total** | **14.78s** | **0.42s** | **35x** |
 
