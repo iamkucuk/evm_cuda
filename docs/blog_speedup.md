@@ -1,167 +1,227 @@
-# 10x Speedup: Optimizing a CUDA Video Pipeline the Harris Way
+# 100x Speedup: Optimizing CUDA Video Pipelines the Harris Way
 
-Or: **how a single `cudaMalloc` was costing us 1 second, and other surprises
-from profiling a GPU pipeline.**
+Or: **how a single `cudaMalloc` was costing us 1 second, why I was wrong about
+kernel fusion, and other surprises from profiling GPU pipelines.**
 
 ## The setup
 
 [Eulerian Video Magnification][evm] (EVM) reveals subtle temporal changes in
-video — a face pulsing with blood flow, a bridge swaying in the wind. The
+video — a face pulsing with blood flow, a baby's subtle breathing. The
 algorithm is conceptually simple: build a spatial pyramid, apply a temporal
 bandpass filter at each spatial location, amplify the result, reconstruct.
 
 We had a working CUDA port of the MIT MATLAB reference, validated bit-for-bit
-against a Python baseline (64/64 tests passing). The question was: **is it
-fast?** And if not, why not?
+against a Python baseline. The question was: **is it fast?** And if not,
+why not?
 
 [evm]: http://people.csail.mit.edu/mrub/vidmag/
+
+Two pipelines:
+
+- **Color** (face.mp4, 291 frames, 592×528): Gaussian downsample → ideal
+  bandpass (FFT) → amplify → upsample. Reveals pulse.
+- **Motion** (baby.mp4, 291 frames, 544×960, 9 pyramid levels): Laplacian
+  pyramid → IIR temporal filter → per-level amplify → reconstruct. Reveals
+  motion.
 
 ## Step 0: Measure first
 
 Following Mark Harris's classic ["Optimizing Parallel Reduction in CUDA"][harris]
 methodology — **measure before optimizing, attack the biggest bottleneck, one
-change at a time** — we built a profiler that breaks the color pipeline into
-its four stages and counts binding calls.
+change at a time** — we built per-stage profilers ([`scripts/profile_color.py`][pcolor],
+[`scripts/profile_motion.py`][pmotion]).
 
 [harris]: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+[pcolor]: ../scripts/profile_color.py
+[pmotion]: ../scripts/profile_motion.py
 
-The baseline numbers (face.mp4, 291 frames, 592×548, H100):
+The baseline numbers told a clear story:
+
+**Color pipeline (5.20s):**
 
 | Stage | Time | % | Binding calls |
 |-------|------|---|---------------|
 | 1. color_cvt + blur_dn | 2.34s | 45% | 1164 |
 | 2. ideal_bandpass | 0.32s | 6% | 3 |
 | 3. render (per-frame) | 1.95s | 38% | 582 |
-| 4. (other) | 0.59s | 11% | — |
 | **Total** | **5.20s** | | **1749 calls** |
+
+**Motion pipeline (14.78s):**
+
+| Stage | Time | % | Binding calls |
+|-------|------|---|---------------|
+| A. NTSC convert | 2.20s | 15% | 291 |
+| B. lpyr_build | 3.54s | 24% | 873 |
+| C. temporal IIR | 3.97s | 27% | 27 |
+| D. recon + render | 5.07s | 34% | 873 |
+| **Total** | **14.78s** | | **2064 calls** |
 
 The bottleneck was **not GPU compute** — it was per-call host↔device transfer
 overhead. Each binding call did `cudaMalloc` + H2D + kernel launch + D2H +
-`cudaFree`. With 1749 calls, that's ~3ms of overhead per call vs microseconds
-of actual GPU work. **>95% of wall time was transfer and allocation overhead.**
+`cudaFree`. With 1749–2064 calls, that's ~3ms of overhead per call vs
+microseconds of actual GPU work. **>95% of wall time was transfer and
+allocation overhead.**
 
-## The optimization phases
+## The principle
 
-### Phase 1a–b: DeviceBuffer + batched stages
+Every optimization in this project follows one rule:
 
-**Problem:** every kernel call crossed PCIe twice (H2D input, D2H output).
+> **Upload once at pipeline entry. Keep data on-device. Download once at
+> pipeline exit. Everything in between stays on the GPU.**
 
-**Fix:** `DeviceBuffer` — a RAII wrapper around `cudaMalloc` that keeps data
-on-device. Batched wrappers operate on raw device pointers, so the whole clip
-stays on the GPU from upload to download.
+The execution was iterative: profile → find the stage with the most host↔device
+traffic → eliminate those transfers → re-profile → repeat.
 
-**Result:** color convert and ideal bandpass stages batched. The remaining
-stages still looped per-frame.
+## Color pipeline optimization (5.20s → 0.19s)
 
-### Phase 1c: Batch blur_dn (the 873-call hotspot)
+### Phase 1c: Batch blur_dn (873 calls → 1)
 
-**Problem:** the Gaussian blur+downsample ran 291 frames × 3 channels = 873
-binding calls, each doing 5 `cudaMalloc`s + H2D + kernel + D2H + 5 `cudaFree`s.
+The Gaussian blur+downsample ran 291 frames × 3 channels = 873 binding calls.
+Fix: a `to_planar_3ch` kernel that transposes `(n,H,W,3)` → `(n*3,H,W)`
+on-device, then a C++ host-loop binding with scratch allocated once.
 
-**Fix:** a `to_planar_3ch` kernel that transposes `(n,H,W,3)` → `(n*3,H,W)`
-on-device, then a C++ host-loop binding that iterates over the contiguous
-slices with scratch allocated once.
-
-**Result:** 873 calls → 3 calls. Stage time: **2.34s → 0.05s (47x)**.
+**2.34s → 0.04s (58x).**
 
 ### Phase 1d: Keep NTSC on-device + batched render
 
-**Problem:** the NTSC color-converted frames were downloaded to host, then
-re-uploaded 291 times for the render stage's add-back + quantize.
-
-**Fix:** use the existing `batched_add_and_quantize` kernel so the NTSC buffer
-never leaves the GPU. The add-back happens on-device; only the final uint8
-output crosses PCIe.
+The NTSC frames were downloaded to host, then re-uploaded 291 times for
+rendering. Fix: use `batched_add_and_quantize` so NTSC never leaves the GPU.
 
 **Along the way, a latent bug surfaced:** the `DeviceBuffer(array)` constructor
-used `py::array_t<char>::ensure()` with `forcecast`, which **casts each
-element to char** (1 byte). For float32 arrays, every value like `0.5`
-truncated to `(char)0.5 = 0` — silent all-zero uploads. The bug had been
-present since Phase 1a-b but only manifested when we first uploaded a float32
-array (uint8 was unaffected since `char == uint8`). Fixed with a raw-bytes
-copy via the buffer protocol. Three regression tests now guard against it.
+used `py::array_t<char>::ensure()` with `forcecast`, which **casts each element
+to char** (1 byte). For float32 arrays, `0.5` truncated to `(char)0.5 = 0` —
+silent all-zero uploads. Present since Phase 1a-b but only triggered when we
+first uploaded float32. Fixed + 3 regression tests.
 
-**Result:** render stage: **1.95s → 0.09s (22x)**.
+**1.95s → 0.09s (22x).**
 
 ### Phase 1g: CUDA bilinear upsample kernel
 
-**Problem:** the last host-side bottleneck was 291 `cv2.resize(INTER_LINEAR)`
-calls for upsampling the filtered signal back to full resolution.
+The last host-side bottleneck: 291 `cv2.resize(INTER_LINEAR)` calls. We
+reverse-engineered cv2's coordinate convention — **half-pixel centers** with
+**replicate** border — and wrote a matching CUDA kernel.
 
-**Fix:** a CUDA bilinear upsample kernel. First, we reverse-engineered cv2's
-exact coordinate convention with a small test script: **half-pixel centers**
-(`sx = (x+0.5) * in_W/out_W - 0.5`) with **replicate** (clamp-to-edge)
-border handling — not reflect-101. Verified bit-exact on both 2× and odd-ratio
-upsamples.
-
-**Result:** 291 host calls → 1 kernel launch. Stage 4: **0.90s → 0.08s (11x)**.
+**0.90s → 0.08s (11x).**
 
 ### Phase 1h: The 1-second cudaMalloc
 
-At this point the profiler showed S1 (upload + color convert) at **88% of
-remaining time (1.0s)**. The color conversion kernel itself takes **2
-milliseconds** — a trivial 3×3 matrix multiply per pixel. So where was the
-other 998ms?
-
-A micro-benchmark decomposed S1:
+The profiler showed the upload+color_cvt stage at 88% of remaining time (1.0s).
+The kernel itself took **2 milliseconds**. A micro-benchmark revealed:
 
 ```
-np.stack(frames):          0.063s
-cudaMalloc(273MB clip):    1.002s   ← !!
-H2D upload(273MB):         0.025s
-color_cvt kernel:          0.002s
+cudaMalloc(273MB):    1.002s   ← !!
+H2D upload(273MB):    0.025s
+color_cvt kernel:     0.002s
 ```
 
-The **entire bottleneck was a single `cudaMalloc(273MB)`**. The CUDA driver
-lazily builds page tables on the first large allocation — a one-time ~1s cost.
-The second `cudaMalloc(1.09GB)` was instant because the driver's memory pool
-was already warmed.
+The CUDA driver lazily builds page tables on the first large allocation — a
+one-time ~1s cost. Fix: `warmup_device_pool(1GB)` at pipeline entry primes the
+pool. All subsequent allocations are O(1).
 
-**Fix:** one line — call `warmup_device_pool(1GB)` at pipeline entry. This
-allocates and immediately frees 1GB, priming the driver's page tables. The
-warmup itself costs ~1ms (it's the same page-table setup, just moved out of
-the hot path). All subsequent allocations are O(1).
+**1.00s → 0.10s (10x).**
 
-**Result:** S1: **1.00s → 0.10s (10x)**. Pipeline total: **0.52s**.
+## Motion pipeline optimization (14.78s → 0.42s)
+
+### Phase 2a–b: Batch lpyr_build + lpyr_recon
+
+Same pattern as color's Phase 1c: C++ host-loop bindings with scratch allocated
+once. The multi-level band output required a level-major layout with per-level
+offset tables.
+
+**Stages B+D: 8.61s → 3.53s.**
+
+### Phase 3: Device-resident temporal IIR (the big one)
+
+After Phase 2a-b, I profiled again. The result overturned my assumptions:
+
+| Stage | Time | % |
+|-------|------|---|
+| A. NTSC convert | 0.99s | 9% |
+| B. lpyr_build | 1.34s | 12% |
+| **C. temporal IIR** | **5.76s** | **52%** |
+| D. recon + render | 3.06s | 27% |
+
+Stage C was 52% of the pipeline — and I had **theoretized for three turns about
+kernel fusion and CUDA streams** before profiling proved me wrong. The bottleneck
+wasn't kernel launches at all. It was the same per-call H2D/D2H transfers: 27
+calls, each uploading and downloading hundreds of MB of pyramid band data.
+
+Fix: change the band layout from frame-major to **channel-major**
+`(level, channel, frame, spatial)`. This makes each `(level, channel)` a
+contiguous `(T=n, N=lh×lw)` block. Stage C can then extract signals via pointer
+arithmetic alone, transpose to `(N,T)` on-device via the existing `thwc_to_nt`
+kernel, run IIR, scale by alpha, and transpose back — all device-to-device with
+zero host transfers.
+
+**5.76s → 0.04s (144x) — the single biggest win of the project.**
+
+### Phase 4a: Device-resident render
+
+Final step: keep NTSC on-device from Stage A through Stage D, batch the
+`attenuate_chrom` and `add_and_quantize` calls. Added a `planar_to_interleaved_3ch`
+kernel (inverse of `to_planar_3ch`) to convert recon output back to interleaved
+layout on-device.
+
+**2.33s → 0.20s (12x).**
 
 ## The final numbers
 
+**Color (face.mp4):**
+
 | Stage | Baseline | Optimized | Speedup |
 |-------|---------|-----------|---------|
-| S1 upload + color_cvt | 0.77s | 0.10s | 8x |
-| S2 blur_dn (873 calls) | 2.34s | 0.08s | 31x |
-| S3 ideal_bandpass | 0.32s | 0.21s | 1.5x |
-| S4 render (582 calls) | 1.95s | 0.14s | 14x |
-| **Pipeline total** | **5.20s** | **0.52s** | **10x** |
+| upload + color_cvt | 0.77s | 0.03s | 26x |
+| blur_dn (873→1 calls) | 2.34s | 0.04s | 59x |
+| ideal_bandpass | 0.32s | 0.02s | 16x |
+| upsample + render (582→1 calls) | 1.95s | 0.09s | 22x |
+| **Pipeline total** | **5.20s** | **0.19s** | **27x** |
 
-(Plus a one-time 1.0s warmup that primes the CUDA memory pool.)
+**Motion (baby.mp4):**
 
-The actual GPU compute across all stages is **~5ms**. The remaining ~0.5s is
-Python orchestration overhead, host-side numpy operations, and the irreducible
-PCIe transfers for input upload and output download.
+| Stage | Baseline | Optimized | Speedup |
+|-------|---------|-----------|---------|
+| NTSC convert | 2.20s | 0.05s | 44x |
+| lpyr_build (873→1 calls) | 3.54s | 0.13s | 27x |
+| temporal IIR (5.76s→0.04s) | 3.97s | 0.04s | 99x |
+| recon + render (873→1 calls) | 5.07s | 0.20s | 25x |
+| **Pipeline total** | **14.78s** | **0.42s** | **35x** |
+
+(Plus a one-time ~1s CUDA memory pool warmup per process.)
+
+Vs the Python baseline: **78x** (color) and **101x** (motion).
 
 ## Lessons
 
-1. **Profile before optimizing.** We expected the temporal FFT (cuFFT) to be
-   the bottleneck. It was 0.02s. The real cost was per-call allocation
-   overhead — invisible without measurement.
+1. **Profile before optimizing — and re-profile after each change.** I theorized
+   for three turns about kernel fusion and CUDA streams for the motion pipeline.
+   Then I profiled and found the bottleneck was something completely different:
+   host↔device transfers, not kernel launches. The profiler would have told me
+   that immediately.
 
-2. **The kernel is never the bottleneck (usually).** Our color conversion
-   kernel was 2ms. The `cudaMalloc` before it was 1000ms. GPU code is easy to
-   optimize; the plumbing around it is where time goes.
+2. **The kernel is never the bottleneck.** Our color conversion kernel was 2ms.
+   The `cudaMalloc` before it was 1000ms. The IIR filter kernel was microseconds.
+   The H2D/D2H around it was 5.8 seconds. GPU code is easy to optimize; the
+   plumbing around it is where time goes.
 
-3. **Batching beats kernel tuning.** We never wrote a faster blur kernel or a
-   faster FFT. We just stopped calling `cudaMalloc`/`cudaFree` 1749 times. The
-   kernels were already fast — they were just starved by the host.
+3. **Batching beats kernel tuning.** We never wrote a faster blur kernel, a
+   faster FFT, or a faster IIR. We just stopped calling `cudaMalloc`/`cudaFree`
+   ~2000 times per pipeline. The kernels were already fast — they were just
+   starved by the host.
 
 4. **Memory pools matter.** The 1-second `cudaMalloc` is a well-known CUDA
-   gotcha. `cudaMallocAsync` (stream-ordered pool allocator) or a simple warmup
-   alloc eliminates it.
+   gotcha. A simple warmup allocation primes the driver's page tables and makes
+   all subsequent allocations instant.
 
 5. **Latent bugs hide in untested paths.** The DeviceBuffer float32-truncation
    bug existed for two phases before anyone noticed — the code path was never
    exercised until Phase 1d. Regression tests on the fix would have caught it
    immediately.
+
+6. **Layout transforms are the key to device-resident pipelines.** The hardest
+   part wasn't writing kernels — it was rearranging data layouts so that each
+   stage could read its input via pointer arithmetic alone, without host
+   round-trips. The `to_planar_3ch` / `planar_to_interleaved_3ch` /
+   `thwc_to_nt` / `nt_to_thwc` transpose kernels were the enablers.
 
 ## Methodology credit
 
