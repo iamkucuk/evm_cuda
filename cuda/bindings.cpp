@@ -72,6 +72,7 @@ void launch_apply_channel_gain(float* sig, int H, int W,
                                cudaStream_t stream);
 void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,
                             cudaStream_t stream);
+void launch_scale_inplace(float* data, int n, float scale, cudaStream_t stream);
 void launch_bilinear_upsample_3ch(const float* src, float* dst,
                                   int M, int in_H, int in_W,
                                   int out_H, int out_W, cudaStream_t stream);
@@ -746,33 +747,41 @@ PYBIND11_MODULE(_evm_cuda, m) {
     // Scratch (3 buffers, each H*W) is allocated ONCE and reused across all M
     // iterations — same pattern as batched_blur_dn_color.
     m.def("batched_lpyr_build",
-        [](uintptr_t d_in, uintptr_t d_out, int M, int H, int W, int levels,
+        [](uintptr_t d_in, uintptr_t d_out, int n_frames, int H, int W, int levels,
            uintptr_t d_filt, int filt_len) {
+            int M = n_frames * 3;  // n frames × 3 channels
             auto sizes = evm::lpyr_level_sizes(H, W, levels);
-            // Per-level offset table into d_out (level-major layout).
-            std::vector<size_t> level_offsets(levels), level_sizes(levels);
+            // Per-level offset table into d_out (level-major, channel-major layout).
+            // Within each level: [chan0_frame0, chan0_frame1, ..., chan1_frame0, ...]
+            // This makes each (level, channel) a contiguous (T=n, N=lh*lw) block
+            // so Stage C can extract signals via pointer arithmetic alone.
+            std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
             size_t total = 0;
             for (int l = 0; l < levels; ++l) {
-                level_sizes[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_sizes_vec[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
                 level_offsets[l] = total;
-                total += level_sizes[l] * M;
+                total += level_sizes_vec[l] * M;
             }
             float* scratch_a = device_alloc<float>(static_cast<size_t>(H) * W);
             float* scratch_b = device_alloc<float>(static_cast<size_t>(H) * W);
             float* scratch_c = device_alloc<float>(static_cast<size_t>(H) * W);
             const float* filt = reinterpret_cast<const float*>(d_filt);
             float* out_base = reinterpret_cast<float*>(d_out);
+            const float* in_base = reinterpret_cast<const float*>(d_in);
             std::vector<float*> band_ptrs(levels);  // reused across iterations
             for (int m = 0; m < M; ++m) {
+                int frame = m / 3, chan = m % 3;
+                // Channel-major offset: chan*n_frames+frame (vs old: m)
+                size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
                 for (int l = 0; l < levels; ++l)
-                    band_ptrs[l] = out_base + level_offsets[l] + m * level_sizes[l];
+                    band_ptrs[l] = out_base + level_offsets[l] + slice_off * level_sizes_vec[l];
                 evm::lpyr_build_device(
-                    reinterpret_cast<const float*>(d_in) + static_cast<size_t>(m) * H * W,
+                    in_base + static_cast<size_t>(m) * H * W,
                     H, W, band_ptrs.data(), sizes.data(), levels,
                     filt, filt_len, scratch_a, scratch_b, scratch_c, 0);
             }
             device_free(scratch_a); device_free(scratch_b); device_free(scratch_c);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("n_frames"),
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
 
@@ -781,8 +790,9 @@ PYBIND11_MODULE(_evm_cuda, m) {
     // the level-major band layout produced by Stage C and reconstructs M
     // full-resolution delta images. band_ptrs are const (recon is read-only).
     m.def("batched_lpyr_recon",
-        [](uintptr_t d_bands, uintptr_t d_out, int M, int H, int W, int levels,
+        [](uintptr_t d_bands, uintptr_t d_out, int n_frames, int H, int W, int levels,
            uintptr_t d_filt, int filt_len) {
+            int M = n_frames * 3;
             auto sizes = evm::lpyr_level_sizes(H, W, levels);
             std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
             size_t total = 0;
@@ -798,8 +808,10 @@ PYBIND11_MODULE(_evm_cuda, m) {
             float* out_base = reinterpret_cast<float*>(d_out);
             std::vector<const float*> band_ptrs(levels);
             for (int m = 0; m < M; ++m) {
+                int frame = m / 3, chan = m % 3;
+                size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
                 for (int l = 0; l < levels; ++l)
-                    band_ptrs[l] = bands_base + level_offsets[l] + m * level_sizes_vec[l];
+                    band_ptrs[l] = bands_base + level_offsets[l] + slice_off * level_sizes_vec[l];
                 evm::lpyr_recon_device(
                     band_ptrs.data(), sizes.data(), levels,
                     filt, filt_len,
@@ -807,11 +819,29 @@ PYBIND11_MODULE(_evm_cuda, m) {
                     scratch_lo, scratch_hi, 0);
             }
             device_free(scratch_lo); device_free(scratch_hi);
-        }, py::arg("d_bands"), py::arg("d_out"), py::arg("M"),
+        }, py::arg("d_bands"), py::arg("d_out"), py::arg("n_frames"),
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
 
     // --- batched spatial primitives: corr_dn / up_conv on device pointers ---
+
+    // Transpose (T,N) <-> (N,T) on device pointers. Used by the motion
+    // pipeline's device-resident Stage C to rearrange pyramid band data for
+    // the temporal IIR filter. Takes raw uintptr_t so the caller can offset.
+    m.def("batched_thwc_to_nt",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int N) {
+            evm::launch_thwc_to_nt(
+                reinterpret_cast<const float*>(d_in),
+                reinterpret_cast<float*>(d_out), T, N, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"));
+
+    m.def("batched_nt_to_thwc",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int N) {
+            evm::launch_nt_to_thwc(
+                reinterpret_cast<const float*>(d_in),
+                reinterpret_cast<float*>(d_out), T, N, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"));
+
     m.def("batched_corr_dn_rows",
         [](uintptr_t d_in, uintptr_t d_out, int H, int W,
            uintptr_t d_filt, int filt_len) {
@@ -883,6 +913,12 @@ PYBIND11_MODULE(_evm_cuda, m) {
             evm::launch_attenuate_chrom(
                 reinterpret_cast<float*>(d_delta), H, W, chrom_att, 0);
         }, py::arg("d_delta"), py::arg("H"), py::arg("W"), py::arg("chrom_att"));
+
+    m.def("batched_scale_inplace",
+        [](uintptr_t d_data, int n, float scale) {
+            evm::launch_scale_inplace(
+                reinterpret_cast<float*>(d_data), n, scale, 0);
+        }, py::arg("d_data"), py::arg("n"), py::arg("scale"));
 
     m.def("batched_add_and_quantize",
         [](uintptr_t d_ntsc, uintptr_t d_delta, uintptr_t d_bgr, int H, int W) {

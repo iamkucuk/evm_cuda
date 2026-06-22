@@ -52,6 +52,10 @@ class DeviceBuffer:
     def ptr(self) -> int:
         return self._buf.ptr
 
+    def ptr_at(self, float_offset: int) -> int:
+        """Device pointer offset by float_offset elements (byte-safe)."""
+        return self._buf.ptr + float_offset * 4
+
     @property
     def nbytes(self) -> int:
         return self._buf.nbytes
@@ -304,10 +308,10 @@ def magnify_motion_lpyr_iir(
     ntsc = d_ntsc.download_f32(n * h * w * 3).reshape(n, h, w, 3)
 
     # --- Stage B: batched Laplacian pyramid build (whole clip on-device) ----
-    # Was: 873-call Python loop (291 frames x 3 channels), each doing
-    # cudaMalloc*8 + H2D + multi-level kernels + D2H + cudaFree*8.
-    # Now: 1 planar transpose + 1 batched C++ loop (scratch allocated once).
-    # Same pattern as color pipeline's Phase 1c (batched_blur_dn_color).
+    # Bands stay on-device through Stage C (IIR) and Stage D (recon). The ONLY
+    # host<->device transfers in Stages B-D are the alpha upload and the final
+    # delta download. The channel-major output layout makes each (level,
+    # channel) a contiguous (T=n, N=lh*lw) block for the temporal filter.
     d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
     _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
 
@@ -315,64 +319,46 @@ def magnify_motion_lpyr_iir(
     total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
     d_bands = DeviceBuffer(total_band_floats * 4)
     _evm_cuda.batched_lpyr_build(
-        d_ntsc_planar.ptr, d_bands.ptr, n * 3, h, w, levels,
+        d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
         _d_binom5(), 5)
 
-    # Download + reshape into pyrs[frame][channel][level] for Stage C.
-    # Output layout is level-major: for each level, M=n*3 contiguous slices.
-    bands_flat = d_bands.download_f32(total_band_floats)
-    pyrs = [[None] * 3 for _ in range(n)]
+    # Per-level offset table (must match the C++ binding's layout).
+    level_offsets = []
     offset = 0
-    for l in range(levels):
-        lh, lw = level_sizes[l]
-        sz = lvl_sizes[l]
-        chunk = bands_flat[offset:offset + sz * n * 3].reshape(n * 3, lh, lw)
+    for sz in lvl_sizes:
+        level_offsets.append(offset)
         offset += sz * n * 3
-        for m in range(n * 3):
-            frame, chan = divmod(m, 3)
-            if pyrs[frame][chan] is None:
-                pyrs[frame][chan] = [None] * levels
-            pyrs[frame][chan][l] = np.ascontiguousarray(chunk[m])
 
-    # --- Stage C: temporal IIR per level per channel (batched over space) ---
-    # ONE H2D + kernel + D2H per (level, channel) — 27 total vs 27 in old path,
-    # but each is a single batched call instead of per-pixel round-trips.
-    filtered = []
+    # --- Stage C: temporal IIR (fully on-device, no host round-trip) ---------
+    # Was: 27 H2D+kernel+D2H cycles (~5.8s, 52% of pipeline).
+    # Now: per (level, channel), the n frames are a contiguous (T,N) block in
+    # d_bands. Transpose to (N,T) on-device, run IIR, scale by alpha, transpose
+    # back. All device-to-device — zero host transfers.
+    d_filtered = DeviceBuffer(total_band_floats * 4)
     for l in range(levels):
-        lh, lw = level_sizes[l]
-        chans_out = []
+        sz = lvl_sizes[l]
         for c in range(3):
-            sig = np.stack([pyrs[i][c][l] for i in range(n)], axis=0)
-            d_sig = DeviceBuffer.from_array(
-                np.ascontiguousarray(sig.reshape(n, lh * lw).T))
-            d_out = DeviceBuffer(n * lh * lw * 4)
-            _evm_cuda.batched_iir_bandpass(d_sig.ptr, d_out.ptr, n, lh * lw, r1, r2)
-            out = d_out.download_f32(n * lh * lw).reshape(lh * lw, n).T
-            chans_out.append(np.ascontiguousarray(out).reshape(n, lh, lw) * alpha_sched[l])
-        filtered.append(chans_out)
+            # Source: channel c's n frames at this level (T=n, N=sz), contiguous
+            sig_off = level_offsets[l] + c * n * sz
+            # Temp buffers for transpose (N,T) <-> (T,N)
+            d_nt = DeviceBuffer(n * sz * 4)
+            _evm_cuda.batched_thwc_to_nt(
+                d_bands.ptr_at(sig_off), d_nt.ptr, n, sz)
+            # IIR on (N,T)
+            d_filt_nt = DeviceBuffer(n * sz * 4)
+            _evm_cuda.batched_iir_bandpass(
+                d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
+            # Scale by alpha_sched[l]
+            _evm_cuda.batched_scale_inplace(d_filt_nt.ptr, n * sz, alpha_sched[l])
+            # Transpose back (N,T) -> (T,N) into d_filtered
+            dst_off = level_offsets[l] + c * n * sz
+            _evm_cuda.batched_nt_to_thwc(
+                d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz)
 
     # --- Stage D: batched recon + per-frame chromAtt + add + quantize --------
-    # Was: 873 lpyr_recon calls (291 frames x 3 channels), each doing
-    # cudaMalloc*8 + H2D + multi-level kernels + D2H + cudaFree*8.
-    # Now: pack filtered into level-major layout, one batched_lpyr_recon call.
-    # attenuate_chrom + add_and_quantize stay per-frame (291 calls each).
-    lvl_sizes = [s[0] * s[1] for s in level_sizes]
-    total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
-    bands_packed = np.empty(total_band_floats, dtype=np.float32)
-    offset = 0
-    for l in range(levels):
-        lh, lw = level_sizes[l]
-        sz = lvl_sizes[l]
-        chunk = bands_packed[offset:offset + sz * n * 3].reshape(n * 3, lh, lw)
-        offset += sz * n * 3
-        for m in range(n * 3):
-            frame, chan = divmod(m, 3)
-            chunk[m] = filtered[l][chan][frame]
-
-    d_bands = DeviceBuffer.from_array(np.ascontiguousarray(bands_packed))
     d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
     _evm_cuda.batched_lpyr_recon(
-        d_bands.ptr, d_delta_planar.ptr, n * 3, h, w, levels, _d_binom5(), 5)
+        d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
 
     # Download + reshape: planar (n,3,H,W) -> interleaved (n,H,W,3)
     delta_planar = d_delta_planar.download_f32(n * 3 * h * w).reshape(n, 3, h, w)

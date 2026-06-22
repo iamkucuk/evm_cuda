@@ -103,6 +103,20 @@ void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,
     attenuate_chrom_kernel<<<grid, block, 0, stream>>>(delta, H, W, chrom_att);
 }
 
+// Scale a flat float32 array by a scalar. Used to apply per-level alpha
+// amplification to IIR-filtered pyramid bands on-device.
+__global__ void scale_inplace_kernel(float* __restrict__ data, int n, float scale) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    data[idx] *= scale;
+}
+
+void launch_scale_inplace(float* data, int n, float scale, cudaStream_t stream) {
+    const int block = 256;
+    const int grid = div_up(n, block);
+    scale_inplace_kernel<<<grid, block, 0, stream>>>(data, n, scale);
+}
+
 // Bilinear upsample of a stack of M frames, each (in_H, in_W, 3), to
 // (out_H, out_W, 3). Replaces host-side cv2.resize(INTER_LINEAR) in the
 // color pipeline's render stage.
