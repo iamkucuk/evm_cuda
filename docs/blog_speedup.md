@@ -310,12 +310,28 @@ the real end-to-end speedup is somewhat less.)
 
 ### Where the time goes now
 
-The render stage dominates both pipelines (83% color, 56% motion). It is
-**memory-bandwidth bound**: reading the full-res NTSC frame (1.8GB for motion)
-+ writing 455MB uint8 output. Every other stage has been optimized to
-near-zero.
+The GPU pipeline is now extremely fast (0.08s color, 0.19s motion). But the
+**full end-to-end pipeline call** — including video decode and encode — tells
+a different story:
 
-The remaining optimization opportunities (documented in
+| Component | Color (face.mp4) | Motion (baby.mp4) |
+|---|---|---|
+| GPU pipeline (steady-state, profiled) | 0.08s | 0.19s |
+| Full pipeline call (incl. decode + encode) | 2.79s | 2.71s |
+| **Implied decode + encode overhead** | **~2.7s** | **~2.5s** |
+
+The cv2.VideoWriter encode (mp4v codec, CPU-side) is roughly **10× slower
+than the entire GPU pipeline**. We optimized the GPU to the point where the
+video codec — which we didn't touch at all — is now the dominant cost by an
+order of magnitude. NVENC (GPU hardware encode) is the clear next target for
+end-to-end throughput.
+
+Within the GPU pipeline itself, the render stage dominates (81% color, 57%
+motion). It is **memory-bandwidth bound**: reading the full-res NTSC frame
+(1.8GB for motion) + writing 455MB uint8 output. Every other stage has been
+optimized to near-zero.
+
+The remaining GPU optimization opportunities (documented in
 [`HANDOFF.md`](../HANDOFF.md)) are all about reducing that bandwidth:
 FP16 NTSC storage (halves the read), texture memory for cached reads, or
 eliminating the NTSC intermediate entirely (BGR→NTSC inline in the render
@@ -357,6 +373,13 @@ kernel).
    hardest part wasn't writing kernels — it was rearranging data layouts so
    that each stage could read its input via pointer arithmetic alone. The
    `to_planar_3ch` / `thwc_to_nt` / scatter/gather kernels were the enablers.
+
+7. **The thing you didn't optimize becomes the bottleneck.** We spent two
+   phases optimizing the GPU pipeline (0.08s color, 0.19s motion). Then we
+   measured the full end-to-end call: 2.7s. The video codec — cv2.VideoWriter
+   with mp4v on the CPU — is 10× slower than the entire GPU pipeline. We never
+   touched it because it wasn't the bottleneck. Now it is. The lesson: always
+   measure the full end-to-end path, not just the part you're optimizing.
 
 ## Methodology credit
 
