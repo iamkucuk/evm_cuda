@@ -1,7 +1,8 @@
-# 100x Speedup: Optimizing CUDA Video Pipelines the Harris Way
+# Profiler Was Lying: Optimizing CUDA Video Pipelines the Harris Way
 
-Or: **how a single `cudaMalloc` was costing us 1 second, why I was wrong about
-kernel fusion, and other surprises from profiling GPU pipelines.**
+Or: **how the profiler itself became the biggest bug, why kernel fusion
+didn't help, and what actually moves the needle after the transfers are
+already gone.**
 
 ## The setup
 
@@ -18,20 +19,41 @@ why not?
 
 Two pipelines:
 
-- **Color** (face.mp4, 291 frames, 592×528): Gaussian downsample → ideal
+- **Color** (face.mp4, 291 frames, 528×592): Gaussian downsample → ideal
   bandpass (FFT) → amplify → upsample. Reveals pulse.
-- **Motion** (baby.mp4, 291 frames, 544×960, 9 pyramid levels): Laplacian
+- **Motion** (baby.mp4, 291 frames, 960×544, 9 pyramid levels): Laplacian
   pyramid → IIR temporal filter → per-level amplify → reconstruct. Reveals
   motion.
 
-## Step 0: Measure first
+This post covers two optimization phases:
 
-Following Mark Harris's classic ["Optimizing Parallel Reduction in CUDA"][harris]
-methodology — **measure before optimizing, attack the biggest bottleneck, one
-change at a time** — we built per-stage profilers ([`scripts/profile_color.py`][pcolor],
-[`scripts/profile_motion.py`][pmotion]).
+- **Phase 1–4:** Eliminate per-call host↔device transfers (the classic
+  "keep data on the GPU" story).
+- **Phase 5:** Eliminate kernel launch overhead + cuFFT plan creation
+  (the less obvious story of batched spatial kernels and profiler bugs).
+
+## The principle
+
+Every optimization in this project follows one rule:
+
+> **Upload once at pipeline entry. Keep data on-device. Download once at
+> pipeline exit. Everything in between stays on the GPU.**
+
+The execution follows Mark Harris's classic ["Optimizing Parallel Reduction
+in CUDA"][harris] methodology: **measure before optimizing, attack the
+biggest bottleneck, one change at a time, re-profile.**
 
 [harris]: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+
+---
+
+## Part I: Kill the transfers (4.26s → 0.55s)
+
+### Step 0: Measure first
+
+We built per-stage profilers ([`scripts/profile_color.py`][pcolor],
+[`scripts/profile_motion.py`][pmotion]).
+
 [pcolor]: ../scripts/profile_color.py
 [pmotion]: ../scripts/profile_motion.py
 
@@ -62,210 +84,283 @@ overhead. Each binding call did `cudaMalloc` + H2D + kernel launch + D2H +
 microseconds of actual GPU work. **>95% of wall time was transfer and
 allocation overhead.**
 
-## The principle
+### The optimizations
 
-Every optimization in this project follows one rule:
+Each phase targeted the profiler's #1 hotspot:
 
-> **Upload once at pipeline entry. Keep data on-device. Download once at
-> pipeline exit. Everything in between stays on the GPU.**
+1. **Batch blur_dn** (873 calls → 1): A `to_planar_3ch` kernel transposes
+   `(n,H,W,3)` → `(n*3,H,W)` on-device, then a C++ host-loop binding with
+   scratch allocated once. **2.34s → 0.07s.**
 
-The execution was iterative: profile → find the stage with the most host↔device
-traffic → eliminate those transfers → re-profile → repeat.
+2. **Keep NTSC on-device + batched render**: The NTSC frames were downloaded
+   to host, then re-uploaded 291 times for rendering. Fix: use
+   `batched_add_and_quantize` so NTSC never leaves the GPU.
+   **1.59s → 0.09s.**
 
-## Color pipeline optimization (4.26s → 0.19s)
+3. **CUDA bilinear upsample kernel**: Replaced 291 `cv2.resize(INTER_LINEAR)`
+   calls. Reverse-engineered cv2's coordinate convention — **half-pixel
+   centers** with **replicate** border — and wrote a matching CUDA kernel.
+   **0.90s → 0.08s.**
 
-### Phase 1c: Batch blur_dn (873 calls → 1)
+4. **The 1-second cudaMalloc**: The profiler showed the upload+color_cvt
+   stage at 88% of remaining time (1.0s). The kernel itself took **2
+   milliseconds**. The CUDA driver lazily builds page tables on the first
+   large allocation — a one-time ~1s cost. Fix: `warmup_device_pool(1GB)`
+   at pipeline entry. **1.00s → 0.10s.**
 
-The Gaussian blur+downsample ran 291 frames × 3 channels = 873 binding calls.
-Fix: a `to_planar_3ch` kernel that transposes `(n,H,W,3)` → `(n*3,H,W)`
-on-device, then a C++ host-loop binding with scratch allocated once.
+5. **Device-resident temporal IIR** (the biggest single win): Changed the
+   band layout from frame-major to **channel-major**
+   `(level, channel, frame, spatial)`. This makes each `(level, channel)`
+   a contiguous `(T, N)` block, so Stage C can extract signals via pointer
+   arithmetic alone, transpose on-device, run IIR, scale, and transpose
+   back — all device-to-device with zero host transfers.
+   **5.76s → 0.04s (144×).**
 
-Note: the baseline profiler measured color_cvt + blur_dn as a combined stage
-(2.34s). After optimization, the equivalent work (upload + color_cvt + blur_dn)
-takes 0.07s.
+### Where that left us
 
-**Combined color_cvt + blur_dn: 2.34s → 0.07s (33x).**
+After Phase 1–4, the profilers reported Color = 0.19s, Motion = 0.42s.
+**Those numbers were wrong.**
 
-### Phase 1d: Keep NTSC on-device + batched render
+---
 
-The NTSC frames were downloaded to host, then re-uploaded 291 times for
-rendering. Fix: use `batched_add_and_quantize` so NTSC never leaves the GPU.
+## Part II: The profiler was lying (0.19s → 0.55s → 0.085s)
 
-**Along the way, a latent bug surfaced:** the `DeviceBuffer(array)` constructor
-used `py::array_t<char>::ensure()` with `forcecast`, which **casts each element
-to char** (1 byte). For float32 arrays, `0.5` truncated to `(char)0.5 = 0` —
-silent all-zero uploads. Present since Phase 1a-b but only triggered when we
-first uploaded float32. Fixed + 3 regression tests.
+### The critical bug
 
-**Render stage: 1.59s → 0.09s (18x).**
+The `batched_*` wrappers are all fire-and-forget: they queue work on stream 0
+and return immediately after launching kernels. They contain **zero**
+`cudaDeviceSynchronize` calls. Sync only happens implicitly when a *blocking*
+`cudaMemcpy` (D2H) executes.
 
-### Phase 1g: CUDA bilinear upsample kernel
+This broke the **motion profiler's per-stage breakdown** completely:
 
-The last host-side bottleneck: 291 `cv2.resize(INTER_LINEAR)` calls. We
-reverse-engineered cv2's coordinate convention — **half-pixel centers** with
-**replicate** border — and wrote a matching CUDA kernel.
+- Stage A (NTSC convert) ends with an async kernel → no sync
+- Stage B (lpyr_build) ends with async kernels → no sync
+- Stage C (temporal IIR) ends with async kernels → no sync
+- Stage D's `download_u8` is the only blocking call → it blocks until ALL
+  of A+B+C+D finish
 
-**0.90s → 0.08s (11x).**
+So `perf_counter()` around Stages A, B, C captured **Python host overhead
+only** (microseconds), and all the actual GPU compute piled up and got
+attributed to Stage D's download. The reported "Stage D = 47%" was inflated;
+Stages A/B/C were understated to near-zero.
 
-### Phase 1h: The 1-second cudaMalloc
+**Fix:** Added a `device_synchronize()` binding and bracketed every stage
+in both profilers with explicit sync.
 
-The profiler showed the upload+color_cvt stage at 88% of remaining time (1.0s).
-The kernel itself took **2 milliseconds**. A micro-benchmark revealed:
+The real numbers (cold-start, single run, but properly sync'd):
 
-```
-cudaMalloc(273MB):    1.002s   ← !!
-H2D upload(273MB):    0.025s
-color_cvt kernel:     0.002s
-```
+| | Reported (broken) | Real (sync'd) |
+|---|---|---|
+| Color total | 0.19s | **0.55s** |
+| Motion total | 0.42s | **0.56s** |
 
-The CUDA driver lazily builds page tables on the first large allocation — a
-one-time ~1s cost. Fix: `warmup_device_pool(1GB)` at pipeline entry primes the
-pool. All subsequent allocations are O(1).
+The profiler had been underreporting by **~3×**. Every "optimization" in
+Phase 1–4 was real, but the final numbers were wrong.
 
-**1.00s → 0.10s (10x)** at the time (H100). Later on H200, the same stage
-measured 0.03s.
+### Steady-state measurement
 
-## Motion pipeline optimization (14.78s → 0.42s)
+Once the sync was fixed, a second problem surfaced: **cold-start vs
+steady-state**. The profiler ran each stage exactly once, so every number
+included one-time CUDA driver costs (JIT compile, kernel binary load, context
+setup). The `_warmup_gpu_pool` only primed the memory pool, not the kernels.
 
-### Phase 2a–b: Batch lpyr_build + lpyr_recon
+Fix: rewrite the profilers to run **N=5 timed iterations** with a **warmup
+run** excluded from timing, pre-allocate all device buffers before timing,
+and report **median + min/max**. Video decode and encode excluded entirely.
 
-Same pattern as color's Phase 1c: C++ host-loop bindings with scratch allocated
-once. The multi-level band output required a level-major layout with per-level
-offset tables.
+The steady-state numbers (median of 5, kolyoz21/H100):
 
-**Stages B+D: 8.61s → 3.53s.**
+| Stage | Cold (sync'd) | Steady-state | Ratio |
+|---|---|---|---|
+| **Color total** | 0.554s | **0.085s** | 6.5× |
+| color_cvt | 0.053s | 0.0006s | 88× |
+| blur_dn | 0.088s | 0.005s | 18× |
+| ideal_bandpass | 0.287s | 0.005s | 57× |
+| render | 0.120s | 0.070s | 1.7× |
+| **Motion total** | 0.559s | **0.184s** | 3.0× |
+| NTSC convert | 0.081s | 0.0009s | 90× |
+| lpyr_build | 0.207s | 0.022s | 9.4× |
+| temporal IIR | 0.061s | 0.041s | 1.5× |
+| render | 0.113s | 0.104s | 1.1× |
 
-### Phase 3: Device-resident temporal IIR (the big one)
+The color_cvt and NTSC convert stages dropped by **88–90×** once warmed up
+— they were almost entirely kernel JIT/binary load cost, not actual compute.
+The real kernel time is sub-millisecond. The render stage barely moved
+(1.1–1.7×), confirming it's genuine sustained work.
 
-After Phase 2a-b, I profiled again. The result overturned my assumptions:
+---
 
-| Stage | Time | % |
-|-------|------|---|
-| A. NTSC convert | 0.99s | 9% |
-| B. lpyr_build | 1.34s | 12% |
-| **C. temporal IIR** | **5.76s** | **52%** |
-| D. recon + render | 3.06s | 27% |
+## Part III: Kill the launch overhead (Phase 5)
 
-Stage C was 52% of the pipeline — and I had **theoretized for three turns about
-kernel fusion and CUDA streams** before profiling proved me wrong. The bottleneck
-wasn't kernel launches at all. It was the same per-call H2D/D2H transfers: 27
-calls, each uploading and downloading hundreds of MB of pyramid band data.
+With honest numbers in hand, the per-stage breakdown revealed the next target.
 
-Fix: change the band layout from frame-major to **channel-major**
-`(level, channel, frame, spatial)`. This makes each `(level, channel)` a
-contiguous `(T=n, N=lh×lw)` block. Stage C can then extract signals via pointer
-arithmetic alone, transpose to `(N,T)` on-device via the existing `thwc_to_nt`
-kernel, run IIR, scale by alpha, and transpose back — all device-to-device with
-zero host transfers.
+### Phase 5a: cuFFT plan cache (ideal_bandpass 0.287s → 0.005s)
 
-**5.76s → 0.04s (144x) — the single biggest win of the project.**
+The `batched_ideal_bandpass` wrapper created and destroyed two `cufftPlanMany`
+plans per call (3 channels × 2 plans = 6 plans per pipeline run). cuFFT plan
+creation involves kernel autotuning — expensive.
 
-### Phase 4a: Device-resident render
+Fix: a static cache keyed on `(T, N)` in `bindings.cpp`. Channels 2 and 3
+hit the cache after channel 1 warms it.
 
-Final step: keep NTSC on-device from Stage A through Stage D, batch the
-`attenuate_chrom` and `add_and_quantize` calls. Added a `planar_to_interleaved_3ch`
-kernel (inverse of `to_planar_3ch`) to convert recon output back to interleaved
-layout on-device.
+**ideal_bandpass: 0.287s → 0.005s (57×).** The biggest single-stage win of
+Phase 5.
 
-**2.33s → 0.20s (12x).**
+### Phase 5b: Batched spatial kernels (lpyr_build 0.207s → 0.022s)
 
-## Step-by-step speedup analysis
+This was the real prize. The `batched_lpyr_build` wrapper had a host loop
+calling `lpyr_build_device` **M=873 times** (291 frames × 3 channels), each
+doing ~40 spatial kernel launches = **~35k total launches**. At ~5μs launch
+overhead each, that's ~175ms of pure launch overhead — which matched the
+measured 207ms almost exactly. **The stage was almost entirely launch
+overhead, not kernel compute.**
 
-Following the Harris methodology, here is the measured timing at each
-optimization checkpoint. Every number is from an actual profiler or benchmark
-run — no estimates. Measurement context (node, job) is noted for each.
+Fix: added batched variants of `corr_dn_rows`, `corr_dn_cols`, `up_conv_rows`,
+`up_conv_cols` that process B slices per launch via the grid z-dimension.
+Each thread computes `(x, y, b)` where `b` indexes the batch slice. Per-thread
+math is identical to the single-slice kernels — zero tolerance risk.
 
-**Caveats:** baselines were measured on H100 (kolyoz24); most intermediates
-and finals on H200 (various nodes). H200 is generally faster, so some inter-step
-speedup is hardware. Where only total time was measured (no stage breakdown),
-stages are marked "—".
+The channel-major band output layout (irregular per-slice offsets:
+`slice_off(m) = (m%3)*n_frames + m/3`) required new scatter/gather kernels to
+bridge frame-major scratch buffers and channel-major band storage:
+`scatter_subtract`, `scatter`, `gather`, `gather_add`.
 
-### Color pipeline (face.mp4, 291 frames, 592×528)
+Rewrote `batched_lpyr_build` and `batched_lpyr_recon` to iterate levels in
+the host (8 iterations) and batch all M slices per spatial kernel launch.
+Total launches: **~35k → ~50** (700× reduction).
 
-| Step | What changed | Total | cvt+blur | bandpass | render | Measured on |
-|------|-------------|-------|----------|----------|--------|-------------|
-| Python | — | 14.78s | — | — | — | kolyoz21/H100 |
-| **v0** baseline | CUDA kernels, all per-call | **4.26s** | 2.34s | 0.32s | 1.59s | kolyoz24/H100 |
-| v1 | Phase 1c+1d: batch blur_dn + render | **2.28s** | 1.09s ¹ | 0.03s | 1.17s ² | kolyoz42/H200 |
-| v2 | Phase 1g: CUDA bilinear upsample | **1.14s** | 1.04s | 0.02s | 0.08s | kolyoz42/H200 |
-| v3 | Phase 1h: cudaMalloc warmup | **0.52s** ³ | 0.17s | 0.21s | 0.14s | kolyoz26/H200 |
-| **v4** final | (same code, re-profiled) | **0.19s** | 0.07s | 0.02s | 0.09s | kolyoz53/H200 |
+Scratch memory increased from 3×H×W (~6MB) to 4×M×H×W (~7.3GB for baby.mp4)
+— fits comfortably on H200/H100.
 
-> ¹ v1 splits the combined stage: upload+convert (1.04s) + blur_dn (0.05s)
-> ² v1 splits render: host upsample via cv2.resize (0.72s) + add+quantize (0.45s)
-> ³ v3 bandpass spiked to 0.21s, likely cold cuFFT plan creation on that node
+| Stage | Before | After | Speedup |
+|---|---|---|---|
+| lpyr_build | 0.207s | 0.022s | **9.4×** |
+| lpyr_recon | 0.096s | 0.016s | **6.0×** |
 
-**Per-step speedup:**
-- Python → v0 (3.5x): CUDA kernels themselves, even with per-call overhead
-- v0 → v1 (1.9x): eliminated 873 blur_dn + 582 render per-call cycles
-- v1 → v2 (2.0x): replaced 291 host cv2.resize calls with 1 CUDA kernel
-- v2 → v3 (2.2x): moved 1s cudaMalloc penalty to labeled warmup line
-- v3 → v4 (2.7x): node variance + cuFFT cache; same pipeline code
+Same approach applied to `batched_blur_dn_color` (color Stage 2):
+**0.088s → 0.005s (18×).**
 
-### Motion pipeline (baby.mp4, 291 frames, 544×960, 9 levels)
+### Phase 5c: Kernel fusions (correct, but negligible)
 
-| Step | What changed | Total | NTSC | lpyr_build | IIR | recon+render | Measured on |
-|------|-------------|-------|------|-----------|-----|-------------|-------------|
-| Python | — | 42.26s | — | — | — | — | kolyoz23/H100 |
-| **v0** baseline | CUDA kernels, all per-call | **14.78s** | 2.20s | 3.54s | 3.97s | 5.07s | kolyoz24/H100 |
-| v1 | Phase 2a: batch lpyr_build | **13.73s** ⁴ | — | — | — | — | kolyoz21/H100 |
-| v2 | Phase 2b: batch lpyr_recon | **13.48s** ⁴ | — | — | — | — | kolyoz26/H200 |
-| v3 | (profiled after 2a+2b) | **11.14s** | 0.99s | 1.34s | **5.76s** | 3.06s | kolyoz1/H100 |
-| **v4** final | Phase 3+4a: device-resident C+D | **0.42s** | 0.05s | 0.13s | **0.04s** | 0.20s | kolyoz53/H200 |
+Flush with the batched-kernel success, I tried the obvious next step: fuse
+adjacent kernels to eliminate intermediate buffers. Four attempts:
 
-> ⁴ Total-only measurement (benchmark script), no per-stage breakdown available
+1. **Fold `attenuate_chrom` into `add_and_quantize`**: Added a `chrom_att`
+   parameter. Eliminates one full-res kernel pass. **Result: 0.122s →
+   0.122s. No measurable change.**
 
-**Per-step speedup:**
-- Python → v0 (2.9x): CUDA kernels themselves
-- v0 → v1 (1.1x): batching lpyr_build — modest (call overhead was only part of cost)
-- v1 → v2 (~1x): batching lpyr_recon — negligible on H200
-- **v3 → v4 (26.5x)**: device-resident IIR (5.76s→0.04s, 144x) + device-resident render (3.06s→0.20s, 15x)
+2. **Fold per-level alpha scaling into `nt_to_thwc` transpose**: Added a
+   scaled transpose variant. Eliminates 27 `scale_inplace` launches.
+   **Result: within noise.**
 
-### Summary
+3. **Fuse bilinear upsample + add_and_quantize** (color render): One kernel
+   reads filtered signal + NTSC frame, interpolates inline, writes uint8.
+   Eliminates the 1.8GB intermediate buffer. **Result: 0.075s → 0.082s.
+   Within noise.**
 
-| Pipeline | Python | CUDA v0 | CUDA v4 | vs Python | vs CUDA v0 |
-|----------|--------|---------|---------|-----------|------------|
-| Color | 14.78s | 4.26s | **0.19s** | **78x** | **22x** |
-| Motion | 42.26s | 14.78s | **0.42s** | **101x** | **35x** |
+4. **Fuse planar→interleaved into add_and_quantize** (motion render): Reads
+   delta directly from planar layout, folding the transpose inline.
+   Eliminates the transpose pass + intermediate buffer. **Result: 0.122s →
+   0.118s. Within noise.**
 
-(Plus a one-time ~1s CUDA memory pool warmup per process.)
+**All four fusions are correct (66/66 tests pass, bit-identical output), but
+none moved the needle.** Why? The render stage is **memory-bandwidth bound**,
+not launch-overhead bound. It reads the full NTSC frame (1.8GB) every call.
+Eliminating a transpose or an intermediate buffer saves one read/write of the
+*delta* (which is smaller), but the NTSC read dominates regardless.
+
+This was the most important lesson of Phase 5: **once you've eliminated
+launch overhead, kernel fusion stops helping.** The next bottleneck is raw
+memory bandwidth, and the only way past it is to change the data format
+(FP16), change the access pattern (texture cache), or eliminate the data
+movement entirely.
+
+---
+
+## The full picture
+
+### Component-by-component speedup vs the CUDA v0 baseline
+
+**Color pipeline (face.mp4, 291 frames, 528×592):**
+
+| Component | CUDA v0 | Now (steady) | Speedup |
+|---|---:|---:|---:|
+| color_cvt | ~1.0s | 0.0006s | ~1700× |
+| blur_dn | ~1.3s | 0.005s | ~260× |
+| D2H + reshape | — | 0.004s | — |
+| ideal_bandpass | 0.32s | 0.005s | 64× |
+| upsample + render | 1.59s | 0.070s | 23× |
+| **Total** | **4.26s** | **0.085s** | **50×** |
+
+**Motion pipeline (baby.mp4, 291 frames, 960×544, 9 levels):**
+
+| Component | CUDA v0 | Now (steady) | Speedup |
+|---|---:|---:|---:|
+| NTSC convert | 2.20s | 0.0009s | 2444× |
+| lpyr_build | 3.54s | 0.022s | 161× |
+| temporal IIR | 3.97s | 0.041s | 97× |
+| lpyr_recon | ~2.5s | 0.016s | ~156× |
+| render | ~2.6s | 0.104s | ~25× |
+| **Total** | **14.78s** | **0.184s** | **80×** |
+
+(Steady-state = median of 5 iterations, warmup run excluded, device buffers
+pre-allocated, decode/encode excluded. v0 numbers include decode/encode, so
+the real end-to-end speedup is somewhat less.)
+
+### Where the time goes now
+
+The render stage dominates both pipelines (83% color, 56% motion). It is
+**memory-bandwidth bound**: reading the full-res NTSC frame (1.8GB for motion)
++ writing 455MB uint8 output. Every other stage has been optimized to
+near-zero.
+
+The remaining optimization opportunities (documented in
+[`HANDOFF.md`](../HANDOFF.md)) are all about reducing that bandwidth:
+FP16 NTSC storage (halves the read), texture memory for cached reads, or
+eliminating the NTSC intermediate entirely (BGR→NTSC inline in the render
+kernel).
+
+---
 
 ## Lessons
 
-1. **Profile before optimizing — and re-profile after each change.** I theorized
-   for three turns about kernel fusion and CUDA streams for the motion pipeline.
-   Then I profiled and found the bottleneck was something completely different:
-   host↔device transfers, not kernel launches. The profiler would have told me
-   that immediately.
+1. **Profile before optimizing — and verify the profiler itself.** The
+   biggest bug in this project wasn't in any kernel — it was in the profiler
+   itself. Missing `cudaDeviceSynchronize` made every number 3× too optimistic.
+   The fix was one line of code, but it changed every conclusion about where
+   to optimize next.
 
-2. **The kernel is never the bottleneck.** Our color conversion kernel was 2ms.
-   The `cudaMalloc` before it was 1000ms. The IIR filter kernel was microseconds.
-   The H2D/D2H around it was 5.8 seconds. GPU code is easy to optimize; the
-   plumbing around it is where time goes.
+2. **Cold-start ≠ steady-state.** A single profiler run includes one-time
+   kernel JIT/binary load costs that inflate every stage. The color_cvt
+   kernel takes 0.6ms in steady state but 53ms on first invocation — an 88×
+   difference. Always warm up and measure median of N.
 
-3. **Batching beats kernel tuning.** We never wrote a faster blur kernel, a
-   faster FFT, or a faster IIR. We just stopped calling `cudaMalloc`/`cudaFree`
-   ~2000 times per pipeline. The kernels were already fast — they were just
-   starved by the host.
+3. **Launch overhead is real.** 35,000 kernel launches at 5μs each = 175ms of
+   pure overhead. The batched spatial kernels collapsed that to ~50 launches.
+   The per-thread math didn't change at all — the win was entirely in the
+   dispatch.
 
-4. **Memory pools matter.** The 1-second `cudaMalloc` is a well-known CUDA
-   gotcha. A simple warmup allocation primes the driver's page tables and makes
-   all subsequent allocations instant.
+4. **Kernel fusion stops helping once you're bandwidth-bound.** Four fusion
+   attempts, all correct, all negligible. The render stage reads 1.8GB of
+   NTSC data — eliminating a 0.5GB intermediate buffer doesn't register.
+   Once launch overhead is gone, the only way forward is changing the data
+   format or access pattern.
 
-5. **Latent bugs hide in untested paths.** The DeviceBuffer float32-truncation
-   bug existed for two phases before anyone noticed — the code path was never
-   exercised until Phase 1d. Regression tests on the fix would have caught it
-   immediately.
+5. **The kernel is never the bottleneck (until it is).** In Phase 1–4, the
+   kernel was never the bottleneck — it was always transfers and allocations.
+   In Phase 5, the kernel launch overhead finally became the bottleneck —
+   and batched spatial kernels fixed it. Now the kernel's memory bandwidth
+   is the bottleneck. Each phase has its own enemy.
 
-6. **Layout transforms are the key to device-resident pipelines.** The hardest
-   part wasn't writing kernels — it was rearranging data layouts so that each
-   stage could read its input via pointer arithmetic alone, without host
-   round-trips. The `to_planar_3ch` / `planar_to_interleaved_3ch` /
-   `thwc_to_nt` / `nt_to_thwc` transpose kernels were the enablers.
+6. **Layout transforms are the key to device-resident pipelines.** The
+   hardest part wasn't writing kernels — it was rearranging data layouts so
+   that each stage could read its input via pointer arithmetic alone. The
+   `to_planar_3ch` / `thwc_to_nt` / scatter/gather kernels were the enablers.
 
 ## Methodology credit
 
 The "measure → attack biggest bottleneck → one change → re-measure" loop is
 straight from Mark Harris's ["Optimizing Parallel Reduction in CUDA"][harris].
-It works. Every phase targeted the profiler's #1 hotspot, and every phase
-delivered a measurable speedup.
+It works — but only if the profiler is trustworthy. Verify your measurement
+tools before trusting their conclusions.
