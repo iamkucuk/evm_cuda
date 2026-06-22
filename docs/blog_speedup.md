@@ -423,6 +423,16 @@ units (hardware-managed L1 cache), shared memory tiling (load a block to
 shared memory once, compute from it), or processing multiple output
 pixels per thread to amortize the read latency.
 
+This is the same bottleneck Harris's reduction paper attacks across its
+seven kernel versions. The reduction starts at ~1.6 GB/s effective
+bandwidth (V1: naive interleaved reads) and reaches ~17 GB/s (V7:
+unrolled, multiple elements per thread). Every speedup in between comes
+from making memory access faster, not from doing less math. The render
+kernel here is at the equivalent of V1: correct, coalesced, but stalling
+on uncached global memory latency. The shared-memory tiling fix (V3 in
+Harris's progression) and the multiple-elements-per-thread optimization
+(V6) are the unclaimed improvements.
+
 ### Theoretical ceiling
 
 If the render kernel could achieve 50% of peak memory bandwidth (a
@@ -435,13 +445,28 @@ That is the headroom. The current implementation uses less than 1% of it.
 
 ## Methodology
 
-All measurements follow Harris's ["Optimizing Parallel Reduction in
-CUDA"][harris] framework: measure first, attack the largest bottleneck,
-make one change, re-profile. The profilers run 5 timed iterations with a
-warmup run (to exclude kernel JIT and binary load costs), pre-allocate
-all device buffers (to exclude `cudaMalloc` from kernel measurements),
-and report median plus min/max per stage. Video decode and encode are
-excluded to isolate GPU pipeline performance.
+The optimization approach follows Harris's ["Optimizing Parallel Reduction
+in CUDA"][harris]. That presentation is often summarized as "measure,
+attack the bottleneck, re-profile," but its real contribution is the
+specific progression of memory-access optimizations: interleaved to
+sequential addressing, loading data into shared memory, unrolling the
+final warp, having each thread process multiple elements. Each version
+makes memory access faster, not the math cheaper.
+
+This project applied the same principle at two levels. First, at the
+pipeline level: eliminating host-device transfers, batching kernel
+launches, caching cuFFT plans. Then at the kernel level: register hoisting
+for filter taps, occupancy hints. The render kernel's 0.4% bandwidth
+utilization shows that the kernel-level work maps to the early stages of
+Harris's progression. The remaining headroom (shared-memory tiling,
+texture cache, multiple pixels per thread) corresponds to the later
+stages of that same roadmap.
+
+The profilers run 5 timed iterations with a warmup run (to exclude kernel
+JIT and binary load costs), pre-allocate all device buffers (to exclude
+`cudaMalloc` from kernel measurements), and report median plus min/max per
+stage. Video decode and encode are excluded to isolate GPU pipeline
+performance.
 
 [harris]: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 
