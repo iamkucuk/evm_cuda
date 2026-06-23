@@ -65,6 +65,7 @@ pybind11_add_module(_evm_cuda
     kernels/lpyr.cu
     kernels/blur_dn.cu
     kernels/amplify_render.cu
+    kernels/fp16_cvt.cu
 )
 
 target_include_directories(_evm_cuda PRIVATE
