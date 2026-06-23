@@ -427,21 +427,28 @@ def magnify_motion_lpyr_iir_fp16(
     _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc_f16.ptr, ntsc_floats)
     del d_ntsc_f32
 
-    # --- Stage B: lpyr_build (FP32 compute from FP16-stored NTSC) -----------
+    # --- Stage B: lpyr_build with FP16 scratch -------------------------------
+    # Convert FP16 NTSC to FP32, transpose to planar, convert planar to FP16.
+    # The batched_lpyr_build_f16 allocates __half scratch (3.6 GB vs 7.3 GB).
     d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
     _evm_cuda.f16_to_f32(d_ntsc_f16.ptr, d_ntsc_f32.ptr, ntsc_floats)
 
-    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+    planar_floats = n * 3 * h * w
+    d_ntsc_planar = DeviceBuffer(planar_floats * 4)
     _evm_cuda.batched_to_planar_3ch(d_ntsc_f32.ptr, d_ntsc_planar.ptr, n, h, w)
     del d_ntsc_f32
+
+    d_ntsc_planar_f16 = DeviceBuffer(planar_floats * 2)
+    _evm_cuda.f32_to_f16(d_ntsc_planar.ptr, d_ntsc_planar_f16.ptr, planar_floats)
+    del d_ntsc_planar
 
     lvl_sizes = [s[0] * s[1] for s in level_sizes]
     total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
     d_bands = DeviceBuffer(total_band_floats * 4)
-    _evm_cuda.batched_lpyr_build(
-        d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
+    _evm_cuda.batched_lpyr_build_f16(
+        d_ntsc_planar_f16.ptr, d_bands.ptr, n, h, w, levels,
         _d_binom5(), 5)
-    del d_ntsc_planar
+    del d_ntsc_planar_f16
 
     level_offsets = []
     offset = 0
