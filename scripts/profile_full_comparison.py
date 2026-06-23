@@ -174,9 +174,8 @@ def profile_color_cpu_stages():
         st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
         return st
 
-    run_once()  # warmup
-    runs = [run_once() for _ in range(3)]
-    return {k: median([r[k] for r in runs]) for k in runs[0]}
+    # No warmup, single run — minimize RAM pressure on low-memory hosts.
+    return run_once()
 
 
 def profile_motion_cpu_stages():
@@ -243,9 +242,8 @@ def profile_motion_cpu_stages():
         st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
         return st
 
-    run_once()  # warmup
-    runs = [run_once() for _ in range(3)]
-    return {k: median([r[k] for r in runs]) for k in runs[0]}
+    # No warmup, single run — minimize RAM pressure on low-memory hosts.
+    return run_once()
 
 
 # ===========================================================================
@@ -557,9 +555,12 @@ def main():
     print("=" * 70)
 
     # CPU e2e + stages
+    # n_iter=1 + warmup=False to minimize RAM pressure on low-memory hosts
+    # (the motion CPU pipeline builds 301 FP64 Laplacian pyramids in RAM;
+    # repeating 4x can OOM-kill the process on 13 GB systems like Kaggle).
     print("\n[Python CPU]")
     try:
-        med, mn, mx = time_fn(run_motion_cpu, n_iter=3)
+        med, mn, mx = time_fn(run_motion_cpu, n_iter=1, warmup=False)
         print(f"  Total: {med:.3f}s")
         results["motion_cpu_total"] = med
 
