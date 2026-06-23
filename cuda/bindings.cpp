@@ -94,6 +94,11 @@ void launch_upsample_add_quantize(const float* ntsc, const float* filt,
                                   int M, int in_H, int in_W,
                                   int out_H, int out_W, float chrom_att,
                                   cudaStream_t stream);
+void launch_upsample_add_quantize_f16(const __half* ntsc, const float* filt,
+                                      unsigned char* bgr_out,
+                                      int M, int in_H, int in_W,
+                                      int out_H, int out_W, float chrom_att,
+                                      cudaStream_t stream);
 
 // ideal_bandpass.cu — self-contained cuFFT fwd+mask+inv pipeline.
 void launch_ideal_bandpass(
@@ -854,6 +859,48 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("H"), py::arg("W"), py::arg("nlevs"),
            py::arg("d_filt"), py::arg("filt_len"));
 
+    // --- FP16 blur_dn_color: reads __half NTSC planar, writes FP32 gdown -----
+    // The FP16 color pipeline stores NTSC as __half (halving the dominant
+    // persistent buffer). The downsample output stays FP32 because the FFT
+    // bandpass needs float input. Scratch is also __half to match the input.
+    // Same frame-major ping-pong structure as the FP32 variant.
+    m.def("batched_blur_dn_color_f16",
+        [](uintptr_t d_in, uintptr_t d_out, int M, int H, int W, int nlevs,
+           uintptr_t d_filt, int filt_len) {
+            const __half* in_p = reinterpret_cast<const __half*>(d_in);
+            float*       out_p = reinterpret_cast<float*>(d_out);
+            const float* filt  = reinterpret_cast<const float*>(d_filt);
+
+            __half* scratch_a = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+            __half* scratch_b = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+
+            CUDA_CHECK(cudaMemcpyAsync(scratch_a, in_p,
+                static_cast<size_t>(M) * H * W * sizeof(__half),
+                cudaMemcpyDeviceToDevice, 0));
+
+            __half* cur = scratch_a;
+            __half* nxt = scratch_b;
+            int ch = H, cw = W;
+            for (int l = 0; l < nlevs; ++l) {
+                int wn = (cw + 1) / 2;
+                int hn = (ch + 1) / 2;
+                evm::launch_corr_dn_cols_batched_f16(
+                    cur, nxt, ch, cw, filt, filt_len,
+                    ch * cw, ch * wn, M, 0);
+                evm::launch_corr_dn_rows_batched_f16(
+                    nxt, cur, ch, wn, filt, filt_len,
+                    ch * wn, hn * wn, M, 0);
+                ch = hn; cw = wn;
+            }
+
+            // Convert the final __half result to FP32 for the FFT bandpass.
+            evm::launch_f16_to_f32(cur, out_p, static_cast<size_t>(M) * ch * cw, 0);
+
+            device_free(scratch_a); device_free(scratch_b);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
+           py::arg("H"), py::arg("W"), py::arg("nlevs"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
     // --- batched lpyr_build: M planar slices -> multi-level band output -----
     // Processes all M=n_frames*3 slices simultaneously through the level loop.
     // At each level, the batched spatial kernels process all M slices in one
@@ -1329,6 +1376,21 @@ PYBIND11_MODULE(_evm_cuda, m) {
             evm::launch_upsample_add_quantize(
                 reinterpret_cast<float*>(d_ntsc),
                 reinterpret_cast<float*>(d_filt),
+                reinterpret_cast<unsigned char*>(d_bgr),
+                M, in_H, in_W, out_H, out_W, chrom_att, 0);
+        }, py::arg("d_ntsc"), py::arg("d_filt"), py::arg("d_bgr"),
+           py::arg("M"), py::arg("in_H"), py::arg("in_W"),
+           py::arg("out_H"), py::arg("out_W"), py::arg("chrom_att"));
+
+    // --- FP16 variant: reads __half NTSC, FP32 filt (FFT output), writes u8 ---
+    // Halves the dominant NTSC read bandwidth. The filt buffer stays FP32
+    // because it comes from the cuFFT bandpass output.
+    m.def("batched_upsample_add_quantize_f16",
+        [](uintptr_t d_ntsc, uintptr_t d_filt, uintptr_t d_bgr,
+           int M, int in_H, int in_W, int out_H, int out_W, float chrom_att) {
+            evm::launch_upsample_add_quantize_f16(
+                reinterpret_cast<const __half*>(d_ntsc),
+                reinterpret_cast<const float*>(d_filt),
                 reinterpret_cast<unsigned char*>(d_bgr),
                 M, in_H, in_W, out_H, out_W, chrom_att, 0);
         }, py::arg("d_ntsc"), py::arg("d_filt"), py::arg("d_bgr"),

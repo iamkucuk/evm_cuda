@@ -267,6 +267,92 @@ def magnify_color_gdown_ideal(
     return out.astype(np.float32) / 255.0
 
 
+def magnify_color_gdown_ideal_fp16(
+    vid_path: str | Path,
+    out_path: str | Path,
+    *,
+    alpha: float,
+    level: int,
+    fl: float,
+    fh: float,
+    chrom_attenuation: float = 1.0,
+    sampling_rate: float | None = None,
+) -> np.ndarray:
+    """Color pipeline with FP16 NTSC storage.
+
+    NTSC (the dominant persistent buffer, read by render) is stored as __half.
+    All other buffers keep the FP32 layout of the FP32 pipeline: the Gaussian
+    downsample output goes to FP32 for the cuFFT bandpass, and the filt signal
+    (FFT output) stays FP32. Only the NTSC buffer read by the fused render
+    kernel is halved, which is where the bandwidth win lands (render is ~73%
+    of GPU time in the FP32 color pipeline).
+    """
+    frames, fps = _read_frames(vid_path)
+    if sampling_rate is None:
+        sampling_rate = fps
+    n = len(frames)
+    h, w = frames[0].shape[:2]
+
+    clip_u8 = np.stack(frames, axis=0)
+
+    _warmup_gpu_pool()
+
+    # --- Stage 1: NTSC convert (FP32 compute) -> FP16 storage ----------------
+    # ntsc persists as __half through Stage 4's render. Only this momentary
+    # FP32 compute buffer + one f32_to_f16 conversion is the overhead.
+    ntsc_floats = n * h * w * 3
+    d_clip = DeviceBuffer.from_array(clip_u8)
+    d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
+    d_ntsc = DeviceBuffer(ntsc_floats * 2)  # __half, persists to Stage 4
+    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc_f32.ptr, n, h, w)
+    _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc.ptr, ntsc_floats)
+    del d_ntsc_f32
+
+    # --- Stage 2: FP16 planar + FP16 blur_dn -> FP32 gdown -------------------
+    hl, wl = h, w
+    for _ in range(level):
+        hl = (hl + 1) // 2
+        wl = (wl + 1) // 2
+
+    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 2)  # __half
+    _evm_cuda.batched_to_planar_3ch_f16(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+
+    d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)  # FP32 (FFT needs float)
+    _evm_cuda.batched_blur_dn_color_f16(
+        d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
+        _d_binom5_sum1(), 5)
+    del d_ntsc_planar
+
+    # D2H + reshape: same as FP32 pipeline (FFT bandpass runs on host-FP32).
+    gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
+    gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+
+    # --- Stage 3: ideal bandpass per channel (FP32, same as FP32 pipeline) ---
+    filt = np.empty_like(gdown)
+    for c in range(3):
+        sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
+        d_sig = DeviceBuffer.from_array(sig)
+        d_out = DeviceBuffer(n * hl * wl * 4)
+        _evm_cuda.batched_ideal_bandpass(
+            d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
+        filt[..., c] = d_out.download_f32(n * hl * wl).reshape(hl * wl, n).T.reshape(n, hl, wl)
+
+    # --- Stage 4: FP16 render (reads __half NTSC + FP32 filt) ---------------
+    gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
+                    dtype=np.float32)
+    filt = filt * gain
+
+    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
+    _evm_cuda.batched_upsample_add_quantize_f16(
+        d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
+        n, hl, wl, h, w, 1.0)
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
+
+
 # ---------------------------------------------------------------------------
 # Motion pipeline (Laplacian pyramid + IIR bandpass)
 # ---------------------------------------------------------------------------

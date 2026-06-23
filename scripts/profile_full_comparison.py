@@ -83,9 +83,11 @@ def run_color_fp32():
 
 
 def run_color_fp16():
-    # Color pipeline doesn't have an FP16 variant yet.
-    # The FP16 work was motion-only. Skip gracefully.
-    raise NotImplementedError("No FP16 color pipeline")
+    from evm_cuda.batched import magnify_color_gdown_ideal_fp16
+    magnify_color_gdown_ideal_fp16(
+        COLOR_VID, str(OUTPUT / "face_fp16.mp4"),
+        alpha=COLOR_ALPHA, level=COLOR_LEVEL, fl=COLOR_FL, fh=COLOR_FH,
+        chrom_attenuation=COLOR_CHROM, sampling_rate=COLOR_SR)
 
 
 # ===========================================================================
@@ -257,6 +259,103 @@ def profile_motion_fp16_stages():
     return {k: median([r[k] for r in runs]) for k in runs[0]}
 
 
+def profile_color_fp16_stages():
+    """Inline FP16 color profiler with per-stage timing.
+
+    Mirrors the FP32 color profiler (profile_color.py) but with FP16 NTSC
+    storage. The FFT bandpass stays FP32 — only NTSC and blur_dn scratch
+    are halved.
+    """
+    from evm_cuda.batched import DeviceBuffer, _read_frames, _d_binom5_sum1, _warmup_gpu_pool
+    from evm_cuda import _evm_cuda
+
+    def sync():
+        _evm_cuda.device_synchronize()
+
+    frames, fps = _read_frames(COLOR_VID)
+    n = len(frames)
+    h, w = frames[0].shape[:2]
+    clip_u8 = np.stack(frames, axis=0)
+
+    hl, wl = h, w
+    for _ in range(COLOR_LEVEL):
+        hl = (hl + 1) // 2
+        wl = (wl + 1) // 2
+
+    ntsc_floats = n * h * w * 3
+    _warmup_gpu_pool()
+    sync()
+
+    d_clip = DeviceBuffer.from_array(clip_u8)
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
+
+    def run_once():
+        st = {}
+
+        # Stage 1: NTSC convert (FP32 compute) -> __half storage
+        t0 = time.perf_counter()
+        ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
+        ntsc_f16 = DeviceBuffer(ntsc_floats * 2)
+        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, ntsc_f32.ptr, n, h, w)
+        _evm_cuda.f32_to_f16(ntsc_f32.ptr, ntsc_f16.ptr, ntsc_floats)
+        sync()
+        st["1) NTSC convert"] = time.perf_counter() - t0
+        del ntsc_f32
+
+        # Stage 2: FP16 planar + FP16 blur_dn -> FP32 gdown
+        t0 = time.perf_counter()
+        planar = DeviceBuffer(n * 3 * h * w * 2)
+        _evm_cuda.batched_to_planar_3ch_f16(ntsc_f16.ptr, planar.ptr, n, h, w)
+        gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)
+        _evm_cuda.batched_blur_dn_color_f16(
+            planar.ptr, gdown_planar.ptr, n * 3, h, w, COLOR_LEVEL,
+            _d_binom5_sum1(), 5)
+        sync()
+        st["2) blur_dn"] = time.perf_counter() - t0
+        del planar
+
+        # Stage 2b: D2H + reshape for FFT (host round-trip)
+        t0 = time.perf_counter()
+        gdown = gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
+        gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+        del gdown_planar
+        st["2b) D2H+reshape"] = time.perf_counter() - t0
+
+        # Stage 3: ideal bandpass per channel (FP32 FFT)
+        t0 = time.perf_counter()
+        filt = np.empty_like(gdown)
+        for c in range(3):
+            sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
+            d_sig = DeviceBuffer.from_array(sig)
+            d_out = DeviceBuffer(n * hl * wl * 4)
+            _evm_cuda.batched_ideal_bandpass(
+                d_sig.ptr, d_out.ptr, n, hl * wl, COLOR_FL, COLOR_FH, COLOR_SR)
+            filt[..., c] = d_out.download_f32(n * hl * wl).reshape(hl * wl, n).T.reshape(n, hl, wl)
+        sync()
+        st["3) ideal_bandpass"] = time.perf_counter() - t0
+
+        # Stage 4: FP16 render (reads __half NTSC + FP32 filt)
+        t0 = time.perf_counter()
+        gain = np.array([COLOR_ALPHA, COLOR_ALPHA * COLOR_CHROM, COLOR_ALPHA * COLOR_CHROM],
+                        dtype=np.float32)
+        filt = filt * gain
+        d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
+        _evm_cuda.batched_upsample_add_quantize_f16(
+            ntsc_f16.ptr, d_filt.ptr, d_out_u8.ptr,
+            n, hl, wl, h, w, 1.0)
+        out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+        sync()
+        st["4) render"] = time.perf_counter() - t0
+        del ntsc_f16, d_filt
+
+        st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
+        return st
+
+    run_once()  # warmup
+    runs = [run_once() for _ in range(N_ITER)]
+    return {k: median([r[k] for r in runs]) for k in runs[0]}
+
+
 def main():
     print("=" * 70)
     print("COMPREHENSIVE COMPARISON: Python CPU vs CUDA FP32 vs CUDA FP16")
@@ -292,9 +391,21 @@ def main():
         print(f"  GPU-only total: {fp32_stages.get('_total', 0):.4f}s")
         results["color_fp32_stages"] = fp32_stages
 
-    # FP16
+    # FP16 e2e + stages
     print("\n[CUDA FP16]")
-    print("  (No FP16 color pipeline — skipping)")
+    try:
+        med16, _, _ = time_fn(run_color_fp16)
+        print(f"  End-to-end: {med16:.3f}s")
+        results["color_fp16_e2e"] = med16
+
+        # FP16 stages (inline profiler)
+        print("  Profiling stages...")
+        fp16_stages = profile_color_fp16_stages()
+        if fp16_stages:
+            print(f"  GPU-only total: {fp16_stages.get('_total', 0):.4f}s")
+            results["color_fp16_stages"] = fp16_stages
+    except Exception as e:
+        print(f"  FAILED: {e}")
 
     # ====================================================================
     # MOTION PIPELINE
@@ -343,6 +454,24 @@ def main():
     print("SUMMARY")
     print("=" * 70)
 
+    # Color stage comparison
+    if "color_fp32_stages" in results and "color_fp16_stages" in results:
+        s32 = results["color_fp32_stages"]
+        s16 = results["color_fp16_stages"]
+        print(f"\nCOLOR — {'Stage':<22s} {'FP32':>10s} {'FP16':>10s} {'FP16/FP32':>10s}")
+        print("-" * 55)
+        for k in s32:
+            if k.startswith("_"):
+                continue
+            v32 = s32.get(k, 0)
+            v16 = s16.get(k, 0)
+            pct = f"{(1 - v16/v32)*100:+.1f}%" if v32 > 0 else "-"
+            print(f"  {k:<22s} {v32*1000:>9.1f}ms {v16*1000:>9.1f}ms {pct:>9s}")
+        t32 = s32.get("_total", 0)
+        t16 = s16.get("_total", 0)
+        print("-" * 55)
+        print(f"  {'GPU pipeline total':<22s} {t32*1000:>9.1f}ms {t16*1000:>9.1f}ms {(1-t16/t32)*100:>+9.1f}%")
+
     # Motion stage comparison
     if "motion_fp32_stages" in results and "motion_fp16_stages" in results:
         s32 = results["motion_fp32_stages"]
@@ -366,14 +495,18 @@ def main():
     print("-" * 52)
     print(f"{'Python CPU':<30s} {results.get('color_cpu_total',0)*1000:>9.0f}ms {results.get('motion_cpu_total',0)*1000:>9.0f}ms")
     print(f"{'CUDA FP32 (e2e)':<30s} {results.get('color_fp32_e2e',0)*1000:>9.0f}ms {results.get('motion_fp32_e2e',0)*1000:>9.0f}ms")
-    if "motion_fp16_e2e" in results:
-        print(f"{'CUDA FP16 (e2e)':<30s} {'N/A':>10s} {results.get('motion_fp16_e2e',0)*1000:>9.0f}ms")
+    if "color_fp16_e2e" in results or "motion_fp16_e2e" in results:
+        c16 = f"{results.get('color_fp16_e2e',0)*1000:>9.0f}ms" if "color_fp16_e2e" in results else "N/A"
+        m16 = f"{results.get('motion_fp16_e2e',0)*1000:>9.0f}ms" if "motion_fp16_e2e" in results else "N/A"
+        print(f"{'CUDA FP16 (e2e)':<30s} {c16:>10s} {m16:>10s}")
     print("-" * 52)
 
     # Speedups
     print(f"\nSpeedup vs CPU:")
     print(f"  Color FP32:  {results.get('color_cpu_total',0)/results.get('color_fp32_e2e',1):.1f}x")
     print(f"  Motion FP32: {results.get('motion_cpu_total',0)/results.get('motion_fp32_e2e',1):.1f}x")
+    if "color_fp16_e2e" in results:
+        print(f"  Color FP16:  {results.get('color_cpu_total',0)/results.get('color_fp16_e2e',1):.1f}x")
     if "motion_fp16_e2e" in results:
         print(f"  Motion FP16: {results.get('motion_cpu_total',0)/results.get('motion_fp16_e2e',1):.1f}x")
 
