@@ -76,28 +76,42 @@ cuda/
 | Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | frame-major output, no scatter needed |
 | Scatter/gather | `lpyr.cu:scatter_subtract/gather/gather_add/scatter` | `(⌈n/256⌉,B) / (256,1,1)` | bridges frame-major scratch ↔ channel-major bands |
 | Scaled transpose | `transpose.cu:nt_to_thwc_kernel` (+scale param) | `(⌈N/256⌉) / (256,1,1)` | folds alpha amplification into transpose |
-| Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; eliminates intermediate buffer |
-| Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion pipeline render; reads planar delta inline |
+| Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel<NTSC_T>` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; templated on NTSC type (float/__half); filt stays float* (FFT output) |
+| Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel<NTSC_T>` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion pipeline render; templated on NTSC type |
 | cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N); eliminates per-call plan creation |
 | V6 multiple elements/thread | render + transpose kernels | 4 px/thread via `#pragma unroll` | pipelines independent reads for latency hiding (22% render) |
-| FP16 storage (motion) | All batched kernels templated on In/Out type | `cvt_in`/`cvt_out` in evm_common.cuh | __half storage, FP32 compute, FP64 IIR accumulator unchanged |
+| FP16 storage (both pipelines) | All batched kernels templated on In/Out type | `cvt_in`/`cvt_out` in evm_common.cuh | __half storage, FP32 compute, FP64 IIR accumulator unchanged |
+| FP16 blur_dn_color | `bindings.cpp:batched_blur_dn_color_f16` | host loop over nlevs | reads __half NTSC planar, downsamples in FP16 scratch, converts to FP32 for FFT |
 | FP16 conversion | `fp16_cvt.cu:f32_to_f16 / f16_to_f32` | `(⌈n/256⌉) / (256,1,1)` | one-time conversion at NTSC creation boundary |
 
 ## FP16 storage rationale
 
-The motion pipeline supports an optional FP16 storage path
-(`magnify_motion_lpyr_iir_fp16` in `batched.py`). All batched spatial,
+Both pipelines support an FP16 storage path (`magnify_color_gdown_ideal_fp16`
+and `magnify_motion_lpyr_iir_fp16` in `batched.py`). All batched spatial,
 transpose, IIR, and render kernels are templated on input/output type.
 When instantiated with `__half`, reads convert via `__half2float` and
 writes via `__float2half`. Compute stays FP32 throughout.
 
-FP16 storage halves VRAM (23 GB to 12 GB for baby.mp4) and halves the
-render stage's memory traffic (82 ms to 41 ms on A100). The IIR
-accumulator stays FP64 regardless of storage type.
+**Motion FP16:** Stores NTSC, planar, bands, filtered bands, and delta all
+in `__half`. Halves VRAM (23 GB to 12 GB for baby.mp4) and halves the
+render stage's memory traffic (82 ms to 45 ms on A100, 8.6 ms to 5.6 ms on
+P100). The IIR accumulator stays FP64 regardless of storage type.
 
-Precision: RMSE between FP32 and FP16 output is 0.0016, which is 6.2x
-under the 0.01 end-to-end tolerance. The maximum per-pixel error is
-3/255 (3 uint8 quantization steps).
+**Color FP16:** Stores NTSC as `__half` (the dominant persistent buffer
+read by render). The Gaussian downsample output goes to FP32 (cuFFT
+bandpass needs float). The `filt` signal (FFT output) stays FP32. Only the
+NTSC buffer is halved.
+
+Precision: RMSE between FP32 and FP16 output is 0.0016 for motion, which
+is 6.2x under the 0.01 end-to-end tolerance. The maximum per-pixel error
+is 3/255 (3 uint8 quantization steps). For color FP16, the uint8 output
+differs from FP32 by at most 2 LSB per channel.
+
+**FP16 color is GPU-dependent.** The color render kernel reads 15 values
+per output pixel (3 NTSC + 12 bilinear filt taps). FP16 NTSC reduces total
+traffic by only 10% (filt stays FP32). On the A100 (1935 GB/s bandwidth),
+this is invisible and conversion overhead makes FP16 slower. On the P100
+(732 GB/s), the 10% traffic reduction is measurable and FP16 is 13% faster.
 
 ## Precision rationale
 
