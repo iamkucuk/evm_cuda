@@ -433,11 +433,15 @@ def magnify_motion_lpyr_iir_fp16(
 
     lvl_sizes = [s[0] * s[1] for s in level_sizes]
     total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
-    d_bands = DeviceBuffer(total_band_floats * 2)  # FP16 bands
+    # Build outputs FP32 bands (scatter writes float), convert to FP16 for Stage C.
+    d_bands_f32 = DeviceBuffer(total_band_floats * 4)
     _evm_cuda.batched_lpyr_build_f16(
-        d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
+        d_ntsc_planar.ptr, d_bands_f32.ptr, n, h, w, levels,
         _d_binom5(), 5)
     del d_ntsc_planar
+    d_bands = DeviceBuffer(total_band_floats * 2)
+    _evm_cuda.f32_to_f16(d_bands_f32.ptr, d_bands.ptr, total_band_floats)
+    del d_bands_f32
 
     level_offsets = []
     offset = 0
