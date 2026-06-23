@@ -1,0 +1,31 @@
+{
+  "color_cpu_total": 12.706122951582074,
+  "color_fp32_e2e": 1.176609138958156,
+  "color_fp32_stages": {
+    "1) color_cvt": 0.0009,
+    "2) blur_dn": 0.008,
+    "2b) D2H + reshape": 0.0031,
+    "3) ideal_bandpass": 0.008,
+    "4) upsample + render": 0.0534,
+    "_total": 0.0734
+  },
+  "motion_cpu_total": 49.258259393274784,
+  "motion_fp32_e2e": 1.8933146735653281,
+  "motion_fp32_stages": {
+    "A) NTSC convert": 0.0016,
+    "B) lpyr_build": 0.0356,
+    "C) temporal IIR": 0.0613,
+    "D1) lpyr_recon": 0.0236,
+    "D2) render": 0.0822,
+    "_total": 0.2044
+  },
+  "motion_fp16_e2e": 1.8441115794703364,
+  "motion_fp16_stages": {
+    "A) NTSC convert": 0.005233338102698326,
+    "B) lpyr_build": 0.037343249656260014,
+    "C) temporal IIR": 0.062097059562802315,
+    "D1) lpyr_recon": 0.02080676704645157,
+    "D2) render": 0.0015517203137278557,
+    "_total": 0.12705776188522577
+  }
+}
