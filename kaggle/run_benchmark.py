@@ -197,8 +197,9 @@ def main():
     # Verify extension loads
     sys.path.insert(0, str(repo / "cuda"))
     os.chdir(repo)
+    import evm_cuda
+    assert evm_cuda.have_cuda, "CUDA not available"
     from evm_cuda import _evm_cuda
-    assert _evm_cuda.have_cuda, "CUDA not available"
     print(f"Extension loaded. have_cuda=True\n")
 
     # Download samples
