@@ -320,8 +320,12 @@ void launch_add_planar_quantize_f16(const __half* ntsc, const __half* delta_plan
 // Block: (32, 32, 1)
 constexpr int UPSAMPLE_ELEMS = 4;
 
+// Templated on NTSC_T: the NTSC buffer may be stored as float (FP32 pipeline)
+// or __half (FP16 pipeline). The filt buffer stays float — it comes from the
+// FFT output, which is always FP32 regardless of pipeline precision.
+template <typename NTSC_T>
 __global__ void upsample_add_quantize_kernel(
-    const float* __restrict__ ntsc,   // (M, out_H, out_W, 3)
+    const NTSC_T* __restrict__ ntsc,  // (M, out_H, out_W, 3)
     const float* __restrict__ filt,   // (M, in_H, in_W, 3)
     unsigned char* __restrict__ bgr_out,  // (M, out_H, out_W, 3)
     int M, int in_H, int in_W, int out_H, int out_W, float chrom_att)
@@ -334,7 +338,7 @@ __global__ void upsample_add_quantize_kernel(
     const float scale_x = static_cast<float>(in_W) / out_W;
     const float scale_y = static_cast<float>(in_H) / out_H;
     const float* f = filt + static_cast<size_t>(m) * in_H * in_W * 3;
-    const float* n = ntsc + static_cast<size_t>(m) * out_H * out_W * 3;
+    const NTSC_T* n = ntsc + static_cast<size_t>(m) * out_H * out_W * 3;
     unsigned char* o = bgr_out + static_cast<size_t>(m) * out_H * out_W * 3;
     const int px_row = (y * out_W + x0) * 3;
 
@@ -362,7 +366,7 @@ __global__ void upsample_add_quantize_kernel(
         const float w10 = (1.0f - fx) * fy;
         const float w11 = fx * fy;
 
-        float y_ = n[px + 0];
+        float y_ = cvt_in<NTSC_T>(n[px + 0]);
         float i_ = 0.0f;
         float q_ = 0.0f;
         for (int c = 0; c < 3; ++c) {
@@ -372,8 +376,8 @@ __global__ void upsample_add_quantize_kernel(
             const float v11 = f[(sy1 * in_W + sx1) * 3 + c];
             float delta = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
             if (c == 0) y_ += delta;
-            else if (c == 1) i_ = n[px + 1] + delta * chrom_att;
-            else             q_ = n[px + 2] + delta * chrom_att;
+            else if (c == 1) i_ = cvt_in<NTSC_T>(n[px + 1]) + delta * chrom_att;
+            else             q_ = cvt_in<NTSC_T>(n[px + 2]) + delta * chrom_att;
         }
 
         float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
@@ -395,7 +399,18 @@ void launch_upsample_add_quantize(const float* ntsc, const float* filt,
                                   cudaStream_t stream) {
     dim3 block(32, 32, 1);
     dim3 grid(div_up(out_W, 32 * UPSAMPLE_ELEMS), div_up(out_H, 32), M);
-    upsample_add_quantize_kernel<<<grid, block, 0, stream>>>(
+    upsample_add_quantize_kernel<float><<<grid, block, 0, stream>>>(
+        ntsc, filt, bgr_out, M, in_H, in_W, out_H, out_W, chrom_att);
+}
+
+void launch_upsample_add_quantize_f16(const __half* ntsc, const float* filt,
+                                      unsigned char* bgr_out,
+                                      int M, int in_H, int in_W,
+                                      int out_H, int out_W, float chrom_att,
+                                      cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(out_W, 32 * UPSAMPLE_ELEMS), div_up(out_H, 32), M);
+    upsample_add_quantize_kernel<__half><<<grid, block, 0, stream>>>(
         ntsc, filt, bgr_out, M, in_H, in_W, out_H, out_W, chrom_att);
 }
 

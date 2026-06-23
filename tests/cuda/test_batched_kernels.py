@@ -261,3 +261,87 @@ def test_batched_upsample_add_quantize_matches_two_kernel():
 
     assert np.array_equal(out, ref_out), \
         f"Mismatch: {(out != ref_out).sum()} pixels differ"
+
+
+# ---------------------------------------------------------------------------
+# FP16 color pipeline kernel tests
+# ---------------------------------------------------------------------------
+
+@skip_no_cuda
+@pytest.mark.parametrize("h,w", [(64, 64), (45, 33)])
+def test_batched_blur_dn_color_f16_matches_fp32(h, w):
+    """FP16 blur_dn_color reads __half input, writes FP32 output.
+
+    Must match the FP32 blur_dn_color within FP16 round-off (< 1e-2 abs).
+    """
+    rng = np.random.default_rng(99)
+    M = 4
+    nlevs = 3
+
+    imgs_f32 = rng.random((M, h, w)).astype(np.float32)
+
+    # FP32 reference.
+    hl, wl = h, w
+    for _ in range(nlevs):
+        hl = (hl + 1) // 2
+        wl = (wl + 1) // 2
+    d_in_f32 = DeviceBuffer.from_array(imgs_f32)
+    d_out_f32 = DeviceBuffer(M * hl * wl * 4)
+    _evm_cuda.batched_blur_dn_color(
+        d_in_f32.ptr, d_out_f32.ptr, M, h, w, nlevs,
+        _d_binom5_sum1(), 5)
+    ref = d_out_f32.download_f32(M * hl * wl).reshape(M, hl, wl)
+
+    # FP16 path: convert input to __half, run f16 blur_dn_color.
+    # upload() is raw-bytes, so np.float16 transfers correctly (2 bytes/element).
+    imgs_f16 = np.ascontiguousarray(imgs_f32.astype(np.float16))
+    d_in_f16 = DeviceBuffer.from_array(imgs_f16)
+    d_out = DeviceBuffer(M * hl * wl * 4)
+    _evm_cuda.batched_blur_dn_color_f16(
+        d_in_f16.ptr, d_out.ptr, M, h, w, nlevs,
+        _d_binom5_sum1(), 5)
+    out = d_out.download_f32(M * hl * wl).reshape(M, hl, wl)
+
+    for m in range(M):
+        err = abs_err(out[m], ref[m])
+        assert err < TOL["blur_dn"] * 100, \
+            f"slice {m}: err={err:.2e} (FP16 round-off)"
+
+
+@skip_no_cuda
+def test_batched_upsample_add_quantize_f16_matches_fp32():
+    """FP16 upsample_add_quantize reads __half NTSC, must match FP32 output.
+
+    NTSC values are in [0, 1]; FP16 has ~3 decimal digits of precision there,
+    so the uint8 quantized output should be bit-identical or within 1 ULP.
+    """
+    rng = np.random.default_rng(789)
+    n = 3
+    in_h, in_w = 8, 6
+    out_h, out_w = 16, 12
+
+    ntsc_f32 = rng.random((n, out_h, out_w, 3)).astype(np.float32)
+    filt = rng.random((n, in_h, in_w, 3)).astype(np.float32)
+
+    # FP32 reference.
+    d_ntsc_f32 = DeviceBuffer.from_array(np.ascontiguousarray(ntsc_f32))
+    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
+    d_out_f32 = DeviceBuffer(n * out_h * out_w * 3)
+    _evm_cuda.batched_upsample_add_quantize(
+        d_ntsc_f32.ptr, d_filt.ptr, d_out_f32.ptr,
+        n, in_h, in_w, out_h, out_w, 1.0)
+    ref = d_out_f32.download_u8(n * out_h * out_w * 3).reshape(n, out_h, out_w, 3)
+
+    # FP16 path: NTSC stored as __half.
+    ntsc_f16 = np.ascontiguousarray(ntsc_f32.astype(np.float16))
+    d_ntsc_f16 = DeviceBuffer.from_array(ntsc_f16)
+    d_out = DeviceBuffer(n * out_h * out_w * 3)
+    _evm_cuda.batched_upsample_add_quantize_f16(
+        d_ntsc_f16.ptr, d_filt.ptr, d_out.ptr,
+        n, in_h, in_w, out_h, out_w, 1.0)
+    out = d_out.download_u8(n * out_h * out_w * 3).reshape(n, out_h, out_w, 3)
+
+    # Allow up to 2 ULP difference per channel (FP16 rounding in the YIQ->RGB
+    # matrix multiply can flip the final rintf by 1).
+    diff = np.abs(out.astype(np.int16) - ref.astype(np.int16))
+    assert diff.max() <= 2, f"FP16 vs FP32 output differs by {diff.max()} (max allowed: 2)"
