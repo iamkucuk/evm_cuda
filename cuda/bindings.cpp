@@ -145,6 +145,25 @@ void launch_up_conv_cols_batched(const float* in, float* out,
                                  const float* filt, int filt_len,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream);
+// FP16 storage variants (compute stays FP32).
+void launch_corr_dn_rows_batched_f16(const __half* in, __half* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_corr_dn_cols_batched_f16(const __half* in, __half* out,
+                                 int H, int W, const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_up_conv_rows_batched_f16(const __half* in, __half* out,
+                                 int in_H, int out_H, int W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
+                                 int H, int in_W, int out_W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
 
 // Scatter/gather for channel-major band layout (lpyr.cu).
 void launch_scatter_subtract(const float* a, const float* b, float* dst,
@@ -159,6 +178,13 @@ void launch_gather_add(const float* src, const float* b, float* dst,
 void launch_gather(const float* src, float* dst,
                    const int* offsets, int n_per_slice, int B,
                    cudaStream_t stream);
+// FP16 scatter variants (read __half scratch, write float bands).
+void launch_scatter_subtract_f16(const __half* a, const __half* b, float* dst,
+                                 const int* offsets, int n_per_slice, int B,
+                                 cudaStream_t stream);
+void launch_scatter_f16(const __half* src, float* dst,
+                    const int* offsets, int n_per_slice, int B,
+                    cudaStream_t stream);
 
 // fp16_cvt.cu — FP16↔FP32 conversion at buffer boundaries.
 void launch_f32_to_f16(const float* src, __half* dst, int n, cudaStream_t stream);
@@ -905,6 +931,101 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
                                       M * sizeof(int), cudaMemcpyHostToDevice));
                 evm::launch_scatter(
+                    scratch_cur, out_base, d_offsets, h * w, M, 0);
+            }
+
+            device_free(scratch_cur); device_free(scratch_lo);
+            device_free(scratch_lo2); device_free(scratch_hi2);
+            device_free(d_offsets);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("n_frames"),
+           py::arg("H"), py::arg("W"), py::arg("levels"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
+    // --- batched lpyr_build with FP16 scratch (halves VRAM for build) ------
+    // Same algorithm as batched_lpyr_build, but the 4 scratch buffers are
+    // __half instead of float. Input must be __half, output bands are float.
+    // Spatial kernels read __half, compute in FP32, write __half.
+    // Scatter kernels read __half scratch, convert to float, write float bands.
+    // Scratch: 4 * M * H * W * 2 bytes (was 4 * M * H * W * 4).
+    m.def("batched_lpyr_build_f16",
+        [](uintptr_t d_in, uintptr_t d_out, int n_frames, int H, int W, int levels,
+           uintptr_t d_filt, int filt_len) {
+            int M = n_frames * 3;
+            auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const __half* in_base = reinterpret_cast<const __half*>(d_in);
+            float* out_base = reinterpret_cast<float*>(d_out);
+
+            std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
+            size_t total = 0;
+            for (int l = 0; l < levels; ++l) {
+                level_sizes_vec[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_offsets[l] = total;
+                total += level_sizes_vec[l] * M;
+            }
+
+            // 4 __half scratch buffers (half the VRAM of the FP32 version).
+            auto* scratch_cur = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+            auto* scratch_lo  = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+            auto* scratch_lo2 = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+            auto* scratch_hi2 = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+            int* d_offsets = device_alloc<int>(M);
+
+            // cur := input (M slices, batched D2D copy of __half).
+            CUDA_CHECK(cudaMemcpyAsync(scratch_cur, in_base,
+                                       static_cast<size_t>(M) * H * W * sizeof(__half),
+                                       cudaMemcpyDeviceToDevice, 0));
+
+            for (int l = 0; l < levels - 1; ++l) {
+                const int h = sizes[l].first, w = sizes[l].second;
+                const int hn = (h + 1) / 2;
+                const int wn = (w + 1) / 2;
+
+                evm::launch_corr_dn_cols_batched_f16(
+                    scratch_cur, scratch_lo, h, w, filt, filt_len,
+                    h * w, h * wn, M, 0);
+                evm::launch_corr_dn_rows_batched_f16(
+                    scratch_lo, scratch_lo2, h, wn, filt, filt_len,
+                    h * wn, hn * wn, M, 0);
+                evm::launch_up_conv_rows_batched_f16(
+                    scratch_lo2, scratch_lo, hn, h, wn, filt, filt_len,
+                    hn * wn, h * wn, M, 0);
+                evm::launch_up_conv_cols_batched_f16(
+                    scratch_lo, scratch_hi2, h, wn, w, filt, filt_len,
+                    h * wn, h * w, M, 0);
+
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                evm::launch_scatter_subtract_f16(
+                    scratch_cur, scratch_hi2, out_base,
+                    d_offsets, h * w, M, 0);
+
+                CUDA_CHECK(cudaMemcpyAsync(scratch_cur, scratch_lo2,
+                    static_cast<size_t>(M) * hn * wn * sizeof(__half),
+                    cudaMemcpyDeviceToDevice, 0));
+            }
+
+            // Coarsest level.
+            {
+                int l = levels - 1;
+                const int h = sizes[l].first, w = sizes[l].second;
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                evm::launch_scatter_f16(
                     scratch_cur, out_base, d_offsets, h * w, M, 0);
             }
 

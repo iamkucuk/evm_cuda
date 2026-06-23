@@ -23,6 +23,7 @@
 #include <vector>
 #include "../include/evm_common.cuh"
 #include "../include/evm_check.cuh"
+#include <cuda_fp16.h>
 
 namespace evm {
 
@@ -300,6 +301,55 @@ void launch_gather(const float* src, float* dst,
     dim3 block(256, 1, 1);
     dim3 grid(div_up(n_per_slice, 256), B, 1);
     gather_kernel<<<grid, block, 0, stream>>>(
+        src, dst, offsets, n_per_slice, B);
+}
+
+// ===========================================================================
+// FP16 variants: read __half scratch, convert to float, write float bands.
+// Used when lpyr_build's scratch buffers are stored as __half to save VRAM.
+// ===========================================================================
+
+__global__ void scatter_subtract_f16_kernel(
+    const __half* __restrict__ a,
+    const __half* __restrict__ b,
+    float* __restrict__ dst,
+    const int* __restrict__ offsets,
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    int ai = m * n_per_slice + px;
+    dst[offsets[m] + px] = __half2float(a[ai]) - __half2float(b[ai]);
+}
+
+__global__ void scatter_f16_kernel(
+    const __half* __restrict__ src,
+    float* __restrict__ dst,
+    const int* __restrict__ offsets,
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    dst[offsets[m] + px] = __half2float(src[m * n_per_slice + px]);
+}
+
+void launch_scatter_subtract_f16(const __half* a, const __half* b, float* dst,
+                                 const int* offsets, int n_per_slice, int B,
+                                 cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    scatter_subtract_f16_kernel<<<grid, block, 0, stream>>>(
+        a, b, dst, offsets, n_per_slice, B);
+}
+
+void launch_scatter_f16(const __half* src, float* dst,
+                    const int* offsets, int n_per_slice, int B,
+                    cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    scatter_f16_kernel<<<grid, block, 0, stream>>>(
         src, dst, offsets, n_per_slice, B);
 }
 
