@@ -27,3 +27,4 @@ cuda/build/
 .DS_Store
 
 reduction.pdf
+kaggle/results*/
