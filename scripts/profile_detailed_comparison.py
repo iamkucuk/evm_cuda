@@ -39,17 +39,12 @@ def main():
     # --- 1. Python baseline ---
     print("Python CPU...")
     import evm
-    def run_py():
-        evm.magnify_motion_lpyr_iir(
-            VID, "/tmp/_py.mp4",
-            alpha=ALPHA, lambda_c=LAMBDA_C, r1=R1, r2=R2, chrom_attenuation=CHROM_ATT)
-    run_py()
-    times = [run_py() or _measure(run_py) for _ in range(3)]
-    # Actually just time it properly:
     py_times = []
     for _ in range(3):
         t0 = time.perf_counter()
-        run_py()
+        evm.magnify_motion_lpyr_iir(
+            VID, "/tmp/_py.mp4",
+            alpha=ALPHA, lambda_c=LAMBDA_C, r1=R1, r2=R2, chrom_attenuation=CHROM_ATT)
         py_times.append(time.perf_counter() - t0)
     py_med = median(py_times)
     results["Python CPU"] = py_med
