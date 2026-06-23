@@ -144,7 +144,7 @@ __global__ void add_planar_quantize_kernel(
 
         float y_ = cvt_in<NTSC_T>(ntsc[px + 0]) + dy;
         float i_ = cvt_in<NTSC_T>(ntsc[px + 1]) + di;
-        float q_ = ntsc[px + 2] + dq;
+        float q_ = cvt_in<NTSC_T>(ntsc[px + 2]) + dq;
 
         float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
         float g = kYiqToRgb[1][0]*y_ + kYiqToRgb[1][1]*i_ + kYiqToRgb[1][2]*q_;
