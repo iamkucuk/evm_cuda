@@ -405,6 +405,5 @@ void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
     up_conv_cols_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
 }
-}
 
 }  // namespace evm
