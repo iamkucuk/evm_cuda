@@ -98,7 +98,7 @@ without a separate kernel launch.
 
 ### Kernel inventory
 
-The implementation has 32 CUDA kernels across 9 source files:
+The implementation has 32 CUDA kernels across 10 source files:
 
 | File | Kernels | Purpose |
 |------|---------|---------|
@@ -115,40 +115,45 @@ The implementation has 32 CUDA kernels across 9 source files:
 ## Bottleneck analysis
 
 Performance was measured with stage-by-stage profilers
-(`scripts/profile_color.py`, `scripts/profile_motion.py`) that bracket
-each pipeline stage with `cudaDeviceSynchronize` and report median of 5
-iterations with a warmup run. All device buffers are pre-allocated so
-`cudaMalloc` doesn't contaminate kernel measurements. Measurements were
-taken on NVIDIA H100 (kolyoz21, TRUBA HPC).
+(`scripts/profile_color.py`, `scripts/profile_motion.py`,
+`scripts/profile_full_comparison.py`) that bracket each pipeline stage
+with `cudaDeviceSynchronize` and report median of 5 iterations with a
+warmup run. All device buffers are pre-allocated so `cudaMalloc` doesn't
+contaminate kernel measurements. Measurements were taken on NVIDIA A100
+(TRUBA HPC, palamut2) and Tesla P100 (Kaggle).
 
-### Steady-state timings
+All numbers below are **compute-only** (pipeline stages only, excluding
+video decode/encode). End-to-end times are ~15x higher because mp4
+encoding via OpenCV dominates.
 
-**Color pipeline (face.mp4, 291 frames, 528×592): 0.081s total**
+### Steady-state timings (A100-80GB)
 
-| Stage | Time | Share | What limits it |
-|-------|------|-------|-----------------|
-| color_cvt | 0.6 ms | 0.7% | Nothing. Trivial per-pixel 3×3 matrix multiply. |
-| blur_dn | 4.6 ms | 5.7% | Compute. Separable filter, batched across all slices. |
-| D2H + reshape | 4.0 ms | 5.0% | PCIe bandwidth plus a host-side numpy transpose. |
-| ideal_bandpass | 4.7 ms | 5.8% | cuFFT compute. Plan is cached. |
-| **upsample + render** | **52.3 ms** | **64.6%** | See analysis below. |
-
-**Motion pipeline (baby.mp4, 291 frames, 960×544, 9 levels): 0.181s total**
+**Color pipeline (face.mp4, 291 frames, 528x592): 72 ms total**
 
 | Stage | Time | Share | What limits it |
 |-------|------|-------|-----------------|
-| NTSC convert | 0.9 ms | 0.5% | Nothing. Trivial. |
-| lpyr_build | 19.6 ms | 10.8% | Compute. Separable filter, batched. |
-| temporal IIR | 40.8 ms | 22.6% | Algorithmic seriality. Each output depends on the previous two. |
-| lpyr_recon | 14.8 ms | 8.2% | Compute. Separable filter, batched. |
-| **render** | **81.9 ms** | **45.2%** | See analysis below. |
+| color_cvt | 0.9 ms | 1% | Nothing. Trivial per-pixel 3x3 matrix multiply. |
+| blur_dn | 7.9 ms | 11% | Compute. Separable filter, batched across all slices. |
+| D2H + reshape | 3.8 ms | 5% | PCIe bandwidth plus a host-side numpy transpose. |
+| ideal_bandpass | 6.2 ms | 9% | cuFFT compute. Plan is cached. |
+| **upsample + render** | **52.8 ms** | **73%** | See analysis below. |
+
+**Motion pipeline (baby.mp4, 291 frames, 960x544, 9 levels): 205 ms total**
+
+| Stage | Time | Share | What limits it |
+|-------|------|-------|-----------------|
+| NTSC convert | 1.6 ms | 0.8% | Nothing. Trivial. |
+| lpyr_build | 35.3 ms | 17% | Compute. Separable filter, batched. |
+| temporal IIR | 61.4 ms | 30% | Algorithmic seriality. Each output depends on the previous two. |
+| lpyr_recon | 23.6 ms | 12% | Compute. Separable filter, batched. |
+| **render** | **82.3 ms** | **40%** | See analysis below. |
 
 ### The render stage: underutilized resources
 
-The render stage takes 45 to 65% of GPU time. Each output pixel reads
+The render stage takes 40 to 73% of GPU time. Each output pixel reads
 ~12 bytes from the NTSC frame (3 floats), does about 35 FLOPs of math
 (bilinear interpolation plus NTSC-to-BGR matrix multiply), and writes 3
-bytes. The arithmetic intensity is 2.3 FLOPs per byte, which on the H100
+bytes. The arithmetic intensity is 2.3 FLOPs per byte, which on the A100
 roofline puts this in the memory-bound regime.
 
 But the kernel achieves only 0.4% of peak memory bandwidth and 0.003%
@@ -171,7 +176,7 @@ difference comes entirely from how the kernel organizes data access:
 coalescing, shared memory staging, warp-level coordination, and giving
 each thread enough independent work to keep the memory pipeline full.
 
-### The IIR filter: algorithmic seriality (23% of motion GPU time)
+### The IIR filter: algorithmic seriality (30% of motion GPU time)
 
 The recursive temporal filter is sequential along the time axis. Each
 output sample depends on the previous two. The kernel assigns one thread
@@ -179,7 +184,7 @@ per spatial location, and each thread loops over all T frames. This
 can't be parallelized across time without changing the algorithm
 (block-parallel scan, cyclic reduction).
 
-### The spatial filters: compute bound but fast (11 to 19%)
+### The spatial filters: compute bound but fast (11 to 17%)
 
 The separable 5-tap binomial filter operates on the pyramid levels. At
 the finest level (960×544), each output pixel needs 5 multiply-adds per
@@ -208,7 +213,7 @@ for a reshape before the per-channel FFT.
 The ideal bandpass filter creates cuFFT plans (forward + inverse C2C) for
 each of the 3 color channels. `cufftPlanMany` does internal autotuning on
 each call: kernel selection, workspace sizing. That costs about 5 to 10
-ms per plan on H100.
+ms per plan on A100.
 
 A static cache keyed on `(T, N)` fixes this. Channel 1 warms the cache,
 channels 2 and 3 reuse it. The plan survives across pipeline invocations
@@ -291,95 +296,137 @@ This gave 22% gains on both render stages:
 The same technique was applied to the transpose kernels used in the IIR
 stage, where each thread now handles 4 spatial locations.
 
-### Level 5: FP16 storage (motion pipeline)
+### Level 5: FP16 storage
 
 The render stage's memory traffic is dominated by reading the NTSC frame
 in float32 (12 bytes per pixel). Storing intermediate buffers in half
 precision (`__half`, 2 bytes per element instead of 4) halves the memory
 traffic on every buffer read and write.
 
-The implementation templates all batched spatial kernels on input/output
-type. When instantiated with `__half`, each kernel reads via
-`__half2float`, computes in FP32, and writes via `__float2half`. The IIR
-filter's accumulator stays FP64 regardless of storage type.
+The implementation templates all batched spatial, transpose, IIR, and
+render kernels on input/output type. When instantiated with `__half`,
+each kernel reads via `__half2float`, computes in FP32, and writes via
+`__float2half`. The IIR filter's accumulator stays FP64 regardless of
+storage type.
 
-The FP16 motion pipeline stores NTSC, planar NTSC, bands, filtered bands,
-and delta all in `__half`. The only FP32 buffers are the momentary NTSC
+**Motion FP16** stores NTSC, planar NTSC, bands, filtered bands, and
+delta all in `__half`. The only FP32 buffers are the momentary NTSC
 compute output (freed after one `f32_to_f16` conversion) and the band
 output from `lpyr_build` (scatter kernels write float, converted to FP16
 before the temporal filter).
 
-| Stage | FP32 | FP16 | FP16 vs FP32 |
-|-------|------|------|-------------|
-| NTSC convert | 1.6 ms | 5.1 ms | -221% (includes f32->f16) |
-| lpyr_build | 35.4 ms | 37.3 ms | -5% |
-| temporal IIR | 61.4 ms | 61.9 ms | -1% |
-| lpyr_recon | 24.3 ms | 20.5 ms | +16% |
-| render | 82.3 ms | 41.2 ms | +50% |
-| **Total** | **205 ms** | **167 ms** | **+19%** |
+| Stage | A100 FP32 | A100 FP16 | P100 FP32 | P100 FP16 |
+|-------|-----------|-----------|-----------|-----------|
+| NTSC convert | 1.6 ms | 5.6 ms | 16.6 ms | 28.5 ms |
+| lpyr_build | 35.3 ms | 37.0 ms | 402.8 ms | 183.4 ms |
+| temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms |
+| lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms |
+| render | 82.3 ms | 44.7 ms | 8.6 ms | 5.6 ms |
+| **Total** | **209 ms** | **172 ms** | **1,143 ms** | **676 ms** |
 
-The render stage halves because reading `__half` NTSC instead of `float`
-halves the memory traffic. The NTSC convert is slower by 3.5ms (the
-f32-to-f16 conversion pass), but that is small against the 41ms render
-savings.
+The render stage halves on both GPUs because reading `__half` NTSC
+instead of `float` halves the memory traffic. The NTSC convert is slower
+by 3-12 ms (the f32-to-f16 conversion pass), but that is small against
+the render savings.
 
-Precision: RMSE between FP32 and FP16 output is 0.0016, which is 6.2x
-under the 0.01 tolerance. The maximum per-pixel error is 3/255 (3 uint8
-quantization steps), compared to 1/255 for the FP32 path. The FP16
-pipeline also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB
-GPUs (tested on Kaggle Tesla P100).
+On the P100, the IIR stage also benefits substantially (608 ms to 366
+ms). The P100 (sm_60) processes `__half2` operations at 2x the FP32 rate
+via 64-bit-wide half-precision SIMD, so the sequential IIR loop gets
+genuinely faster compute, not just better bandwidth.
+
+**Color FP16** stores NTSC as `__half` (the dominant persistent buffer).
+The Gaussian downsample output goes to FP32 (cuFFT bandpass needs float),
+and the `filt` signal (FFT output) stays FP32. Only the NTSC buffer read
+by the render kernel is halved.
+
+The result is GPU-dependent. On the A100 (1935 GB/s), FP16 color is 17%
+slower because the conversion overhead exceeds the bandwidth savings.
+On the P100 (732 GB/s), FP16 color is 13% faster because every byte of
+bandwidth matters. The reason is in the render kernel's memory access
+pattern:
+
+The color render kernel (`upsample_add_quantize`) reads 15 values per
+output pixel: 3 NTSC values + 12 bilinear interpolation taps (4
+neighbors x 3 channels) from `filt`. In FP32 that's 60 bytes. Halving
+only NTSC saves 6 bytes (10%). The `filt` buffer stays FP32 and accounts
+for 80% of the traffic. Compare to the motion render kernel
+(`add_planar_quantize`), which reads 6 values per pixel (3 NTSC + 3
+delta), so FP16 halves the traffic completely (24 to 12 bytes).
+
+Precision: RMSE between FP32 and FP16 output is 0.0016 for motion, which
+is 6.2x under the 0.01 end-to-end tolerance. The maximum per-pixel error
+is 3/255 (3 uint8 quantization steps). For color FP16, the uint8 output
+differs from FP32 by at most 2 LSB per channel. The FP16 motion pipeline
+also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB GPUs
+(tested on Kaggle Tesla P100).
 
 ## Throughput and theoretical limits
+
+### Multi-GPU comparison (compute-only)
+
+| GPU | BW | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
+|-----|-----|-----------|-----------|------------|------------|
+| **P100** (16GB, sm_60) | 732 GB/s | 138 ms | 120 ms | 1,143 ms | 676 ms |
+| **A100** (80GB, sm_80) | 1,935 GB/s | 72 ms | 84 ms | 209 ms | 172 ms |
+
+Speedups vs CPU (Python/NumPy on TRUBA Xeon):
+
+| GPU | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
+|-----|-----------|-----------|------------|------------|
+| P100 | 75x | 86x | 40x | 68x |
+| A100 | 144x | 124x | 222x | 269x |
+
+**FP16 helps more on the P100 than the A100.** The P100 has 2.6x lower
+memory bandwidth than the A100, so halving the render's memory traffic
+has proportionally more impact. On the A100, the bandwidth headroom is
+large enough that FP16's conversion overhead dominates.
+
+**The P100 IIR surprise.** The temporal IIR stage drops from 608 ms to
+366 ms on the P100 with FP16. This is not just bandwidth. The P100's
+sm_60 architecture processes `__half2` (two half-precision values packed
+in 32 bits) at 2x the FP32 throughput. The sequential IIR loop is
+compute-bound, not memory-bound, so the doubled SIMD rate directly
+translates to faster execution.
 
 ### Measured throughput
 
 The GPU pipeline processes pixels at the following rates (whole pipeline,
 not just render):
 
-| Pipeline | Resolution | Time (291 frames) | Throughput |
-|----------|-----------|-------------------|------------|
-| Color | 528×592 | 0.081s | **1.12 Gpx/s** (0.89 ns/px) |
-| Motion | 960×544 | 0.181s | **0.84 Gpx/s** (1.19 ns/px) |
+| Pipeline | Resolution | A100 FP32 | A100 FP16 | P100 FP16 |
+|----------|-----------|-----------|-----------|-----------|
+| Color | 528x592 | 1.23 Gpx/s | 1.05 Gpx/s | 0.74 Gpx/s |
+| Motion | 960x544 | 0.73 Gpx/s | 0.89 Gpx/s | 0.39 Gpx/s |
 
 Motion is slower per pixel because the Laplacian pyramid does 9 levels of
 decomposition and reconstruction, plus the IIR filter is sequential per
-location.
+location. FP16 motion on the A100 is faster per pixel than FP32 because
+the render stage's halved memory traffic more than compensates for the
+conversion overhead.
 
-### Realtime performance projection
+### Realtime performance projection (A100)
 
 Scaling linearly by pixel count (the bottleneck stages scale with pixels):
 
-| Resolution | Color | Motion | Realtime (30 fps)? |
+| Resolution | Color FP32 | Motion FP16 | Realtime (30 fps)? |
 |-----------|-------|--------|---------------------|
-| 1080p (1920×1080) | 542 fps | 405 fps | **18× and 13× headroom** |
-| 4K (3840×2160) | 135 fps | 101 fps | **4.5× and 3.4× headroom** |
-| Max @ 30 fps | 8156×4588 | 7052×3966 | Beyond 8K |
+| 1080p (1920x1080) | 526 fps | 469 fps | **18x and 16x headroom** |
+| 4K (3840x2160) | 131 fps | 117 fps | **4.4x and 3.9x headroom** |
 
-At 1080p, a single H100 can run the full color pipeline at 542 fps and
-motion at 405 fps. Even at 4K, both pipelines exceed 30 fps with 3× to 4×
-margin. The maximum resolution for 30 fps realtime exceeds 8K for color
-and approaches 8K for motion.
+At 1080p, a single A100 can run the full color pipeline at 526 fps and
+FP16 motion at 469 fps. Even at 4K, both pipelines exceed 30 fps with 4x
+margin.
 
 These are GPU-only numbers. The end-to-end pipeline (including video
 decode and encode) is currently bottlenecked by the CPU codec at about
 1.6s per clip, which limits realtime throughput regardless of GPU speed.
 
-### Full comparison (A100-80GB)
-
-| Path | Color (e2e) | Motion (e2e) | Motion (GPU-only) |
-|------|------------|--------------|-------------------|
-| Python CPU | 13.1s | 48.9s | - |
-| CUDA FP32 | 1.18s | 1.90s | 205 ms |
-| CUDA FP16 | N/A | 1.73s | 167 ms |
-
-FP16 motion is 19% faster GPU-only and 9% faster end-to-end than FP32.
-
 ### Resource utilization: both underutilized
 
-The render stage takes 45 to 65% of GPU time, yet it achieves only 0.4%
-of the H100's peak memory bandwidth and 0.003% of peak FP32 throughput.
-Neither resource is saturated. The GPU has the bandwidth and the compute
-capacity, but the kernel's data access patterns don't let it use either.
+The render stage takes 40 to 73% of GPU time, yet it achieves only 0.4%
+of peak memory bandwidth and 0.003% of peak FP32 throughput. Neither
+resource is saturated. The GPU has the bandwidth and the compute capacity,
+but the kernel's data access patterns don't let it use either.
 
 Harris's reduction paper shows the same pattern. His seven kernel
 versions all run on the same hardware, process the same data, and produce
@@ -400,19 +447,16 @@ thread does too little independent work to keep the memory pipeline busy.
 
 ## Open optimization surfaces
 
-The render stage (45 to 65% of GPU time) underutilizes both memory
+The render stage (40 to 73% of GPU time) underutilizes both memory
 bandwidth and compute. The remaining headroom is in changing how the
-kernel accesses data, not how much data it processes. Three approaches
-correspond to later stages of Harris's progression.
+kernel accesses data, not how much data it processes.
 
-Shared memory tiling (Harris V3). Load a tile of the NTSC frame into
-shared memory cooperatively, then have each thread read from shared memory
-(~20 cycle access) instead of global memory (~400 cycle access). Adjacent
-threads share loaded cache lines, and the `__syncthreads()` barrier
-ensures the tile is fully loaded before any thread reads from it. The
-shared memory layout must be padded to avoid bank conflicts (32 banks, 4
-bytes each; a stride that's a multiple of 32 causes all threads to hit the
-same bank).
+FP16 `filt` in color render. The color render kernel reads 12 values per
+pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32 because
+it comes from the FFT output. Converting `filt` to FP16 before render would
+halve that traffic. The filt buffer is small (~1 MB for face.mp4), so the
+conversion is sub-millisecond. This would address the 80% of render traffic
+that FP16 NTSC storage doesn't touch.
 
 Texture hardware (Harris texture path). `cudaTextureObject_t` with
 `cudaReadModeElementType` provides hardware-managed L1 texture cache with
@@ -423,18 +467,12 @@ upsample, `tex2D` with linear filtering replaces the manual 4-tap
 interpolation entirely: the hardware does it in one instruction with its
 own cache.
 
-Multiple elements per thread, extended (Harris V6+). The current V6
-implementation processes 4 pixels per thread. Increasing to 8 or 16 would
-give the compiler more independent memory operations to pipeline, further
-filling the gaps where the SM waits for data. The tradeoff is register
-pressure: each pixel needs registers for its intermediate values, and
-spilling to local memory would negate the benefit.
+NVENC/NVDEC. Video encode (~1.6s) is 10x slower than the GPU pipeline on
+both color and motion. Hardware video codecs would address this end-to-end
+bottleneck.
 
-FP16 NTSC storage. Storing the NTSC frame in half-precision halves the
-bytes per read, which doubles the effective cache capacity and improves
-coalescing density. The NTSC values are in [0, 1] with roughly 10⁻⁶
-precision requirements. FP16's 11-bit mantissa is likely sufficient but
-needs tolerance validation.
+CUDA streams. All kernels use stream 0. Independent stages (e.g., IIR
+filter across levels/channels) could overlap on multiple streams.
 
 For the IIR stage, the algorithmic seriality can only be addressed by
 replacing the recursive filter with a block-parallel formulation (cyclic
@@ -456,27 +494,35 @@ not from a lack of hardware capability. The reduction kernel starts at
 the kernel interacts with the memory subsystem. The arithmetic doesn't
 change. The data access does.
 
-This project applied the same principle at two levels. At the pipeline
+This project applied the same principle at three levels. At the pipeline
 level: eliminating host-device transfers, batching kernel launches,
 caching cuFFT plans. At the kernel level: register hoisting for filter
-taps, and V6 multiple-elements-per-thread for the render stage (22%
-improvement). The render kernel's 0.4% bandwidth utilization indicates
-the same class of problem Harris describes: the hardware can deliver far
-more data and compute far more FLOPs than the kernel currently asks of it.
-The shared-memory tiling, texture hardware, and extended V6 optimizations
-in the open surfaces section are the next steps along that roadmap.
+taps, V6 multiple-elements-per-thread for the render stage (22%
+improvement), and FP16 storage to halve memory traffic. At the system
+level: profiling across two GPU generations (P100 and A100) to find that
+the optimal precision choice depends on the hardware's memory bandwidth.
+The render kernel's 0.4% bandwidth utilization indicates the same class
+of problem Harris describes: the hardware can deliver far more data and
+compute far more FLOPs than the kernel currently asks of it. The FP16
+`filt` conversion, texture hardware, and NVENC optimizations in the open
+surfaces section are the next steps along that roadmap.
 
 The profilers run 5 timed iterations with a warmup run (to exclude kernel
 JIT and binary load costs), pre-allocate all device buffers (to exclude
 `cudaMalloc` from kernel measurements), and report median plus min/max per
 stage. Video decode and encode are excluded to isolate GPU pipeline
-performance.
+performance. CPU stages use the same boundary definitions, profiling
+`evm.magnify_*` with `perf_counter` around each algorithmic stage.
+
+Measurements were taken on:
+- **A100-SXM4-80GB** (sm_80, TRUBA HPC palamut2): 1,935 GB/s bandwidth
+- **Tesla P100-PCIE-16GB** (sm_60, Kaggle): 732 GB/s bandwidth
 
 [harris]: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 
-74 unit and integration tests validate correctness against the Python
+125 unit and integration tests validate correctness against the Python
 baseline (RMSE < 0.01 for end-to-end pipelines, per-kernel tolerances
-from 10⁻⁶ to 10⁻⁴ depending on the operation). The full test suite and
+from 10^-6 to 10^-4 depending on the operation). The full test suite and
 profiler scripts are in the [repository][repo].
 
 [repo]: https://github.com/iamkucuk/evm_cuda
