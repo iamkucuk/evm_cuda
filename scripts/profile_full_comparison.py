@@ -119,6 +119,136 @@ def run_motion_fp16():
 
 
 # ===========================================================================
+# CPU STAGE-LEVEL PROFILER (mirrors the GPU stage boundaries)
+# ===========================================================================
+
+def profile_color_cpu_stages():
+    """Per-stage CPU timing for the color pipeline.
+
+    Re-implements the four stages of evm.magnify_color_gdown_ideal with
+    perf_counter boundaries that match the GPU profiler's stage names, so the
+    comparison table can show CPU vs FP32 vs FP16 for every stage.
+    """
+    import evm
+    from evm.pyramids import blur_dn_clr
+    from evm.filters import ideal_bandpass
+
+    frames, fps = evm.magnify._read_frames(COLOR_VID)
+    n = len(frames)
+    h, w = frames[0].shape[:2]
+
+    def run_once():
+        st = {}
+
+        # Stage 1: NTSC color convert (per-frame, same as GPU)
+        t0 = time.perf_counter()
+        ntsc_frames = [evm.magnify._rgb_frame_to_ntsc(fr) for fr in frames]
+        st["1) color_cvt"] = time.perf_counter() - t0
+
+        # Stage 2: Gaussian downsample (blur_dn_clr per frame)
+        t0 = time.perf_counter()
+        gdown = np.stack([blur_dn_clr(ntsc, COLOR_LEVEL) for ntsc in ntsc_frames], axis=0)
+        st["2) blur_dn"] = time.perf_counter() - t0
+
+        # Stage 2b: no host round-trip on CPU (data is already in host memory)
+        st["2b) D2H + reshape"] = 0.0
+
+        # Stage 3: ideal bandpass per channel
+        t0 = time.perf_counter()
+        filtered = np.stack(
+            [ideal_bandpass(gdown[..., c].astype(np.float64), COLOR_FL, COLOR_FH, COLOR_SR)
+             for c in range(3)], axis=-1)
+        st["3) ideal_bandpass"] = time.perf_counter() - t0
+
+        # Stage 4: upsample + add + quantize (render)
+        t0 = time.perf_counter()
+        gain = np.array([COLOR_ALPHA, COLOR_ALPHA * COLOR_CHROM, COLOR_ALPHA * COLOR_CHROM])
+        filtered = filtered * gain
+        out = np.empty((n, h, w, 3), dtype=np.uint8)
+        for i in range(n):
+            upsampled = cv2.resize(filtered[i], (w, h), interpolation=cv2.INTER_LINEAR)
+            rendered = ntsc_frames[i] + upsampled
+            out[i] = evm.magnify._ntsc_to_bgr_uint8(rendered)
+        st["4) upsample + render"] = time.perf_counter() - t0
+
+        st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
+        return st
+
+    run_once()  # warmup
+    runs = [run_once() for _ in range(3)]
+    return {k: median([r[k] for r in runs]) for k in runs[0]}
+
+
+def profile_motion_cpu_stages():
+    """Per-stage CPU timing for the motion pipeline.
+
+    Re-implements _streaming_lpyr_motion with perf_counter boundaries matching
+    the GPU profiler's stage names.
+    """
+    import evm
+    from evm.pyramids import laplacian_pyramid_channels, reconstruct_from_channels
+    from evm.filters import iir_bandpass
+
+    frames, fps = evm.magnify._read_frames(MOTION_VID)
+    n = len(frames)
+    h, w = frames[0].shape[:2]
+
+    def run_once():
+        st = {}
+
+        # Stage A: NTSC color convert
+        t0 = time.perf_counter()
+        ntsc_frames = [evm.magnify._rgb_frame_to_ntsc(fr) for fr in frames]
+        st["A) NTSC convert"] = time.perf_counter() - t0
+
+        # Stage B: Laplacian pyramid build (all frames)
+        t0 = time.perf_counter()
+        pyrs = [laplacian_pyramid_channels(f, "auto") for f in ntsc_frames]
+        n_levels = pyrs[0][1].shape[0]
+        pind = pyrs[0][1]
+        n_coeffs = sum(int(pind[l, 0] * pind[l, 1]) for l in range(n_levels))
+        series = np.empty((n, n_coeffs, 3), dtype=np.float64)
+        for i in range(n):
+            for l in range(n_levels):
+                sl = evm.magnify._level_slice(l, pind)
+                series[i, sl, :] = pyrs[i][0][l].reshape(-1, 3)
+        st["B) lpyr_build"] = time.perf_counter() - t0
+
+        # Stage C: temporal IIR filter
+        t0 = time.perf_counter()
+        filtered = iir_bandpass(series, MOTION_R1, MOTION_R2, axis=0)
+        st["C) temporal IIR"] = time.perf_counter() - t0
+
+        # Stage D1: reconstruct pyramid + apply alpha schedule
+        t0 = time.perf_counter()
+        alpha_sched = evm.magnify.figure6_alpha_schedule(
+            n_levels, MOTION_ALPHA, MOTION_LAMBDA, h, w)
+        filtered_per_frame = []
+        for i in range(n):
+            bands = []
+            for l in range(n_levels):
+                sl = evm.magnify._level_slice(l, pind)
+                lh, lw = int(pind[l, 0]), int(pind[l, 1])
+                bands.append(filtered[i, sl, :].reshape(lh, lw, 3) * alpha_sched[l])
+            filtered_per_frame.append(bands)
+        rendered_ntsc = evm.magnify._amplify_lpyr_stack(
+            ntsc_frames, filtered_per_frame, pind, MOTION_CHROM)
+        st["D1) lpyr_recon"] = time.perf_counter() - t0
+
+        # Stage D2: YIQ->RGB + quantize (render)
+        t0 = time.perf_counter()
+        out = np.stack([evm.magnify._ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
+        st["D2) render"] = time.perf_counter() - t0
+
+        st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
+        return st
+
+    run_once()  # warmup
+    runs = [run_once() for _ in range(3)]
+    return {k: median([r[k] for r in runs]) for k in runs[0]}
+
+
+# ===========================================================================
 # CUDA STAGE-LEVEL PROFILER (for FP32 and FP16)
 # ===========================================================================
 
@@ -374,11 +504,17 @@ def main():
     print("COLOR PIPELINE (face.mp4, 528x592, level=4)")
     print("=" * 70)
 
-    # CPU
+    # CPU e2e + stages
     print("\n[Python CPU]")
     med, mn, mx = time_fn(run_color_cpu, n_iter=3)
     print(f"  Total: {med:.3f}s")
     results["color_cpu_total"] = med
+
+    print("  Profiling stages...")
+    cpu_stages = profile_color_cpu_stages()
+    if cpu_stages:
+        print(f"  Compute-only total: {cpu_stages.get('_total', 0):.4f}s")
+        results["color_cpu_stages"] = cpu_stages
 
     # FP32 e2e + stages
     print("\n[CUDA FP32]")
@@ -414,11 +550,17 @@ def main():
     print("MOTION PIPELINE (baby.mp4, 960x544, 9 levels)")
     print("=" * 70)
 
-    # CPU
+    # CPU e2e + stages
     print("\n[Python CPU]")
     med, mn, mx = time_fn(run_motion_cpu, n_iter=3)
     print(f"  Total: {med:.3f}s")
     results["motion_cpu_total"] = med
+
+    print("  Profiling stages...")
+    cpu_stages = profile_motion_cpu_stages()
+    if cpu_stages:
+        print(f"  Compute-only total: {cpu_stages.get('_total', 0):.4f}s")
+        results["motion_cpu_stages"] = cpu_stages
 
     # FP32 e2e + stages
     print("\n[CUDA FP32]")
@@ -454,61 +596,73 @@ def main():
     print("SUMMARY")
     print("=" * 70)
 
-    # Color stage comparison
-    if "color_fp32_stages" in results and "color_fp16_stages" in results:
-        s32 = results["color_fp32_stages"]
-        s16 = results["color_fp16_stages"]
-        print(f"\nCOLOR — {'Stage':<22s} {'FP32':>10s} {'FP16':>10s} {'FP16/FP32':>10s}")
+    # Color stage comparison (CPU vs FP32 vs FP16)
+    if "color_cpu_stages" in results:
+        scpu = results["color_cpu_stages"]
+        s32 = results.get("color_fp32_stages", {})
+        s16 = results.get("color_fp16_stages", {})
+        print(f"\nCOLOR — {'Stage':<22s} {'CPU':>10s} {'FP32':>10s} {'FP16':>10s}")
         print("-" * 55)
-        for k in s32:
+        for k in scpu:
             if k.startswith("_"):
                 continue
+            vcpu = scpu.get(k, 0)
             v32 = s32.get(k, 0)
             v16 = s16.get(k, 0)
-            pct = f"{(1 - v16/v32)*100:+.1f}%" if v32 > 0 else "-"
-            print(f"  {k:<22s} {v32*1000:>9.1f}ms {v16*1000:>9.1f}ms {pct:>9s}")
+            print(f"  {k:<22s} {vcpu*1000:>9.1f}ms {v32*1000:>9.1f}ms {v16*1000:>9.1f}ms")
+        tcpu = scpu.get("_total", 0)
         t32 = s32.get("_total", 0)
         t16 = s16.get("_total", 0)
         print("-" * 55)
-        print(f"  {'GPU pipeline total':<22s} {t32*1000:>9.1f}ms {t16*1000:>9.1f}ms {(1-t16/t32)*100:>+9.1f}%")
+        print(f"  {'Compute/GPU total':<22s} {tcpu*1000:>9.1f}ms {t32*1000:>9.1f}ms {t16*1000:>9.1f}ms")
 
-    # Motion stage comparison
-    if "motion_fp32_stages" in results and "motion_fp16_stages" in results:
-        s32 = results["motion_fp32_stages"]
-        s16 = results["motion_fp16_stages"]
-        print(f"\n{'Stage':<25s} {'FP32':>10s} {'FP16':>10s} {'FP16/FP32':>10s}")
-        print("-" * 58)
-        for k in s32:
+    # Motion stage comparison (CPU vs FP32 vs FP16)
+    if "motion_cpu_stages" in results:
+        scpu = results["motion_cpu_stages"]
+        s32 = results.get("motion_fp32_stages", {})
+        s16 = results.get("motion_fp16_stages", {})
+        print(f"\nMOTION — {'Stage':<22s} {'CPU':>10s} {'FP32':>10s} {'FP16':>10s}")
+        print("-" * 55)
+        for k in scpu:
             if k.startswith("_"):
                 continue
+            vcpu = scpu.get(k, 0)
             v32 = s32.get(k, 0)
             v16 = s16.get(k, 0)
-            pct = f"{(1 - v16/v32)*100:+.1f}%" if v32 > 0 else "-"
-            print(f"{k:<25s} {v32*1000:>9.1f}ms {v16*1000:>9.1f}ms {pct:>9s}")
+            print(f"  {k:<22s} {vcpu*1000:>9.1f}ms {v32*1000:>9.1f}ms {v16*1000:>9.1f}ms")
+        tcpu = scpu.get("_total", 0)
         t32 = s32.get("_total", 0)
         t16 = s16.get("_total", 0)
-        print("-" * 58)
-        print(f"{'GPU pipeline total':<25s} {t32*1000:>9.1f}ms {t16*1000:>9.1f}ms {(1-t16/t32)*100:>+9.1f}%")
+        print("-" * 55)
+        print(f"  {'Compute/GPU total':<22s} {tcpu*1000:>9.1f}ms {t32*1000:>9.1f}ms {t16*1000:>9.1f}ms")
 
-    # End-to-end comparison
-    print(f"\n{'Path':<30s} {'Color':>10s} {'Motion':>10s}")
+    # Compute/GPU-only comparison (excludes video decode/encode I/O)
+    print(f"\n{'Compute/GPU-only':<30s} {'Color':>10s} {'Motion':>10s}")
     print("-" * 52)
-    print(f"{'Python CPU':<30s} {results.get('color_cpu_total',0)*1000:>9.0f}ms {results.get('motion_cpu_total',0)*1000:>9.0f}ms")
-    print(f"{'CUDA FP32 (e2e)':<30s} {results.get('color_fp32_e2e',0)*1000:>9.0f}ms {results.get('motion_fp32_e2e',0)*1000:>9.0f}ms")
-    if "color_fp16_e2e" in results or "motion_fp16_e2e" in results:
-        c16 = f"{results.get('color_fp16_e2e',0)*1000:>9.0f}ms" if "color_fp16_e2e" in results else "N/A"
-        m16 = f"{results.get('motion_fp16_e2e',0)*1000:>9.0f}ms" if "motion_fp16_e2e" in results else "N/A"
-        print(f"{'CUDA FP16 (e2e)':<30s} {c16:>10s} {m16:>10s}")
+    c_cpu = results.get("color_cpu_stages", {}).get("_total", 0)
+    m_cpu = results.get("motion_cpu_stages", {}).get("_total", 0)
+    c32 = results.get("color_fp32_stages", {}).get("_total", 0)
+    m32 = results.get("motion_fp32_stages", {}).get("_total", 0)
+    c16 = results.get("color_fp16_stages", {}).get("_total", 0)
+    m16 = results.get("motion_fp16_stages", {}).get("_total", 0)
+    print(f"{'Python CPU':<30s} {c_cpu*1000:>9.1f}ms {m_cpu*1000:>9.1f}ms")
+    print(f"{'CUDA FP32':<30s} {c32*1000:>9.1f}ms {m32*1000:>9.1f}ms")
+    if c16 > 0 or m16 > 0:
+        c16s = f"{c16*1000:>9.1f}ms" if c16 > 0 else "N/A"
+        m16s = f"{m16*1000:>9.1f}ms" if m16 > 0 else "N/A"
+        print(f"{'CUDA FP16':<30s} {c16s:>10s} {m16s:>10s}")
     print("-" * 52)
 
-    # Speedups
-    print(f"\nSpeedup vs CPU:")
-    print(f"  Color FP32:  {results.get('color_cpu_total',0)/results.get('color_fp32_e2e',1):.1f}x")
-    print(f"  Motion FP32: {results.get('motion_cpu_total',0)/results.get('motion_fp32_e2e',1):.1f}x")
-    if "color_fp16_e2e" in results:
-        print(f"  Color FP16:  {results.get('color_cpu_total',0)/results.get('color_fp16_e2e',1):.1f}x")
-    if "motion_fp16_e2e" in results:
-        print(f"  Motion FP16: {results.get('motion_cpu_total',0)/results.get('motion_fp16_e2e',1):.1f}x")
+    # Speedups (compute vs compute, not polluted by video I/O)
+    print(f"\nSpeedup vs CPU (compute-only):")
+    if c32 > 0:
+        print(f"  Color FP32:  {c_cpu/c32:.1f}x")
+    if m32 > 0:
+        print(f"  Motion FP32: {m_cpu/m32:.1f}x")
+    if c16 > 0:
+        print(f"  Color FP16:  {c_cpu/c16:.1f}x")
+    if m16 > 0:
+        print(f"  Motion FP16: {m_cpu/m16:.1f}x")
 
     # Video list
     print(f"\nOutput videos:")
