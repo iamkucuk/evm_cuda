@@ -30,13 +30,13 @@ CUDA extension from source, and runs both profilers.
 ## Check status
 
 ```bash
-kaggle kernels status fkucuk/evm-cuda-benchmark
+kaggle kernels status furkankucuk/evm-cuda-benchmark
 ```
 
 ## Pull results
 
 ```bash
-kaggle kernels output fkucuk/evm-cuda-benchmark -p ./results
+kaggle kernels output furkankucuk/evm-cuda-benchmark -p ./results
 ```
 
 This downloads:

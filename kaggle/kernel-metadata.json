@@ -1,5 +1,5 @@
 {
-  "id": "fkucuk/evm-cuda-benchmark",
+  "id": "furkankucuk/evm-cuda-benchmark",
   "title": "evm-cuda-benchmark",
   "code_file": "run_benchmark.py",
   "language": "python",
