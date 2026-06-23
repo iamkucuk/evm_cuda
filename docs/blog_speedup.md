@@ -427,21 +427,41 @@ This is the same bottleneck Harris's reduction paper attacks across its
 seven kernel versions. The reduction starts at ~1.6 GB/s effective
 bandwidth (V1: naive interleaved reads) and reaches ~17 GB/s (V7:
 unrolled, multiple elements per thread). Every speedup in between comes
-from making memory access faster, not from doing less math. The render
-kernel here is at the equivalent of V1: correct, coalesced, but stalling
-on uncached global memory latency. The shared-memory tiling fix (V3 in
-Harris's progression) and the multiple-elements-per-thread optimization
-(V6) are the unclaimed improvements.
+from making memory access faster, not from doing less math.
+
+The render kernel was at the equivalent of V1. Applying Harris's V6
+(multiple elements per thread) gave the first real improvement: each
+thread now processes 4 adjacent pixels, giving the compiler 4 independent
+sets of memory reads to pipeline. The warp scheduler fills the stall
+cycles on one read with the compute from another.
+
+| Stage | Before V6 | After V6 | Improvement |
+|-------|-----------|----------|-------------|
+| Color render | 67.0 ms | 52.3 ms | 22% |
+| Motion render | 104.4 ms | 81.9 ms | 22% |
+
+Two other Harris techniques were tested and rejected. Shared-memory tiling
+(V3) had no effect because `__restrict__` pointers on modern GPUs already
+route reads through the read-only L1 cache path. Block size tuning (smaller
+blocks for higher occupancy) had no effect because the 32x32 block already
+provides enough warps for latency hiding.
+
+A more aggressive approach was also tested: reading the original BGR uint8
+clip (3 bytes/pixel) instead of NTSC float32 (12 bytes/pixel) in the render
+kernel, a 4x reduction in read volume. It had no measurable effect,
+confirming the kernel is latency-bound, not bandwidth-bound: reading fewer
+bytes from the same DRAM at the same 400-cycle latency makes no difference.
 
 ### Theoretical ceiling
 
 If the render kernel could achieve 50% of peak memory bandwidth (a
 typical achievable fraction for well-optimized kernels), the render stage
-would drop from 67 ms to under 1 ms for color, and from 104 ms to under
+would drop from 52 ms to under 1 ms for color, and from 82 ms to under
 2 ms for motion. The full pipelines would drop to roughly 15 ms (color)
 and 40 ms (motion), processing 1080p at over 2,000 fps.
 
-That is the headroom. The current implementation uses less than 1% of it.
+That is the headroom. The current implementation (after V6) uses less
+than 1% of it.
 
 ## Methodology
 
@@ -456,11 +476,12 @@ makes memory access faster, not the math cheaper.
 This project applied the same principle at two levels. First, at the
 pipeline level: eliminating host-device transfers, batching kernel
 launches, caching cuFFT plans. Then at the kernel level: register hoisting
-for filter taps, occupancy hints. The render kernel's 0.4% bandwidth
-utilization shows that the kernel-level work maps to the early stages of
-Harris's progression. The remaining headroom (shared-memory tiling,
-texture cache, multiple pixels per thread) corresponds to the later
-stages of that same roadmap.
+for filter taps, occupancy hints, and V6 multiple-elements-per-thread
+(which gave 22% on the render stage). Shared-memory tiling (V3) and
+bandwidth reduction were tested and had no effect on the latency-bound
+render kernel. The remaining headroom (texture hardware with spatial
+prefetch, FP16 storage) corresponds to the later stages of Harris's
+roadmap.
 
 The profilers run 5 timed iterations with a warmup run (to exclude kernel
 JIT and binary load costs), pre-allocate all device buffers (to exclude
