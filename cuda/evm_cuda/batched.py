@@ -53,8 +53,12 @@ class DeviceBuffer:
         return self._buf.ptr
 
     def ptr_at(self, float_offset: int) -> int:
-        """Device pointer offset by float_offset elements (byte-safe)."""
+        """Device pointer offset by float_offset elements (assumes 4-byte float)."""
         return self._buf.ptr + float_offset * 4
+
+    def ptr_at_half(self, half_offset: int) -> int:
+        """Device pointer offset by half_offset elements (2-byte __half)."""
+        return self._buf.ptr + half_offset * 2
 
     @property
     def nbytes(self) -> int:
@@ -459,12 +463,12 @@ def magnify_motion_lpyr_iir_fp16(
         for c in range(3):
             sig_off = level_offsets[l] + c * n * sz
             _evm_cuda.batched_thwc_to_nt_f16(
-                d_bands.ptr_at(sig_off), d_nt.ptr, n, sz)
+                d_bands.ptr_at_half(sig_off), d_nt.ptr, n, sz)
             _evm_cuda.batched_iir_bandpass_f16(
                 d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
             dst_off = level_offsets[l] + c * n * sz
             _evm_cuda.batched_nt_to_thwc_scaled_f16(
-                d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
+                d_filt_nt.ptr, d_filtered.ptr_at_half(dst_off), n, sz, alpha_sched[l])
     del d_bands, d_nt, d_filt_nt
 
     # --- Stage D: FP16 recon + FP16 render ----------------------------------
