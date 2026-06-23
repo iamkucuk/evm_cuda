@@ -299,7 +299,7 @@ def profile_color_fp16_stages():
         _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, ntsc_f32.ptr, n, h, w)
         _evm_cuda.f32_to_f16(ntsc_f32.ptr, ntsc_f16.ptr, ntsc_floats)
         sync()
-        st["1) NTSC convert"] = time.perf_counter() - t0
+        st["1) color_cvt"] = time.perf_counter() - t0
         del ntsc_f32
 
         # Stage 2: FP16 planar + FP16 blur_dn -> FP32 gdown
@@ -319,7 +319,7 @@ def profile_color_fp16_stages():
         gdown = gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
         gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
         del gdown_planar
-        st["2b) D2H+reshape"] = time.perf_counter() - t0
+        st["2b) D2H + reshape"] = time.perf_counter() - t0
 
         # Stage 3: ideal bandpass per channel (FP32 FFT)
         t0 = time.perf_counter()
@@ -334,7 +334,7 @@ def profile_color_fp16_stages():
         sync()
         st["3) ideal_bandpass"] = time.perf_counter() - t0
 
-        # Stage 4: FP16 render (reads __half NTSC + FP32 filt)
+        # Stage 4: gain + upload + FP16 fused upsample+add+quantize + D2H
         t0 = time.perf_counter()
         gain = np.array([COLOR_ALPHA, COLOR_ALPHA * COLOR_CHROM, COLOR_ALPHA * COLOR_CHROM],
                         dtype=np.float32)
@@ -345,7 +345,7 @@ def profile_color_fp16_stages():
             n, hl, wl, h, w, 1.0)
         out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
         sync()
-        st["4) render"] = time.perf_counter() - t0
+        st["4) upsample + render"] = time.perf_counter() - t0
         del ntsc_f16, d_filt
 
         st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
