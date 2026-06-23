@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 
 namespace evm {
 
@@ -97,5 +98,18 @@ __device__ __forceinline__ int reflect1(int i, int n) {
 __host__ __device__ __forceinline__ int div_up(int a, int b) {
     return (a + b - 1) / b;
 }
+
+// ---------------------------------------------------------------------------
+// FP16 conversion helpers for templated kernels.
+// cvt_in converts a stored value (float or __half) to float for compute.
+// cvt_out converts a computed float back to the storage type.
+// Used by spatial, transpose, IIR, and render kernels to support FP16
+// storage with FP32 compute.
+// ---------------------------------------------------------------------------
+
+template <typename T> __device__ __forceinline__ float cvt_in(T v) { return v; }
+template <typename T> __device__ __forceinline__ T cvt_out(float v) { return static_cast<T>(v); }
+template <> __device__ __forceinline__ float cvt_in<__half>(__half v) { return __half2float(v); }
+template <> __device__ __forceinline__ __half cvt_out<__half>(float v) { return __float2half(v); }
 
 }  // namespace evm

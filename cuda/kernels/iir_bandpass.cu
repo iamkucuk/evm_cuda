@@ -25,29 +25,31 @@
 
 namespace evm {
 
+template <typename In, typename Out>
 __global__ void iir_bandpass_kernel(
-    const float* __restrict__ in,   // (N, T) row-major
-    float* __restrict__ out,        // (N, T) row-major
+    const In* __restrict__ in,   // (N, T) row-major
+    Out* __restrict__ out,       // (N, T) row-major
     int T, int N, double r1, double r2)
 {
     const int n = blockIdx.x * blockDim.x + threadIdx.x;
     if (n >= N) return;
 
-    const float* x = in  + n * T;
-    float* o = out + n * T;
+    const In* x = in  + n * T;
+    Out* o = out + n * T;
 
     // Initial state = first sample (evm/filters.py:114-116).
-    double y1 = static_cast<double>(x[0]);
-    double y2 = static_cast<double>(x[0]);
+    // Accumulator stays FP64 regardless of storage type.
+    double y1 = static_cast<double>(cvt_in<In>(x[0]));
+    double y2 = static_cast<double>(cvt_in<In>(x[0]));
     const double one_minus_r1 = 1.0 - r1;
     const double one_minus_r2 = 1.0 - r2;
 
-    o[0] = 0.0f;  // y1 - y2 == 0
+    o[0] = cvt_out<Out>(0.0f);  // y1 - y2 == 0
     for (int t = 1; t < T; ++t) {
-        double xt = static_cast<double>(x[t]);
+        double xt = static_cast<double>(cvt_in<In>(x[t]));
         y1 = one_minus_r1 * y1 + r1 * xt;
         y2 = one_minus_r2 * y2 + r2 * xt;
-        o[t] = static_cast<float>(y1 - y2);
+        o[t] = cvt_out<Out>(static_cast<float>(y1 - y2));
     }
 }
 
@@ -55,7 +57,14 @@ void launch_iir_bandpass(const float* in, float* out, int T, int N,
                          double r1, double r2, cudaStream_t stream) {
     int block = 256;
     int grid = div_up(N, block);
-    iir_bandpass_kernel<<<grid, block, 0, stream>>>(in, out, T, N, r1, r2);
+    iir_bandpass_kernel<float, float><<<grid, block, 0, stream>>>(in, out, T, N, r1, r2);
+}
+
+void launch_iir_bandpass_f16(const __half* in, __half* out, int T, int N,
+                             double r1, double r2, cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(N, block);
+    iir_bandpass_kernel<__half, __half><<<grid, block, 0, stream>>>(in, out, T, N, r1, r2);
 }
 
 }  // namespace evm

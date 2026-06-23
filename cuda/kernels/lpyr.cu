@@ -353,4 +353,50 @@ void launch_scatter_f16(const __half* src, float* dst,
         src, dst, offsets, n_per_slice, B);
 }
 
+// FP16 gather: read FP16 bands (scattered), write __half scratch.
+__global__ void gather_f16_kernel(
+    const __half* __restrict__ src,
+    __half* __restrict__ dst,
+    const int* __restrict__ offsets,
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    dst[m * n_per_slice + px] = src[offsets[m] + px];
+}
+
+// FP16 gather_add: read __half bands (scattered) + __half res, write __half dst.
+__global__ void gather_add_f16_kernel(
+    const __half* __restrict__ src,
+    const __half* __restrict__ b,
+    __half* __restrict__ dst,
+    const int* __restrict__ offsets,
+    int n_per_slice, int B)
+{
+    const int px = blockIdx.x * blockDim.x + threadIdx.x;
+    const int m = blockIdx.y;
+    if (px >= n_per_slice || m >= B) return;
+    int di = m * n_per_slice + px;
+    dst[di] = __float2half(__half2float(src[offsets[m] + px]) + __half2float(b[di]));
+}
+
+void launch_gather_f16(const __half* src, __half* dst,
+                       const int* offsets, int n_per_slice, int B,
+                       cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    gather_f16_kernel<<<grid, block, 0, stream>>>(
+        src, dst, offsets, n_per_slice, B);
+}
+
+void launch_gather_add_f16(const __half* src, const __half* b, __half* dst,
+                           const int* offsets, int n_per_slice, int B,
+                           cudaStream_t stream) {
+    dim3 block(256, 1, 1);
+    dim3 grid(div_up(n_per_slice, 256), B, 1);
+    gather_add_f16_kernel<<<grid, block, 0, stream>>>(
+        src, b, dst, offsets, n_per_slice, B);
+}
+
 }  // namespace evm

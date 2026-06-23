@@ -17,17 +17,8 @@
 //     even dest indices and zeros at odd (MATLAB start=[1,1]).
 
 #include "../include/evm_common.cuh"
-#include <cuda_fp16.h>
 
 namespace evm {
-
-// Type conversion helpers for templated batched kernels.
-// cvt_in converts a stored value (float or __half) to float for compute.
-// cvt_out converts a computed float back to the storage type (float or __half).
-template <typename T> __device__ float cvt_in(T v) { return v; }
-template <typename T> __device__ T cvt_out(float v) { return static_cast<T>(v); }
-template <> __device__ float cvt_in<__half>(__half v) { return __half2float(v); }
-template <> __device__ __half cvt_out<__half>(float v) { return __float2half(v); }
 
 // corr_dn along axis=0 (rows / y). Output rows = (H + 1) / 2.
 __global__ void corr_dn_rows_kernel(
