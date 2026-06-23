@@ -13,7 +13,7 @@ AGENTS.md §2 requires for any numerical-contract decision.
 | Deploy | TRUBA ARF-ACC (`ssh truba`, GPU queues) | Has internet on login nodes, dedicated GPU partitions |
 | Mode | Batch — whole clip in device memory | Simplest, supports the FFT-based ideal filter natively |
 | GPU | Portable: `sm_60 sm_70 sm_80 sm_89 sm_90` | One `.so` covers TRUBA's whole fleet (P100→H100) |
-| Precision | FP32 hot path + FP64 IIR accumulators | Matches Python baseline's per-stage tolerances |
+| Precision | FP32 hot path + FP64 IIR accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
 
 ## Repository layout
 
@@ -79,6 +79,25 @@ cuda/
 | Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; eliminates intermediate buffer |
 | Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion pipeline render; reads planar delta inline |
 | cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N); eliminates per-call plan creation |
+| V6 multiple elements/thread | render + transpose kernels | 4 px/thread via `#pragma unroll` | pipelines independent reads for latency hiding (22% render) |
+| FP16 storage (motion) | All batched kernels templated on In/Out type | `cvt_in`/`cvt_out` in evm_common.cuh | __half storage, FP32 compute, FP64 IIR accumulator unchanged |
+| FP16 conversion | `fp16_cvt.cu:f32_to_f16 / f16_to_f32` | `(⌈n/256⌉) / (256,1,1)` | one-time conversion at NTSC creation boundary |
+
+## FP16 storage rationale
+
+The motion pipeline supports an optional FP16 storage path
+(`magnify_motion_lpyr_iir_fp16` in `batched.py`). All batched spatial,
+transpose, IIR, and render kernels are templated on input/output type.
+When instantiated with `__half`, reads convert via `__half2float` and
+writes via `__float2half`. Compute stays FP32 throughout.
+
+FP16 storage halves VRAM (23 GB to 12 GB for baby.mp4) and halves the
+render stage's memory traffic (82 ms to 41 ms on A100). The IIR
+accumulator stays FP64 regardless of storage type.
+
+Precision: RMSE between FP32 and FP16 output is 0.0016, which is 6.2x
+under the 0.01 end-to-end tolerance. The maximum per-pixel error is
+3/255 (3 uint8 quantization steps).
 
 ## Precision rationale
 

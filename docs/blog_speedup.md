@@ -291,6 +291,44 @@ This gave 22% gains on both render stages:
 The same technique was applied to the transpose kernels used in the IIR
 stage, where each thread now handles 4 spatial locations.
 
+### Level 5: FP16 storage (motion pipeline)
+
+The render stage's memory traffic is dominated by reading the NTSC frame
+in float32 (12 bytes per pixel). Storing intermediate buffers in half
+precision (`__half`, 2 bytes per element instead of 4) halves the memory
+traffic on every buffer read and write.
+
+The implementation templates all batched spatial kernels on input/output
+type. When instantiated with `__half`, each kernel reads via
+`__half2float`, computes in FP32, and writes via `__float2half`. The IIR
+filter's accumulator stays FP64 regardless of storage type.
+
+The FP16 motion pipeline stores NTSC, planar NTSC, bands, filtered bands,
+and delta all in `__half`. The only FP32 buffers are the momentary NTSC
+compute output (freed after one `f32_to_f16` conversion) and the band
+output from `lpyr_build` (scatter kernels write float, converted to FP16
+before the temporal filter).
+
+| Stage | FP32 | FP16 | FP16 vs FP32 |
+|-------|------|------|-------------|
+| NTSC convert | 1.6 ms | 5.1 ms | -221% (includes f32->f16) |
+| lpyr_build | 35.4 ms | 37.3 ms | -5% |
+| temporal IIR | 61.4 ms | 61.9 ms | -1% |
+| lpyr_recon | 24.3 ms | 20.5 ms | +16% |
+| render | 82.3 ms | 41.2 ms | +50% |
+| **Total** | **205 ms** | **167 ms** | **+19%** |
+
+The render stage halves because reading `__half` NTSC instead of `float`
+halves the memory traffic. The NTSC convert is slower by 3.5ms (the
+f32-to-f16 conversion pass), but that is small against the 41ms render
+savings.
+
+Precision: RMSE between FP32 and FP16 output is 0.0016, which is 6.2x
+under the 0.01 tolerance. The maximum per-pixel error is 3/255 (3 uint8
+quantization steps), compared to 1/255 for the FP32 path. The FP16
+pipeline also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB
+GPUs (tested on Kaggle Tesla P100).
+
 ## Throughput and theoretical limits
 
 ### Measured throughput
@@ -324,8 +362,17 @@ and approaches 8K for motion.
 
 These are GPU-only numbers. The end-to-end pipeline (including video
 decode and encode) is currently bottlenecked by the CPU codec at about
-2.7s per clip, which limits realtime throughput to roughly 0.1 fps
-regardless of GPU speed.
+1.6s per clip, which limits realtime throughput regardless of GPU speed.
+
+### Full comparison (A100-80GB)
+
+| Path | Color (e2e) | Motion (e2e) | Motion (GPU-only) |
+|------|------------|--------------|-------------------|
+| Python CPU | 13.1s | 48.9s | - |
+| CUDA FP32 | 1.18s | 1.90s | 205 ms |
+| CUDA FP16 | N/A | 1.73s | 167 ms |
+
+FP16 motion is 19% faster GPU-only and 9% faster end-to-end than FP32.
 
 ### Resource utilization: both underutilized
 
