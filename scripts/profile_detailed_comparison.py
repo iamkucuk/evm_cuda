@@ -7,6 +7,7 @@ measures GPU-only time by excluding decode/encode.
 from __future__ import annotations
 
 import sys
+import os
 import time
 from pathlib import Path
 
