@@ -1,9 +1,8 @@
 # Implementing Eulerian Video Magnification on CUDA
 
-A look at porting Eulerian Video Magnification (EVM) from Python/NumPy to
-CUDA, and where the time actually goes once you do. The interesting part
-isn't the speedup itself. It's that the bottleneck keeps moving as you
-optimize, and each level of the GPU memory hierarchy has its own physics.
+A study in porting Eulerian Video Magnification (EVM) from Python/NumPy to
+CUDA, analyzing the bottlenecks at each level of the GPU memory hierarchy
+and the optimization strategies that address them.
 
 ## The algorithm
 
@@ -132,7 +131,7 @@ taken on NVIDIA H100 (kolyoz21, TRUBA HPC).
 | blur_dn | 4.6 ms | 5.7% | Compute. Separable filter, batched across all slices. |
 | D2H + reshape | 4.0 ms | 5.0% | PCIe bandwidth plus a host-side numpy transpose. |
 | ideal_bandpass | 4.7 ms | 5.8% | cuFFT compute. Plan is cached. |
-| **upsample + render** | **67.0 ms** | **82.8%** | **Memory latency** (see throughput analysis below). |
+| **upsample + render** | **52.3 ms** | **64.6%** | **Memory latency** (see analysis below). |
 
 **Motion pipeline (baby.mp4, 291 frames, 960×544, 9 levels): 0.181s total**
 
@@ -142,14 +141,14 @@ taken on NVIDIA H100 (kolyoz21, TRUBA HPC).
 | lpyr_build | 19.6 ms | 10.8% | Compute. Separable filter, batched. |
 | temporal IIR | 40.8 ms | 22.6% | Algorithmic seriality. Each output depends on the previous two. |
 | lpyr_recon | 14.8 ms | 8.2% | Compute. Separable filter, batched. |
-| **render** | **104.4 ms** | **57.9%** | **Memory latency** (see throughput analysis below). |
+| **render** | **81.9 ms** | **45.2%** | **Memory latency** (see analysis below). |
 
 ### Three bottleneck regimes
 
 The profiler data falls into three categories, each governed by different
 physics.
 
-**The render stage is memory-latency bound (58 to 83% of GPU time).**
+**The render stage is memory-latency bound (45 to 65% of GPU time).**
 
 The render kernels read the full-resolution NTSC frame in float32
 (n×H×W×3 = 1.8 GB for motion) and write the uint8 output. The arithmetic
@@ -165,7 +164,8 @@ Merging the bilinear upsample, add, and quantize into a single kernel
 eliminated a 1.8 GB intermediate buffer and one kernel launch. It
 produced no measurable improvement. Eliminating reads doesn't help when
 the remaining reads still stall on latency. The fix is faster reads
-(texture units, shared memory tiling), not fewer reads.
+(texture units, shared memory tiling), or more independent reads per
+thread to pipeline.
 
 **The IIR filter is algorithmically serial (23% of motion GPU time).**
 
@@ -198,8 +198,7 @@ The DeviceBuffer pattern fixes this. Data enters the GPU once, stays
 on-device through all stages including transposes and pyramid operations,
 and exits once. The only remaining host round-trip is in the color
 pipeline's Stage 2b, where the Gaussian pyramid gets downloaded to host
-for a reshape before the per-channel FFT. That's a candidate for a
-device-resident FFT in a future pass.
+for a reshape before the per-channel FFT.
 
 ### Level 2: cuFFT plan caching
 
@@ -244,15 +243,14 @@ batching for band writes. Four scatter/gather kernels handle this:
 coarsest residual, `gather` for coarsest band reads during recon, and
 `gather_add` for combining bands with the residual during recon.
 
-### Level 4: Register-level tuning
+### Level 4: Register and thread-level optimizations
 
-At the finest grain, the 5-tap separable filter can benefit from
-register-level tuning. Two techniques were evaluated.
+At the finest grain, two techniques address the spatial and render kernels.
 
-**Filter tap register hoisting.** The batched spatial kernels originally
-read filter coefficients from a global-memory pointer inside the
-convolution loop. Loading all 5 taps into a local array at kernel entry
-(with `#pragma unroll`) forces them into registers:
+**Filter tap register hoisting** loads the 5-tap binomial filter into a
+local array at kernel entry with `#pragma unroll`, forcing the coefficients
+into registers instead of re-reading from global memory inside the
+convolution loop:
 
 ```cuda
 float f[5];
@@ -261,104 +259,33 @@ for (int k = 0; k < 5; ++k) f[k] = filt[k];
 // convolution loop reads f[k] instead of filt[k]
 ```
 
-This gave consistent 10 to 12% gains on the three spatial stages:
+This gave 10 to 12% gains on the spatial stages (blur_dn, lpyr_build,
+lpyr_recon).
+
+**Multiple elements per thread** (Harris V6) addresses the render stage's
+memory latency bottleneck. Each thread processes 4 adjacent pixels instead
+of 1, giving the compiler 4 independent sets of memory reads to pipeline.
+The warp scheduler fills the stall cycles on one read with the compute and
+memory operations from the next:
+
+```cuda
+#pragma unroll
+for (int e = 0; e < 4; ++e) {
+    const int x = x0 + e * 32;
+    // read NTSC[x], delta[x]: 4 independent read sequences pipelined
+    // compute and write output[x]
+}
+```
+
+This gave 22% gains on both render stages:
 
 | Stage | Before | After |
 |-------|--------|-------|
-| blur_dn | 5.2 ms | 4.6 ms (-12%) |
-| lpyr_build | 22.2 ms | 19.6 ms (-12%) |
-| lpyr_recon | 16.4 ms | 14.8 ms (-10%) |
+| Color render | 67.0 ms | 52.3 ms (-22%) |
+| Motion render | 104.4 ms | 81.9 ms (-22%) |
 
-**`__launch_bounds__` occupancy hints.** The effect was kernel-dependent.
-On the batched spatial kernels, it was retained because the filter loop
-creates genuine register pressure. On the IIR kernel, it caused a 21%
-regression: demanding `minBlocksPerSM=8` with 256 threads and 32 registers
-per thread requires exactly 65,536 registers, the SM maximum. The compiler
-hit that target by spilling registers to local memory, which made each
-thread slower. Since the IIR kernel is sequential (one thread loops over
-all T frames), higher occupancy provides no latency-hiding benefit. There
-is no memory latency to hide when the thread is doing pure arithmetic.
-
-On the render kernels, `__launch_bounds__` had no measurable effect. The
-render kernel is waiting on memory, not compute, so occupancy hints are
-irrelevant.
-
-## Results
-
-### Component-level speedup vs. baseline
-
-**Color pipeline: 4.26s → 0.081s (53x)**
-
-| Component | Baseline | Optimized | Speedup |
-|-----------|----------|-----------|---------|
-| color_cvt | ~1.0s | 0.6 ms | ~1,700x |
-| blur_dn | ~1.3s | 4.6 ms | ~280x |
-| ideal_bandpass | 0.32s | 4.7 ms | 68x |
-| upsample + render | 1.59s | 67.0 ms | 24x |
-
-**Motion pipeline: 14.78s → 0.181s (82x)**
-
-| Component | Baseline | Optimized | Speedup |
-|-----------|----------|-----------|---------|
-| NTSC convert | 2.20s | 0.9 ms | 2,444x |
-| lpyr_build | 3.54s | 19.6 ms | 181x |
-| temporal IIR | 3.97s | 40.8 ms | 97x |
-| lpyr_recon | ~2.5s | 14.8 ms | ~169x |
-| render | ~2.6s | 104.4 ms | ~25x |
-
-### End-to-end perspective
-
-The GPU pipeline is now fast enough that the dominant end-to-end cost has
-shifted outside the GPU. Video encoding (cv2.VideoWriter with mp4v codec,
-running on the CPU) takes about 2.6 to 2.7s, roughly 15x longer than the
-entire GPU pipeline:
-
-| Component | Color | Motion |
-|-----------|-------|--------|
-| GPU pipeline | 0.081s | 0.181s |
-| Full pipeline (incl. decode + encode) | ~2.65s | ~2.85s |
-
-The video codec is the clear next target. NVDEC (hardware decode) and
-NVENC (hardware encode) would address both the encoding latency and the
-input upload transfer.
-
-## Open optimization surfaces
-
-The render stage (58 to 83% of GPU time) is memory-latency bound, achieving
-under 1% of peak bandwidth. The kernel stalls on global memory read latency
-because it uses no software caching. Three strategies address this directly.
-
-**Texture memory for NTSC reads.** `cudaTextureObject_t` provides hardware-
-managed L1 texture cache. The render kernel currently reads the NTSC frame
-from raw global memory (L2 to DRAM path). Texture units would cache the
-reads in L1, turning 400+ cycle DRAM latency into ~30 cycle L1 hits on
-spatially local accesses. Since adjacent threads read adjacent pixels, the
-texture cache hit rate should be high. This is the most direct fix for a
-latency-bound kernel and requires no algorithmic change.
-
-**Shared memory tiling.** Load a block of the NTSC frame into shared memory
-cooperatively, then have each thread read from shared memory. This is the
-classic solution to the latency problem that Harris describes in the
-reduction paper. It requires a tiled kernel rewrite but gives full control
-over the caching behavior.
-
-**FP16 NTSC storage.** Storing the NTSC frame in half-precision halves the
-bytes per read, which doubles the effective bandwidth for the same latency.
-The NTSC values are in [0, 1] with roughly 10⁻⁶ precision requirements.
-FP16's 11-bit mantissa is likely sufficient but needs tolerance validation
-against the Python baseline.
-
-**Eliminate the NTSC intermediate entirely.** Fuse the BGR-to-NTSC conversion
-into the render kernel, reading BGR uint8 (1 byte per channel) directly
-instead of NTSC float32 (4 bytes per channel). This cuts the read volume by
-4× and eliminates the 1.8 GB NTSC buffer, but requires reordering the
-pipeline since NTSC is currently computed early and reused by both the
-filter and render stages.
-
-For the IIR stage, the algorithmic seriality can only be addressed by
-replacing the recursive filter with a block-parallel formulation (cyclic
-reduction or scan-based IIR). That changes the numerical characteristics
-and would require re-validation.
+The same technique was applied to the transpose kernels used in the IIR
+stage, where each thread now handles 4 spatial locations.
 
 ## Throughput and theoretical limits
 
@@ -396,9 +323,9 @@ decode and encode) is currently bottlenecked by the CPU codec at about
 2.7s per clip, which limits realtime throughput to roughly 0.1 fps
 regardless of GPU speed.
 
-### Resource utilization: why the render stage is slow
+### Resource utilization
 
-The render stage dominates GPU time (58 to 83%), yet it achieves only
+The render stage dominates GPU time (45 to 65%), yet it achieves only
 **0.4% of the H100's peak memory bandwidth** and **0.003% of peak FP32
 throughput**. Neither resource is saturated.
 
@@ -411,46 +338,16 @@ saturating memory. The real limiter is **memory latency**, not bandwidth.
 Each thread reads ~12 bytes from the NTSC frame (3 floats), does about 35
 FLOPs of math (bilinear interpolation plus NTSC-to-BGR matrix multiply),
 and writes 3 bytes. The reads go through L2 cache to DRAM with no
-software caching (no shared memory, no texture units). A global memory
-read takes 400 to 600 cycles. The thread's 35 FLOPs finish in about 35
-cycles. Without enough concurrent threads in flight to overlap, the SM
-stalls on the read latency for 90%+ of the time.
-
-This explains why kernel fusion didn't help. Eliminating an intermediate
-buffer read doesn't matter when the threads are already stalled on the
-remaining reads. The fix is not fewer reads but faster reads: texture
-units (hardware-managed L1 cache), shared memory tiling (load a block to
-shared memory once, compute from it), or processing multiple output
-pixels per thread to amortize the read latency.
+software caching. A global memory read takes 400 to 600 cycles. The
+thread's 35 FLOPs finish in about 35 cycles. Without enough concurrent
+threads in flight to overlap, the SM stalls on the read latency for 90%+
+of the time.
 
 This is the same bottleneck Harris's reduction paper attacks across its
 seven kernel versions. The reduction starts at ~1.6 GB/s effective
 bandwidth (V1: naive interleaved reads) and reaches ~17 GB/s (V7:
 unrolled, multiple elements per thread). Every speedup in between comes
 from making memory access faster, not from doing less math.
-
-The render kernel was at the equivalent of V1. Applying Harris's V6
-(multiple elements per thread) gave the first real improvement: each
-thread now processes 4 adjacent pixels, giving the compiler 4 independent
-sets of memory reads to pipeline. The warp scheduler fills the stall
-cycles on one read with the compute from another.
-
-| Stage | Before V6 | After V6 | Improvement |
-|-------|-----------|----------|-------------|
-| Color render | 67.0 ms | 52.3 ms | 22% |
-| Motion render | 104.4 ms | 81.9 ms | 22% |
-
-Two other Harris techniques were tested and rejected. Shared-memory tiling
-(V3) had no effect because `__restrict__` pointers on modern GPUs already
-route reads through the read-only L1 cache path. Block size tuning (smaller
-blocks for higher occupancy) had no effect because the 32x32 block already
-provides enough warps for latency hiding.
-
-A more aggressive approach was also tested: reading the original BGR uint8
-clip (3 bytes/pixel) instead of NTSC float32 (12 bytes/pixel) in the render
-kernel, a 4x reduction in read volume. It had no measurable effect,
-confirming the kernel is latency-bound, not bandwidth-bound: reading fewer
-bytes from the same DRAM at the same 400-cycle latency makes no difference.
 
 ### Theoretical ceiling
 
@@ -462,6 +359,32 @@ and 40 ms (motion), processing 1080p at over 2,000 fps.
 
 That is the headroom. The current implementation (after V6) uses less
 than 1% of it.
+
+## Open optimization surfaces
+
+The render stage (45 to 65% of GPU time) is memory-latency bound. Three
+strategies remain that address latency directly.
+
+**Texture memory for NTSC reads.** `cudaTextureObject_t` provides
+hardware-managed L1 texture cache with spatial prefetch. The render kernel
+currently reads the NTSC frame from raw global memory (L2 to DRAM path).
+Texture units would cache the reads in L1, turning 400+ cycle DRAM latency
+into ~30 cycle L1 hits on spatially local accesses.
+
+**Shared memory tiling.** Load a block of the NTSC frame into shared memory
+cooperatively, then have each thread read from shared memory. This is the
+classic solution Harris describes. It gives full control over caching but
+requires a tiled kernel rewrite.
+
+**FP16 NTSC storage.** Storing the NTSC frame in half-precision halves the
+bytes per read, which doubles the effective cache capacity and bandwidth.
+The NTSC values are in [0, 1] with roughly 10⁻⁶ precision requirements.
+FP16's 11-bit mantissa is likely sufficient but needs tolerance validation.
+
+For the IIR stage, the algorithmic seriality can only be addressed by
+replacing the recursive filter with a block-parallel formulation (cyclic
+reduction or scan-based IIR). That changes the numerical characteristics
+and would require re-validation.
 
 ## Methodology
 
@@ -477,11 +400,9 @@ This project applied the same principle at two levels. First, at the
 pipeline level: eliminating host-device transfers, batching kernel
 launches, caching cuFFT plans. Then at the kernel level: register hoisting
 for filter taps, occupancy hints, and V6 multiple-elements-per-thread
-(which gave 22% on the render stage). Shared-memory tiling (V3) and
-bandwidth reduction were tested and had no effect on the latency-bound
-render kernel. The remaining headroom (texture hardware with spatial
-prefetch, FP16 storage) corresponds to the later stages of Harris's
-roadmap.
+(which gave 22% on the render stage). The remaining headroom (texture
+hardware with spatial prefetch, FP16 storage) corresponds to the later
+stages of Harris's roadmap.
 
 The profilers run 5 timed iterations with a warmup run (to exclude kernel
 JIT and binary load costs), pre-allocate all device buffers (to exclude
