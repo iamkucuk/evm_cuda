@@ -506,26 +506,32 @@ def main():
 
     # CPU e2e + stages
     print("\n[Python CPU]")
-    med, mn, mx = time_fn(run_color_cpu, n_iter=3)
-    print(f"  Total: {med:.3f}s")
-    results["color_cpu_total"] = med
+    try:
+        med, mn, mx = time_fn(run_color_cpu, n_iter=3)
+        print(f"  Total: {med:.3f}s")
+        results["color_cpu_total"] = med
 
-    print("  Profiling stages...")
-    cpu_stages = profile_color_cpu_stages()
-    if cpu_stages:
-        print(f"  Compute-only total: {cpu_stages.get('_total', 0):.4f}s")
-        results["color_cpu_stages"] = cpu_stages
+        print("  Profiling stages...")
+        cpu_stages = profile_color_cpu_stages()
+        if cpu_stages:
+            print(f"  Compute-only total: {cpu_stages.get('_total', 0):.4f}s")
+            results["color_cpu_stages"] = cpu_stages
+    except Exception as e:
+        print(f"  FAILED: {e}")
 
     # FP32 e2e + stages
     print("\n[CUDA FP32]")
-    med32, _, _ = time_fn(run_color_fp32)
-    print(f"  End-to-end: {med32:.3f}s")
-    results["color_fp32_e2e"] = med32
+    try:
+        med32, _, _ = time_fn(run_color_fp32)
+        print(f"  End-to-end: {med32:.3f}s")
+        results["color_fp32_e2e"] = med32
 
-    fp32_stages = profile_cuda_stages("color", "fp32")
-    if fp32_stages:
-        print(f"  GPU-only total: {fp32_stages.get('_total', 0):.4f}s")
-        results["color_fp32_stages"] = fp32_stages
+        fp32_stages = profile_cuda_stages("color", "fp32")
+        if fp32_stages:
+            print(f"  GPU-only total: {fp32_stages.get('_total', 0):.4f}s")
+            results["color_fp32_stages"] = fp32_stages
+    except Exception as e:
+        print(f"  FAILED: {e}")
 
     # FP16 e2e + stages
     print("\n[CUDA FP16]")
@@ -552,28 +558,35 @@ def main():
 
     # CPU e2e + stages
     print("\n[Python CPU]")
-    med, mn, mx = time_fn(run_motion_cpu, n_iter=3)
-    print(f"  Total: {med:.3f}s")
-    results["motion_cpu_total"] = med
+    try:
+        med, mn, mx = time_fn(run_motion_cpu, n_iter=3)
+        print(f"  Total: {med:.3f}s")
+        results["motion_cpu_total"] = med
 
-    print("  Profiling stages...")
-    cpu_stages = profile_motion_cpu_stages()
-    if cpu_stages:
-        print(f"  Compute-only total: {cpu_stages.get('_total', 0):.4f}s")
-        results["motion_cpu_stages"] = cpu_stages
+        print("  Profiling stages...")
+        cpu_stages = profile_motion_cpu_stages()
+        if cpu_stages:
+            print(f"  Compute-only total: {cpu_stages.get('_total', 0):.4f}s")
+            results["motion_cpu_stages"] = cpu_stages
+    except Exception as e:
+        print(f"  FAILED: {e}")
 
-    # FP32 e2e + stages
+    # FP32 e2e + stages (may OOM on GPUs with <24 GB VRAM — baby.mp4 FP32
+    # motion needs ~23 GB for the band buffer + scratch)
     print("\n[CUDA FP32]")
-    med32, _, _ = time_fn(run_motion_fp32)
-    print(f"  End-to-end: {med32:.3f}s")
-    results["motion_fp32_e2e"] = med32
+    try:
+        med32, _, _ = time_fn(run_motion_fp32)
+        print(f"  End-to-end: {med32:.3f}s")
+        results["motion_fp32_e2e"] = med32
 
-    fp32_stages = profile_cuda_stages("motion", "fp32")
-    if fp32_stages:
-        print(f"  GPU-only total: {fp32_stages.get('_total', 0):.4f}s")
-        results["motion_fp32_stages"] = fp32_stages
+        fp32_stages = profile_cuda_stages("motion", "fp32")
+        if fp32_stages:
+            print(f"  GPU-only total: {fp32_stages.get('_total', 0):.4f}s")
+            results["motion_fp32_stages"] = fp32_stages
+    except Exception as e:
+        print(f"  FAILED (likely OOM on <24 GB GPU): {e}")
 
-    # FP16 e2e
+    # FP16 e2e + stages (FP16 motion fits in ~12 GB)
     print("\n[CUDA FP16]")
     try:
         med16, _, _ = time_fn(run_motion_fp16)
