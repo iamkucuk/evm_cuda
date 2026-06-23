@@ -20,6 +20,7 @@
 #include <pybind11/stl.h>
 
 #include <cufft.h>
+#include <cuda_fp16.h>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -158,6 +159,10 @@ void launch_gather_add(const float* src, const float* b, float* dst,
 void launch_gather(const float* src, float* dst,
                    const int* offsets, int n_per_slice, int B,
                    cudaStream_t stream);
+
+// fp16_cvt.cu — FP16↔FP32 conversion at buffer boundaries.
+void launch_f32_to_f16(const float* src, __half* dst, int n, cudaStream_t stream);
+void launch_f16_to_f32(const __half* src, float* dst, int n, cudaStream_t stream);
 
 // blur_dn.cu
 void blur_dn_device(
@@ -1115,6 +1120,21 @@ PYBIND11_MODULE(_evm_cuda, m) {
     m.def("device_synchronize", []() {
         CUDA_CHECK(cudaDeviceSynchronize());
     });
+
+    // FP16↔FP32 batch conversion for the FP16 storage path.
+    // Converts n elements between float32 and __half. Used to halve VRAM for
+    // intermediate buffers (NTSC, bands, scratch) while keeping compute in FP32.
+    m.def("f32_to_f16", [](uintptr_t d_src, uintptr_t d_dst, int n) {
+        evm::launch_f32_to_f16(
+            reinterpret_cast<const float*>(d_src),
+            reinterpret_cast<__half*>(d_dst), n, 0);
+    }, py::arg("d_src"), py::arg("d_dst"), py::arg("n"));
+
+    m.def("f16_to_f32", [](uintptr_t d_src, uintptr_t d_dst, int n) {
+        evm::launch_f16_to_f32(
+            reinterpret_cast<const __half*>(d_src),
+            reinterpret_cast<float*>(d_dst), n, 0);
+    }, py::arg("d_src"), py::arg("d_dst"), py::arg("n"));
 
     // Upload the binom5 filters lazily (on first call, not at module import).
     // Allocating at import time runs cudaMalloc before any explicit device

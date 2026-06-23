@@ -1,7 +1,7 @@
 {
-  "id": "furkankucuk/evm-cuda-benchmark",
-  "title": "evm-cuda-benchmark",
-  "code_file": "run_benchmark.py",
+  "id": "furkankucuk/evm-cuda-fp16-test",
+  "title": "evm-cuda-fp16-test",
+  "code_file": "run_fp16_test.py",
   "language": "python",
   "kernel_type": "script",
   "is_private": true,
