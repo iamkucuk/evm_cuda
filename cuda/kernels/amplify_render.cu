@@ -112,37 +112,38 @@ __global__ void add_and_quantize_kernel(
 // compiler independent memory operations to pipeline for latency hiding.
 constexpr int ADD_PLANAR_ELEMS = 4;
 
+template <typename NTSC_T>
 __global__ void add_planar_quantize_kernel(
-    const float* __restrict__ ntsc,       // (n, H, W, 3) interleaved
-    const float* __restrict__ delta_planar,  // (n*3, H, W) planar
-    unsigned char* __restrict__ bgr_out,  // (n, H, W, 3)
+    const NTSC_T* __restrict__ ntsc,
+    const NTSC_T* __restrict__ delta_planar,
+    unsigned char* __restrict__ bgr_out,
     int n, int H, int W, float chrom_att)
 {
     const int x0 = blockIdx.x * blockDim.x * ADD_PLANAR_ELEMS + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    const int f = blockIdx.z;  // frame index
+    const int f = blockIdx.z;
     if (y >= H || f >= n) return;
 
     const int spatial_base = y * W + x0;
     const int px_base = (f * H * W + spatial_base) * 3;
-    const float* dplane = delta_planar + static_cast<size_t>(f) * 3 * H * W;
-    const float* dy_plane = dplane;
-    const float* di_plane = dplane + H * W;
-    const float* dq_plane = dplane + 2 * H * W;
+    const NTSC_T* dplane = delta_planar + static_cast<size_t>(f) * 3 * H * W;
+    const NTSC_T* dy_plane = dplane;
+    const NTSC_T* di_plane = dplane + H * W;
+    const NTSC_T* dq_plane = dplane + 2 * H * W;
 
     #pragma unroll
     for (int e = 0; e < ADD_PLANAR_ELEMS; ++e) {
-        const int x = x0 + e * 32;  // stride by warp width for coalescing
+        const int x = x0 + e * 32;
         if (x >= W) break;
         const int spatial = spatial_base + e * 32;
         const int px = px_base + e * 32 * 3;
 
-        float dy = dy_plane[spatial];
-        float di = di_plane[spatial] * chrom_att;
-        float dq = dq_plane[spatial] * chrom_att;
+        float dy = cvt_in<NTSC_T>(dy_plane[spatial]);
+        float di = cvt_in<NTSC_T>(di_plane[spatial]) * chrom_att;
+        float dq = cvt_in<NTSC_T>(dq_plane[spatial]) * chrom_att;
 
-        float y_ = ntsc[px + 0] + dy;
-        float i_ = ntsc[px + 1] + di;
+        float y_ = cvt_in<NTSC_T>(ntsc[px + 0]) + dy;
+        float i_ = cvt_in<NTSC_T>(ntsc[px + 1]) + di;
         float q_ = ntsc[px + 2] + dq;
 
         float r = kYiqToRgb[0][0]*y_ + kYiqToRgb[0][1]*i_ + kYiqToRgb[0][2]*q_;
@@ -284,7 +285,17 @@ void launch_add_planar_quantize(const float* ntsc, const float* delta_planar,
                                 cudaStream_t stream) {
     dim3 block(32, 32, 1);
     dim3 grid(div_up(W, 32 * ADD_PLANAR_ELEMS), div_up(H, 32), n);
-    add_planar_quantize_kernel<<<grid, block, 0, stream>>>(
+    add_planar_quantize_kernel<float><<<grid, block, 0, stream>>>(
+        ntsc, delta_planar, bgr_out, n, H, W, chrom_att);
+}
+
+void launch_add_planar_quantize_f16(const __half* ntsc, const __half* delta_planar,
+                                    unsigned char* bgr_out,
+                                    int n, int H, int W, float chrom_att,
+                                    cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(W, 32 * ADD_PLANAR_ELEMS), div_up(H, 32), n);
+    add_planar_quantize_kernel<__half><<<grid, block, 0, stream>>>(
         ntsc, delta_planar, bgr_out, n, H, W, chrom_att);
 }
 

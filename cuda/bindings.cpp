@@ -185,6 +185,28 @@ void launch_scatter_subtract_f16(const __half* a, const __half* b, float* dst,
 void launch_scatter_f16(const __half* src, float* dst,
                     const int* offsets, int n_per_slice, int B,
                     cudaStream_t stream);
+// FP16 gather for recon.
+void launch_gather_f16(const __half* src, __half* dst,
+                       const int* offsets, int n_per_slice, int B,
+                       cudaStream_t stream);
+void launch_gather_add_f16(const __half* src, const __half* b, __half* dst,
+                           const int* offsets, int n_per_slice, int B,
+                           cudaStream_t stream);
+// FP16 transpose + planar.
+void launch_thwc_to_nt_f16(const __half* src, __half* dst, int T, int N,
+                           cudaStream_t stream);
+void launch_nt_to_thwc_scaled_f16(const __half* src, __half* dst, int T, int N,
+                                  float scale, cudaStream_t stream);
+void launch_to_planar_3ch_f16(const __half* src, __half* dst, int n, int H, int W,
+                              cudaStream_t stream);
+// FP16 IIR.
+void launch_iir_bandpass_f16(const __half* in, __half* out, int T, int N,
+                             double r1, double r2, cudaStream_t stream);
+// FP16 render.
+void launch_add_planar_quantize_f16(const __half* ntsc, const __half* delta_planar,
+                                    unsigned char* bgr_out,
+                                    int n, int H, int W, float chrom_att,
+                                    cudaStream_t stream);
 
 // fp16_cvt.cu — FP16↔FP32 conversion at buffer boundaries.
 void launch_f32_to_f16(const float* src, __half* dst, int n, cudaStream_t stream);
@@ -1123,6 +1145,115 @@ PYBIND11_MODULE(_evm_cuda, m) {
         }, py::arg("d_bands"), py::arg("d_out"), py::arg("n_frames"),
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
+
+    // FP16 recon: __half bands in, __half delta out, __half scratch.
+    m.def("batched_lpyr_recon_f16",
+        [](uintptr_t d_bands, uintptr_t d_out, int n_frames, int H, int W, int levels,
+           uintptr_t d_filt, int filt_len) {
+            int M = n_frames * 3;
+            auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const __half* bands_base = reinterpret_cast<const __half*>(d_bands);
+            __half* out_base = reinterpret_cast<__half*>(d_out);
+
+            std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
+            size_t total = 0;
+            for (int l = 0; l < levels; ++l) {
+                level_sizes_vec[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_offsets[l] = total;
+                total += level_sizes_vec[l] * M;
+            }
+
+            auto* scratch_cur = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+            auto* scratch_res = device_alloc<__half>(static_cast<size_t>(M) * H * W);
+            int* d_offsets = device_alloc<int>(M);
+
+            {
+                int l = levels - 1;
+                const int h = sizes[l].first, w = sizes[l].second;
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                evm::launch_gather_f16(
+                    bands_base, scratch_cur, d_offsets, h * w, M, 0);
+            }
+
+            for (int l = levels - 2; l >= 0; --l) {
+                const int h = sizes[l].first, w = sizes[l].second;
+                const int ph = sizes[l + 1].first, pw = sizes[l + 1].second;
+
+                evm::launch_up_conv_rows_batched_f16(
+                    scratch_cur, scratch_res, ph, h, pw, filt, filt_len,
+                    ph * pw, h * pw, M, 0);
+                evm::launch_up_conv_cols_batched_f16(
+                    scratch_res, scratch_cur, h, pw, w, filt, filt_len,
+                    h * pw, h * w, M, 0);
+
+                std::vector<int> h_offsets(M);
+                for (int m = 0; m < M; ++m) {
+                    int frame = m / 3, chan = m % 3;
+                    size_t slice_off = static_cast<size_t>(chan) * n_frames + frame;
+                    h_offsets[m] = static_cast<int>(
+                        level_offsets[l] + slice_off * level_sizes_vec[l]);
+                }
+                CUDA_CHECK(cudaMemcpy(d_offsets, h_offsets.data(),
+                                      M * sizeof(int), cudaMemcpyHostToDevice));
+                evm::launch_gather_add_f16(
+                    bands_base, scratch_cur, scratch_cur,
+                    d_offsets, h * w, M, 0);
+            }
+
+            CUDA_CHECK(cudaMemcpyAsync(out_base, scratch_cur,
+                static_cast<size_t>(M) * H * W * sizeof(__half),
+                cudaMemcpyDeviceToDevice, 0));
+
+            device_free(scratch_cur); device_free(scratch_res);
+            device_free(d_offsets);
+        }, py::arg("d_bands"), py::arg("d_out"), py::arg("n_frames"),
+           py::arg("H"), py::arg("W"), py::arg("levels"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
+    // FP16 pipeline bindings (thin wrappers around FP16 kernel launchers).
+    m.def("batched_to_planar_3ch_f16", [](uintptr_t d_in, uintptr_t d_out, int n, int H, int W) {
+        evm::launch_to_planar_3ch_f16(
+            reinterpret_cast<const __half*>(d_in),
+            reinterpret_cast<__half*>(d_out), n, H, W, 0);
+    }, py::arg("d_in"), py::arg("d_out"), py::arg("n"), py::arg("H"), py::arg("W"));
+
+    m.def("batched_thwc_to_nt_f16", [](uintptr_t d_in, uintptr_t d_out, int T, int N) {
+        evm::launch_thwc_to_nt_f16(
+            reinterpret_cast<const __half*>(d_in),
+            reinterpret_cast<__half*>(d_out), T, N, 0);
+    }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"));
+
+    m.def("batched_nt_to_thwc_scaled_f16", [](uintptr_t d_in, uintptr_t d_out, int T, int N, float scale) {
+        evm::launch_nt_to_thwc_scaled_f16(
+            reinterpret_cast<const __half*>(d_in),
+            reinterpret_cast<__half*>(d_out), T, N, scale, 0);
+    }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"), py::arg("scale"));
+
+    m.def("batched_iir_bandpass_f16", [](uintptr_t d_in, uintptr_t d_out, int T, int N, double r1, double r2) {
+        evm::launch_iir_bandpass_f16(
+            reinterpret_cast<const __half*>(d_in),
+            reinterpret_cast<__half*>(d_out), T, N, r1, r2, 0);
+    }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
+       py::arg("r1"), py::arg("r2"));
+
+    m.def("batched_add_planar_quantize_f16", [](uintptr_t d_ntsc, uintptr_t d_delta, uintptr_t d_bgr,
+           int n, int H, int W, float chrom_att) {
+        evm::launch_add_planar_quantize_f16(
+            reinterpret_cast<const __half*>(d_ntsc),
+            reinterpret_cast<const __half*>(d_delta),
+            reinterpret_cast<unsigned char*>(d_bgr),
+            n, H, W, chrom_att, 0);
+    }, py::arg("d_ntsc"), py::arg("d_delta"), py::arg("d_bgr"),
+       py::arg("n"), py::arg("H"), py::arg("W"), py::arg("chrom_att"));
 
     // --- batched spatial primitives: corr_dn / up_conv on device pointers ---
 

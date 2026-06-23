@@ -29,9 +29,10 @@ namespace evm {
 constexpr int ELEMS_PER_THREAD = 4;
 
 // (T,H,W,C) -> (N,T): each thread handles ELEMS_PER_THREAD locations.
+template <typename In, typename Out>
 __global__ void thwc_to_nt_kernel(
-    const float* __restrict__ src,
-    float* __restrict__ dst,
+    const In* __restrict__ src,
+    Out* __restrict__ dst,
     int T, int N)
 {
     const int base_n = blockIdx.x * blockDim.x * ELEMS_PER_THREAD;
@@ -40,20 +41,21 @@ __global__ void thwc_to_nt_kernel(
     for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
         const int n = base_n + tid + e * blockDim.x;
         if (n >= N) return;
-        const float* s = src + n;
-        float* d = dst + n * T;
+        const In* s = src + n;
+        Out* d = dst + n * T;
         #pragma unroll
         for (int t = 0; t < T; ++t) {
-            d[t] = s[t * N];
+            d[t] = cvt_out<Out>(cvt_in<In>(s[t * N]));
         }
     }
 }
 
 // (N,T) -> (T,N) with optional scale (folds alpha amplification into the
 // transpose for the motion pipeline's Stage C).
+template <typename In, typename Out>
 __global__ void nt_to_thwc_kernel(
-    const float* __restrict__ src,
-    float* __restrict__ dst,
+    const In* __restrict__ src,
+    Out* __restrict__ dst,
     int T, int N, float scale)
 {
     const int base_n = blockIdx.x * blockDim.x * ELEMS_PER_THREAD;
@@ -62,46 +64,58 @@ __global__ void nt_to_thwc_kernel(
     for (int e = 0; e < ELEMS_PER_THREAD; ++e) {
         const int n = base_n + tid + e * blockDim.x;
         if (n >= N) return;
-        const float* s = src + n * T;
-        float* d = dst + n;
+        const In* s = src + n * T;
+        Out* d = dst + n;
         #pragma unroll
         for (int t = 0; t < T; ++t) {
-            d[t * N] = s[t] * scale;
+            d[t * N] = cvt_out<Out>(cvt_in<In>(s[t]) * scale);
         }
     }
 }
 
+// FP32 launchers
 void launch_thwc_to_nt(const float* src, float* dst, int T, int N,
                        cudaStream_t stream) {
     int block = 256;
     int grid = div_up(N, block * ELEMS_PER_THREAD);
-    thwc_to_nt_kernel<<<grid, block, 0, stream>>>(src, dst, T, N);
+    thwc_to_nt_kernel<float, float><<<grid, block, 0, stream>>>(src, dst, T, N);
 }
 
 void launch_nt_to_thwc(const float* src, float* dst, int T, int N,
                        cudaStream_t stream) {
     int block = 256;
     int grid = div_up(N, block * ELEMS_PER_THREAD);
-    nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N, 1.0f);
+    nt_to_thwc_kernel<float, float><<<grid, block, 0, stream>>>(src, dst, T, N, 1.0f);
 }
 
 void launch_nt_to_thwc_scaled(const float* src, float* dst, int T, int N,
                               float scale, cudaStream_t stream) {
     int block = 256;
     int grid = div_up(N, block * ELEMS_PER_THREAD);
-    nt_to_thwc_kernel<<<grid, block, 0, stream>>>(src, dst, T, N, scale);
+    nt_to_thwc_kernel<float, float><<<grid, block, 0, stream>>>(src, dst, T, N, scale);
+}
+
+// FP16 launchers (read __half, compute float, write __half)
+void launch_thwc_to_nt_f16(const __half* src, __half* dst, int T, int N,
+                           cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(N, block * ELEMS_PER_THREAD);
+    thwc_to_nt_kernel<__half, __half><<<grid, block, 0, stream>>>(src, dst, T, N);
+}
+
+void launch_nt_to_thwc_scaled_f16(const __half* src, __half* dst, int T, int N,
+                                  float scale, cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(N, block * ELEMS_PER_THREAD);
+    nt_to_thwc_kernel<__half, __half><<<grid, block, 0, stream>>>(src, dst, T, N, scale);
 }
 
 // (n,H,W,3) interleaved  ->  (n*3,H,W) planar (frame-major, then channel).
-// Used by the batched color pipeline so each frame-channel is a contiguous
-// (H,W) block that blur_dn_device can consume directly via pointer offset.
-// Bit-exact layout transform — no FP, no tolerance implications.
-//
-// Each thread handles one pixel (n,y,x): reads 3 contiguous floats from the
-// interleaved source, scatters them to 3 separate planes.
+// Templated for FP16 support.
+template <typename T>
 __global__ void to_planar_3ch_kernel(
-    const float* __restrict__ src,  // (n,H,W,3) row-major
-    float* __restrict__ dst,        // (n*3,H,W) row-major
+    const T* __restrict__ src,
+    T* __restrict__ dst,
     int n, int H, int W)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -111,7 +125,7 @@ __global__ void to_planar_3ch_kernel(
     const int yw = idx / W;
     const int y = yw % H;
     const int f = yw / H;
-    const float* s = src + (yw * W + x) * 3;
+    const T* s = src + (yw * W + x) * 3;
     const int plane_off = (f * 3) * H * W + y * W + x;
     dst[plane_off + 0 * H * W] = s[0];
     dst[plane_off + 1 * H * W] = s[1];
@@ -122,7 +136,14 @@ void launch_to_planar_3ch(const float* src, float* dst, int n, int H, int W,
                           cudaStream_t stream) {
     int block = 256;
     int grid = div_up(n * H * W, block);
-    to_planar_3ch_kernel<<<grid, block, 0, stream>>>(src, dst, n, H, W);
+    to_planar_3ch_kernel<float><<<grid, block, 0, stream>>>(src, dst, n, H, W);
+}
+
+void launch_to_planar_3ch_f16(const __half* src, __half* dst, int n, int H, int W,
+                              cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(n * H * W, block);
+    to_planar_3ch_kernel<__half><<<grid, block, 0, stream>>>(src, dst, n, H, W);
 }
 
 // (n*3,H,W) planar  ->  (n,H,W,3) interleaved (inverse of to_planar_3ch).
