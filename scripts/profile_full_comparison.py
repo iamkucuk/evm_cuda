@@ -243,6 +243,8 @@ def profile_motion_fp16_stages():
 
         t0 = time.perf_counter()
         _evm_cuda.batched_add_planar_quantize_f16(ntsc_f16.ptr, delta.ptr, d_out_u8.ptr, n, h, w, MOTION_CHROM)
+        # Include D2H download to match the FP32 profiler's Stage D2 timing.
+        out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
         sync()
         st["D2) render"] = time.perf_counter() - t0
         del ntsc_f16, delta
