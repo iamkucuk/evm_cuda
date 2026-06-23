@@ -143,40 +143,45 @@ taken on NVIDIA H100 (kolyoz21, TRUBA HPC).
 | lpyr_recon | 14.8 ms | 8.2% | Compute. Separable filter, batched. |
 | **render** | **81.9 ms** | **45.2%** | **Memory latency** (see analysis below). |
 
-### Three bottleneck regimes
+### The render stage: underutilized resources
 
-The profiler data falls into three categories, each governed by different
-physics.
+The render stage dominates GPU time (45 to 65%). Each output pixel reads
+~12 bytes from the NTSC frame (3 floats), does about 35 FLOPs of math
+(bilinear interpolation plus NTSC-to-BGR matrix multiply), and writes 3
+bytes. On paper, the arithmetic intensity (2.3 FLOPs/byte) puts this in
+the memory-bound regime of the H100 roofline.
 
-**The render stage is memory-latency bound (45 to 65% of GPU time).**
+But the profiler tells a different story. The kernel achieves only **0.4%
+of peak memory bandwidth** and **0.003% of peak FP32 throughput**. Neither
+resource is saturated. This is the signature Harris describes in his
+reduction paper: the GPU has the bandwidth and the compute capacity, but
+the kernel's data access patterns prevent it from using either.
 
-The render kernels read the full-resolution NTSC frame in float32
-(n×H×W×3 = 1.8 GB for motion) and write the uint8 output. The arithmetic
-intensity is about 2.3 FLOPs per byte, which puts it nominally in the
-memory-bound regime on H100's roofline. But the kernel achieves only 0.4%
-of peak bandwidth. The problem isn't that the kernel moves too much data
-for the memory controller to handle. The problem is that each thread
-issues a global memory read, then stalls for 400+ cycles waiting for it,
-with no software caching to hide the latency.
+The issue is how the kernel fetches data. Each thread reads the NTSC
+frame from raw global memory through the L2-to-DRAM path, with no
+software-managed caching. A single global memory read takes 400 to 600
+cycles to return. The thread's 35 FLOPs of compute finish in about 35
+cycles. Without enough independent memory operations in flight, the SM
+sits idle for 90%+ of the time, waiting for data that the memory
+subsystem could deliver much faster if it were asked the right way.
 
-Kernel fusion confirmed that the bottleneck isn't raw data volume.
-Merging the bilinear upsample, add, and quantize into a single kernel
-eliminated a 1.8 GB intermediate buffer and one kernel launch. It
-produced no measurable improvement. Eliminating reads doesn't help when
-the remaining reads still stall on latency. The fix is faster reads
-(texture units, shared memory tiling), or more independent reads per
-thread to pipeline.
+This is the same pattern Harris demonstrates across seven kernel versions.
+His reduction starts at ~1.6 GB/s effective bandwidth (V1: naive
+interleaved reads) and reaches ~17 GB/s (V7: unrolled, multiple elements
+per thread). Both endpoints run on the same hardware. The 10x difference
+comes entirely from how the kernel organizes data access: coalescing,
+shared memory staging, warp-level coordination, and giving each thread
+enough independent work to keep the memory pipeline full.
 
-**The IIR filter is algorithmically serial (23% of motion GPU time).**
+### The IIR filter: algorithmic seriality (23% of motion GPU time)
 
 The recursive temporal filter is sequential along the time axis. Each
 output sample depends on the previous two. The kernel assigns one thread
-per spatial location, and each thread loops over all T frames. You can't
-parallelize across time without changing the algorithm (block-parallel
-scan, cyclic reduction). This is the one stage where the bottleneck is
-the math itself, not the hardware moving data around.
+per spatial location, and each thread loops over all T frames. This can't
+be parallelized across time without changing the algorithm (block-parallel
+scan, cyclic reduction).
 
-**The spatial filters are compute bound but fast (11 to 19%).**
+### The spatial filters: compute bound but fast (11 to 19%)
 
 The separable 5-tap binomial filter operates on the pyramid levels. At
 the finest level (960×544), each output pixel needs 5 multiply-adds per
@@ -323,31 +328,30 @@ decode and encode) is currently bottlenecked by the CPU codec at about
 2.7s per clip, which limits realtime throughput to roughly 0.1 fps
 regardless of GPU speed.
 
-### Resource utilization
+### Resource utilization: both underutilized
 
 The render stage dominates GPU time (45 to 65%), yet it achieves only
 **0.4% of the H100's peak memory bandwidth** and **0.003% of peak FP32
-throughput**. Neither resource is saturated.
+throughput**. Neither resource is saturated. The GPU has the bandwidth and
+the compute capacity, but the kernel's data access patterns don't let it
+use either.
 
-The arithmetic intensity is about 2.3 FLOPs per byte. On the roofline
-model, the crossover between memory-bound and compute-bound on H100 is
-at ~3.4 FLOPs/byte, so the kernel is nominally in the memory-bound
-regime. But achieving only 0.4% of peak bandwidth means it isn't actually
-saturating memory. The real limiter is **memory latency**, not bandwidth.
+This is the central lesson of Harris's reduction paper. His seven kernel
+versions all run on the same hardware, process the same data, and produce
+the same result. The 10x performance difference (1.6 GB/s to 17 GB/s
+effective bandwidth) comes entirely from how the kernel organizes its
+interaction with the memory subsystem:
 
-Each thread reads ~12 bytes from the NTSC frame (3 floats), does about 35
-FLOPs of math (bilinear interpolation plus NTSC-to-BGR matrix multiply),
-and writes 3 bytes. The reads go through L2 cache to DRAM with no
-software caching. A global memory read takes 400 to 600 cycles. The
-thread's 35 FLOPs finish in about 35 cycles. Without enough concurrent
-threads in flight to overlap, the SM stalls on the read latency for 90%+
-of the time.
+- Coalesced access patterns so each warp transaction moves a full cache line
+- Shared memory staging so data loaded once serves multiple threads
+- Enough independent work per thread to keep the memory pipeline full while
+  the warp scheduler overlaps computation with other warps' memory access
+- Avoiding bank conflicts in shared memory so all banks serve simultaneously
 
-This is the same bottleneck Harris's reduction paper attacks across its
-seven kernel versions. The reduction starts at ~1.6 GB/s effective
-bandwidth (V1: naive interleaved reads) and reaches ~17 GB/s (V7:
-unrolled, multiple elements per thread). Every speedup in between comes
-from making memory access faster, not from doing less math.
+The current render kernel gets the first item right (reads are coalesced)
+but doesn't do the rest. The NTSC frame is read from raw global memory
+through the L2-to-DRAM path with no software-managed staging, and each
+thread does too little independent work to keep the memory pipeline busy.
 
 ### Theoretical ceiling
 
@@ -362,24 +366,41 @@ than 1% of it.
 
 ## Open optimization surfaces
 
-The render stage (45 to 65% of GPU time) is memory-latency bound. Three
-strategies remain that address latency directly.
+The render stage (45 to 65% of GPU time) underutilizes both memory
+bandwidth and compute. The remaining headroom is in changing how the
+kernel accesses data, not how much data it processes. Three approaches
+correspond to the later stages of Harris's progression.
 
-**Texture memory for NTSC reads.** `cudaTextureObject_t` provides
-hardware-managed L1 texture cache with spatial prefetch. The render kernel
-currently reads the NTSC frame from raw global memory (L2 to DRAM path).
-Texture units would cache the reads in L1, turning 400+ cycle DRAM latency
-into ~30 cycle L1 hits on spatially local accesses.
+**Shared memory tiling (Harris V3).** Load a tile of the NTSC frame into
+shared memory cooperatively, then have each thread read from shared memory
+(~20 cycle access) instead of global memory (~400 cycle access). This is
+the classic data-staging technique. Adjacent threads share loaded cache
+lines, and the `__syncthreads()` barrier ensures the tile is fully loaded
+before any thread reads from it. The shared memory layout must be padded
+to avoid bank conflicts (32 banks, 4 bytes each; a stride that's a
+multiple of 32 causes all threads to hit the same bank).
 
-**Shared memory tiling.** Load a block of the NTSC frame into shared memory
-cooperatively, then have each thread read from shared memory. This is the
-classic solution Harris describes. It gives full control over caching but
-requires a tiled kernel rewrite.
+**Texture hardware (Harris texture path).** `cudaTextureObject_t` with
+`cudaReadModeElementType` provides hardware-managed L1 texture cache with
+spatial prefetch. The texture unit automatically fetches neighboring cache
+lines, so adjacent threads benefit from each other's reads without
+explicit shared memory management. For the color pipeline's bilinear
+upsample, `tex2D` with linear filtering replaces the manual 4-tap
+interpolation entirely: the hardware does it in one instruction with its
+own cache.
+
+**Multiple elements per thread, extended (Harris V6+).** The current V6
+implementation processes 4 pixels per thread. Increasing to 8 or 16 would
+give the compiler more independent memory operations to pipeline, further
+filling the gaps where the SM waits for data. The tradeoff is register
+pressure: each pixel needs registers for its intermediate values, and
+spilling to local memory would negate the benefit.
 
 **FP16 NTSC storage.** Storing the NTSC frame in half-precision halves the
-bytes per read, which doubles the effective cache capacity and bandwidth.
-The NTSC values are in [0, 1] with roughly 10⁻⁶ precision requirements.
-FP16's 11-bit mantissa is likely sufficient but needs tolerance validation.
+bytes per read, which doubles the effective cache capacity and improves
+coalescing density. The NTSC values are in [0, 1] with roughly 10⁻⁶
+precision requirements. FP16's 11-bit mantissa is likely sufficient but
+needs tolerance validation.
 
 For the IIR stage, the algorithmic seriality can only be addressed by
 replacing the recursive filter with a block-parallel formulation (cyclic
@@ -389,20 +410,24 @@ and would require re-validation.
 ## Methodology
 
 The optimization approach follows Harris's ["Optimizing Parallel Reduction
-in CUDA"][harris]. That presentation is often summarized as "measure,
-attack the bottleneck, re-profile," but its real contribution is the
-specific progression of memory-access optimizations: interleaved to
-sequential addressing, loading data into shared memory, unrolling the
-final warp, having each thread process multiple elements. Each version
-makes memory access faster, not the math cheaper.
+in CUDA"][harris]. The key insight from that work is that an
+underutilized GPU is usually suffering from poor data access patterns, not
+from a lack of hardware capability. The reduction kernel starts at 1.6
+GB/s and reaches 17 GB/s through seven versions that each improve how the
+kernel interacts with the memory subsystem: sequential addressing for
+coalescing, shared memory for data reuse, warp-level primitives for
+reducing synchronization, multiple elements per thread for keeping the
+memory pipeline full. The arithmetic doesn't change. The data access does.
 
-This project applied the same principle at two levels. First, at the
-pipeline level: eliminating host-device transfers, batching kernel
-launches, caching cuFFT plans. Then at the kernel level: register hoisting
-for filter taps, occupancy hints, and V6 multiple-elements-per-thread
-(which gave 22% on the render stage). The remaining headroom (texture
-hardware with spatial prefetch, FP16 storage) corresponds to the later
-stages of Harris's roadmap.
+This project applied the same principle at two levels. At the pipeline
+level: eliminating host-device transfers, batching kernel launches,
+caching cuFFT plans. At the kernel level: register hoisting for filter
+taps, and V6 multiple-elements-per-thread for the render stage (22%
+improvement). The render kernel's 0.4% bandwidth utilization indicates
+the same class of problem Harris describes: the hardware can deliver far
+more data and compute far more FLOPs than the kernel currently asks of it.
+The shared-memory tiling, texture hardware, and extended V6 optimizations
+in the open surfaces section are the next steps along that same roadmap.
 
 The profilers run 5 timed iterations with a warmup run (to exclude kernel
 JIT and binary load costs), pre-allocate all device buffers (to exclude
