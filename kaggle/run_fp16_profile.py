@@ -57,18 +57,32 @@ def main():
     # Download data
     run([sys.executable, "scripts/download_samples.py", "baby"])
 
-    # Profile FP32 motion pipeline
+    # Profile FP32 motion pipeline (only if GPU has enough VRAM)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path("cuda").resolve())
 
-    print("=" * 60)
-    print("FP32 MOTION PIPELINE PROFILE")
-    print("=" * 60)
-    result = subprocess.run(
-        [sys.executable, "scripts/profile_motion.py"],
-        capture_output=True, text=True, env=env, check=True, timeout=180)
-    print(result.stdout)
-    fp32_output = result.stdout
+    # Check VRAM — FP32 motion needs ~24 GB
+    mem_r = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader"],
+        capture_output=True, text=True, check=True)
+    vram_mb = int(mem_r.stdout.strip().split()[0])
+
+    fp32_output = ""
+    if vram_mb >= 28000:  # 28 GB threshold
+        print("=" * 60)
+        print("FP32 MOTION PIPELINE PROFILE")
+        print("=" * 60)
+        try:
+            result = subprocess.run(
+                [sys.executable, "scripts/profile_motion.py"],
+                capture_output=True, text=True, env=env, check=True, timeout=180)
+            print(result.stdout)
+            fp32_output = result.stdout
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            print(f"FP32 profiler failed: {e}")
+    else:
+        print(f"GPU has {vram_mb} MB VRAM (< 28 GB needed for FP32 motion).")
+        print("Skipping FP32 profile, running FP16 only.\n")
 
     # Profile FP16 motion pipeline (inline, since there's no separate profiler script)
     print("\n" + "=" * 60)
