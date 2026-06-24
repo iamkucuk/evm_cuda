@@ -43,10 +43,13 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 Compute-only (pipeline stages, excluding video I/O), measured on A100-80GB
 and Tesla P100-16GB:
 
-| Pipeline | Python CPU | CUDA FP32 | CUDA FP16 | Best speedup |
-|----------|-----------|-----------|-----------|-------------|
-| Color (pulse) | 10,350 ms | 72 ms (**144x**) | 84 ms (124x) | 144x (A100) |
-| Motion (breathing) | 46,255 ms | 209 ms (222x) | 172 ms (**269x**) | 269x (A100) |
+| Pipeline | Python CPU | CUDA FP32 | CUDA FP16 | Throughput (FP16) |
+|----------|-----------|-----------|-----------|-------------------|
+| Color (pulse) | 10,350 ms | 72 ms (**144x**) | 84 ms (124x) | 1.08 Gpx/s |
+| Motion (breathing) | 46,255 ms | 209 ms (222x) | 172 ms (**269x**) | 0.88 Gpx/s |
+
+At 1080p (1920x1080), a single A100 can process **20 parallel color streams
+or 14 parallel motion streams at 30 FPS** in real time.
 
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full benchmark breakdown in the
