@@ -51,6 +51,11 @@ and Tesla P100-16GB:
 At 1080p (1920x1080), a single A100 can process **20 parallel color streams
 or 14 parallel motion streams at 30 FPS** in real time.
 
+**Edge deployment:** On a Jetson AGX Orin (204.8 GB/s, 15-60W), both
+pipelines remain real-time capable at 1080p/30fps &mdash; ~65 fps color
+and ~45 fps motion (estimated by bandwidth scaling from A100, both Ampere
+architecture). FP16 motion fits entirely within the Orin's shared memory.
+
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full benchmark breakdown in the
 [optimization writeup](docs/blog_speedup.md).
