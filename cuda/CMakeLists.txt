@@ -1,10 +1,9 @@
 # CMakeLists.txt — builds _evm_cuda.so, the pybind11 extension wrapping the
-# EVM CUDA kernels. Designed to be invoked from setup.py (`pip install -e .`)
-# OR standalone from a build directory on TRUBA.
+# EVM CUDA kernels. Invoked via `make build` or `pip install -e cuda/`.
 #
-# The build is portable across TRUBA's GPU fleet: we compile for several
-# arches simultaneously so the resulting .so runs on P100/V100/A100/H100/H200
-# without per-node rebuilds. `-use_fast_math=false` keeps bit-accuracy.
+# The build targets multiple arches simultaneously so the resulting .so
+# runs on P100/V100/A100/H100/H200 without per-node rebuilds.
+# `-use_fast_math=false` keeps bit-accuracy.
 
 cmake_minimum_required(VERSION 3.18)
 project(evm_cuda LANGUAGES CXX CUDA)
@@ -15,7 +14,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # --- CUDA setup ------------------------------------------------------------
 
-# Portable arch coverage for TRUBA ARF-ACC: P100 (sm_60) -> V100 (sm_70) ->
+# Portable arch coverage: P100 (sm_60) -> V100 (sm_70) ->
 # A100 (sm_80) -> Ada/H100-class (sm_89/sm_90). Drop sm_60 if your nvcc
 # doesn't support it; the others will still cover all current cards.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
@@ -35,8 +34,7 @@ find_package(CUDAToolkit REQUIRED)
 # --- Python + pybind11 + numpy --------------------------------------------
 
 # When invoked via setup.py (scikit-build), Python/NumPy are already found
-# by the parent. When invoked standalone (e.g. on TRUBA in a manual build),
-# fall back to find_package.
+# by the parent. When invoked standalone, fall back to find_package.
 find_package(Python3 COMPONENTS Interpreter Development NumPy REQUIRED)
 
 # pybind11: prefer system install, fall back to FetchContent.

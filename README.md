@@ -73,23 +73,16 @@ output is bit-for-bit equivalent to the MIT MATLAB reference.
 See [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel architecture and
 [`docs/blog_speedup.md`](docs/blog_speedup.md) for the optimization story.
 
-### Build (TRUBA)
+### Build
 
 ```bash
-source deploy/truba_env.sh
-bash deploy/build.sh
+make build     # cmake + nvcc, produces cuda/evm_cuda/_evm_cuda.so
 ```
 
 ### Profiling
 
 ```bash
-# Full comparison: CPU vs FP32 vs FP16, both pipelines, per-stage + output videos
-PYTHONPATH=$PWD/cuda python scripts/profile_full_comparison.py
-
-# FP32-only per-stage breakdown (faster, no CPU baseline)
-PYTHONPATH=$PWD/cuda python scripts/profile_color.py
-PYTHONPATH=$PWD/cuda python scripts/profile_motion.py
-
-# SLURM job: builds + tests + profiles in one job
-sbatch deploy/submit_profile.slurm
+make profile           # CPU vs FP32 vs FP16, both pipelines + output videos
+make profile-color     # color FP32 stages only
+make profile-motion    # motion FP32 stages only
 ```
