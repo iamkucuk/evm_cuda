@@ -79,7 +79,7 @@ cuda/
 | Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel<NTSC_T>` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; templated on NTSC type (float/__half); filt stays float* (FFT output) |
 | Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel<NTSC_T>` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion pipeline render; templated on NTSC type |
 | cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N); eliminates per-call plan creation |
-| V6 multiple elements/thread | render + transpose kernels | 4 px/thread via `#pragma unroll` | pipelines independent reads for latency hiding (22% render) |
+| Multiple elements/thread | render + transpose kernels | 4 px/thread via `#pragma unroll` | pipelines independent reads for latency hiding (22% render) |
 | FP16 storage (both pipelines) | All batched kernels templated on In/Out type | `cvt_in`/`cvt_out` in evm_common.cuh | __half storage, FP32 compute, FP64 IIR accumulator unchanged |
 | FP16 blur_dn_color | `bindings.cpp:batched_blur_dn_color_f16` | host loop over nlevs | reads __half NTSC planar, downsamples in FP16 scratch, converts to FP32 for FFT |
 | FP16 conversion | `fp16_cvt.cu:f32_to_f16 / f16_to_f32` | `(⌈n/256⌉) / (256,1,1)` | one-time conversion at NTSC creation boundary |

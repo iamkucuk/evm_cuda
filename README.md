@@ -116,7 +116,7 @@ No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.
 - **cuFFT plan caching** — eliminates per-call autotuning overhead
 - **Templated FP16 storage** — all kernels compile in both FP32 and FP16 variants
   via `cvt_in`/`cvt_out` helpers; compute stays FP32, storage halves
-- **V6 multiple-elements-per-thread** — render and transpose kernels process
+- **Multiple-elements-per-thread** — render and transpose kernels process
   4 pixels per thread to pipeline independent memory reads (22% speedup)
 - **125 tests** validating every kernel against the Python baseline, including
   end-to-end RMSE checks and MIT reference output comparison

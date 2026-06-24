@@ -107,8 +107,8 @@ __global__ void add_and_quantize_kernel(
 // Planar delta layout: delta[(f*3 + c) * H * W + y * W + x] for frame f, chan c.
 //
 // Grid: (ceil(W/(32*ELEMS)), ceil(H/32), n)  Block: (32, 32, 1)
-// Each thread processes ELEMS adjacent pixels along x (Harris V6: multiple
-// elements per thread). This amortizes the per-pixel overhead and gives the
+// Each thread processes ELEMS adjacent pixels along x (multiple elements per
+// thread). This amortizes the per-pixel overhead and gives the
 // compiler independent memory operations to pipeline for latency hiding.
 constexpr int ADD_PLANAR_ELEMS = 4;
 
@@ -310,7 +310,7 @@ void launch_add_planar_quantize_f16(const __half* ntsc, const __half* delta_plan
 // signal at the pyramid level), interpolates inline, reads ntsc[px], adds,
 // and writes directly to the uint8 output. No intermediate buffer, one launch.
 //
-// Each thread processes UPSAMPLE_ELEMS adjacent pixels along x (Harris V6),
+// Each thread processes UPSAMPLE_ELEMS adjacent pixels along x,
 // amortizing the per-pixel overhead and giving the compiler independent
 // memory operations to pipeline for latency hiding.
 //
