@@ -26,5 +26,6 @@ cuda/build/
 .idea/
 .DS_Store
 
-reduction.pdf
+# Misc
+*.pdf
 kaggle/results*/

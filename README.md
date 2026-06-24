@@ -1,88 +1,151 @@
-# evm_cuda
+# Eulerian Video Magnification on CUDA
 
-Eulerian Video Magnification (EVM) — CUDA-accelerated.
+[![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](#)
+[![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia&logoColor=white)](#)
+[![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
+[![Tests](https://img.shields.io/badge/tests-125%20passed-brightgreen)](#)
+[![Speedup](https://img.shields.io/badge/speedup-269x-success)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Reference: Wu, Rubinstein, Freeman, Durand, Guttag.
-**Eulerian Video Magnification for Revealing Subtle Changes in the World.**
-SIGGRAPH 2012. <http://people.csail.mit.edu/mrub/vidmag/>
+**A CUDA-accelerated implementation of Eulerian Video Magnification (EVM) that
+reveals invisible temporal changes in video — a person's pulse, a baby's
+breathing, the vibration of machinery — by amplifying sub-pixel color and
+motion variations that the eye cannot detect.**
 
-## Status
+This project ports the MIT SIGGRAPH 2012 reference implementation from
+MATLAB to raw CUDA C++, achieving **269x speedup** over the Python/NumPy
+baseline while producing bit-for-bit equivalent output (RMSE < 0.01).
 
-- [x] Python baseline (correctness oracle for the CUDA port)
-  - [x] Color magnification (pulse / heart-rate)
-  - [x] Motion magnification (collapsible Laplacian pyramid)
-  - [x] Temporal filters: ideal (FFT), Butterworth, causal IIR
-- [x] CUDA port — validated vs Python baseline (125/125 tests pass)
-- [x] Speed optimization — **144x** color, **222x** motion (FP32, A100, compute-only)
-- [x] FP16 storage — **269x** motion (FP16, A100), fits 16 GB GPUs
+---
 
-See [`docs/blog_speedup.md`](docs/blog_speedup.md) for the full optimization
-write-up and [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel architecture.
+### Pulse magnification (color pipeline)
 
-## Quick start with make
+<p align="center">
+  <img src="docs/img/face_demo.png" alt="Pulse magnification: blood flow becomes visible">
+</p>
+
+<p align="center"><sub>The green tint on the right shows amplified blood flow —
+each heartbeat causes sub-pixel skin color changes that EVM makes visible.</sub></p>
+
+### Motion magnification (IIR pipeline)
+
+<p align="center">
+  <img src="docs/img/baby_demo.png" alt="Motion magnification: subtle breathing amplified">
+</p>
+
+<p align="center"><sub>Submillimeter chest movements from breathing are amplified
+to be clearly visible, enabling non-contact vital sign monitoring.</sub></p>
+
+---
+
+## Performance
+
+Compute-only (pipeline stages, excluding video I/O), measured on A100-80GB
+and Tesla P100-16GB:
+
+| Pipeline | Python CPU | CUDA FP32 | CUDA FP16 | Best speedup |
+|----------|-----------|-----------|-----------|-------------|
+| Color (pulse) | 10,350 ms | 72 ms (**144x**) | 84 ms (124x) | 144x (A100) |
+| Motion (breathing) | 46,255 ms | 209 ms (222x) | 172 ms (**269x**) | 269x (A100) |
+
+FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
+the Tesla P100 and T4. Full benchmark breakdown in the
+[optimization writeup](docs/blog_speedup.md).
+
+## How it works
+
+Every EVM variant follows the same four-stage pipeline:
+
+```
+input video (T frames, H x W, RGB)
+   |
+   1. COLOR    BGR u8 -> NTSC YIQ float (per-pixel matrix multiply)
+   2. SPATIAL  Gaussian downsample (color) OR Laplacian pyramid (motion)
+   3. TEMPORAL Bandpass filter along time (FFT / Butterworth / IIR)
+   4. AMPLIFY  Multiply by alpha, add back, render to RGB
+   |
+output video (magnified)
+```
+
+The CUDA port implements each stage as one or more kernels, with the entire
+pipeline running device-resident (zero per-frame host-device transfers).
+See [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel-by-kernel mapping and
+[`docs/blog_speedup.md`](docs/blog_speedup.md) for the full optimization story.
+
+## Quick start
 
 ```bash
 # Setup
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-make download          # fetch MIT sample videos + references
+make download          # fetch MIT sample videos
 
-# Build (needs nvcc)
-make build             # compile _evm_cuda.so
-
-# Test
-make test              # all 125 tests (77 baseline + 48 CUDA)
-make test-baseline     # Python oracle only (no GPU, ~40s)
+# Build (needs CUDA toolkit + nvcc)
+make build
 
 # Run
 make run-color         # pulse magnification on face.mp4
 make run-motion        # motion magnification on baby.mp4
 
+# Test
+make test              # 125 tests (77 Python baseline + 48 CUDA)
+
 # Profile
-make profile           # CPU vs FP32 vs FP16, both pipelines + videos
-make help              # list all targets
+make profile           # CPU vs FP32 vs FP16 comparison
+make help              # all targets
 ```
 
-## Manual usage
+## Tech stack
 
-```bash
-# Color (pulse) magnification
-python scripts/run_evm.py data/face.mp4 output/face_color.mp4 \
-    --mode color --alpha 50 --level 4 --fl 0.8333 --fh 1.0 --chromatt 1
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| GPU kernels | CUDA C++ (raw nvcc) | Maximum control, no framework overhead |
+| Python bindings | pybind11 | Thin, zero-copy device pointer passing |
+| Build | CMake + Ninja | Standard, portable |
+| FFT | cuFFT (batched C2C) | Hardware-accelerated temporal filtering |
+| Color | OpenCV (VideoWriter) | Codec for mp4 output |
+| Compute | NumPy / SciPy (baseline) | The correctness oracle |
 
-# Motion magnification (IIR)
-python scripts/run_evm.py data/baby.mp4 output/baby_motion.mp4 \
-    --mode iir --alpha 10 --lambda-c 16 --r1 0.4 --r2 0.05 --chromatt 0.1
+No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.
+
+## Architecture highlights
+
+- **Device-resident pipeline** — the entire clip is staged to GPU memory once;
+  all 50+ kernel launches execute without a single host-device round-trip
+- **Batched spatial kernels** — `grid.z = M` collapses ~35,000 launches into ~50
+- **cuFFT plan caching** — eliminates per-call autotuning overhead
+- **Templated FP16 storage** — all kernels compile in both FP32 and FP16 variants
+  via `cvt_in`/`cvt_out` helpers; compute stays FP32, storage halves
+- **V6 multiple-elements-per-thread** — render and transpose kernels process
+  4 pixels per thread to pipeline independent memory reads (22% speedup)
+- **125 tests** validating every kernel against the Python baseline, including
+  end-to-end RMSE checks and MIT reference output comparison
+
+## Project structure
+
+```
+evm_cuda/
+├── evm/                  # Python baseline (the correctness oracle)
+├── cuda/                 # CUDA port
+│   ├── kernels/          # 10 .cu files (color, spatial, lpyr, iir, render...)
+│   ├── bindings.cpp      # pybind11 module
+│   ├── evm_cuda/         # Python wrapper (pipelines, DeviceBuffer)
+│   └── DESIGN.md         # kernel-by-kernel mapping + tolerance contract
+├── docs/
+│   ├── blog_speedup.md   # full optimization writeup
+│   └── img/              # demo images
+├── scripts/              # CLI + profilers
+├── tests/                # 77 Python + 48 CUDA tests
+├── kaggle/               # free-GPU benchmark harness
+└── Makefile              # build, test, run, profile targets
 ```
 
-Run `python scripts/run_evm.py --help` for the full parameter list.
+## Reference
 
-### Tests
+Wu, Rubinstein, Freeman, Durand, Guttag. "Eulerian Video Magnification for
+Revealing Subtle Changes in the World." SIGGRAPH 2012.
+<http://people.csail.mit.edu/mrub/vidmag/>
 
-```bash
-python -m pytest tests/ -q          # baseline only (no GPU needed)
-python -m pytest tests/ tests/cuda/ -q   # + CUDA kernels (needs GPU)
-```
+## License
 
-## CUDA port
-
-Raw CUDA kernels (no PyTorch/CuPy) with a thin pybind11 binding. Every kernel
-is validated against the Python baseline within tight tolerances — the CUDA
-output is bit-for-bit equivalent to the MIT MATLAB reference.
-
-See [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel architecture and
-[`docs/blog_speedup.md`](docs/blog_speedup.md) for the optimization story.
-
-### Build
-
-```bash
-make build     # cmake + nvcc, produces cuda/evm_cuda/_evm_cuda.so
-```
-
-### Profiling
-
-```bash
-make profile           # CPU vs FP32 vs FP16, both pipelines + output videos
-make profile-color     # color FP32 stages only
-make profile-motion    # motion FP32 stages only
-```
+[MIT](LICENSE)
