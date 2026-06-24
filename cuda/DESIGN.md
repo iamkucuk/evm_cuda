@@ -222,7 +222,7 @@ rule. The Python baseline is the oracle.
 1. **Build succeeds on TRUBA.** `bash deploy/build.sh` produces
    `cuda/evm_cuda/_evm_cuda.so`.
 2. **Each kernel matches the Python baseline within its tolerance.**
-   `tests/cuda/test_*.py` (74 tests: 66 original + 8 batched kernel tests).
+   `tests/cuda/test_*.py` (48 tests across 8 test files).
 3. **End-to-end pipelines match the Python baseline within `<0.01` RMSE** on
    synthetic clips and on `face.mp4` / `baby.mp4` (`test_pipelines.py`).
 4. **Python baseline still matches MIT.** The existing

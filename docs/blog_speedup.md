@@ -286,7 +286,7 @@ for (int e = 0; e < 4; ++e) {
 }
 ```
 
-This gave 22% gains on both render stages:
+This gave 22% gains on both render stages (measured on H100, kolyoz21):
 
 | Stage | Before | After |
 |-------|--------|-------|
