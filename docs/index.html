@@ -278,41 +278,26 @@ host-device transfers.
 <h2 class="section-title">Demo: Pulse Magnification</h2>
 <div class="video-compare">
     <div class="video-col">
-        <div class="video-label">Input</div>
-        <video autoplay loop muted playsinline>
-            <source src="video/face_input.mp4" type="video/mp4">
-        </video>
-    </div>
-    <div class="video-col">
-        <div class="video-label">Magnified (&alpha;=50)</div>
-        <video autoplay loop muted playsinline>
-            <source src="video/face_pulse.mp4" type="video/mp4">
-        </video>
+        <div class="video-label">Input | Magnified</div>
+        <img src="img/face_demo.gif" alt="Pulse magnification: blood flow becomes visible" style="width:100%;display:block;">
     </div>
 </div>
 <p class="caption">
-    Color magnification pipeline. Blood flow becomes visible as a pulsing
-    green tint &mdash; each heartbeat causes sub-pixel skin color changes that EVM
-    amplifies. The input video shows no visible change to the naked eye.
+    Color magnification pipeline (&alpha;=50). Left: input. Right: amplified.
+    Blood flow becomes visible as a pulsing green tint &mdash; each heartbeat causes
+    sub-pixel skin color changes that EVM amplifies. The input shows no visible
+    change to the naked eye.
 </p>
 
 <h2 class="section-title">Demo: Motion Magnification</h2>
 <div class="video-compare">
     <div class="video-col">
-        <div class="video-label">Input</div>
-        <video autoplay loop muted playsinline>
-            <source src="video/baby_input.mp4" type="video/mp4">
-        </video>
-    </div>
-    <div class="video-col">
-        <div class="video-label">Magnified (&alpha;=10, IIR)</div>
-        <video autoplay loop muted playsinline>
-            <source src="video/baby_motion.mp4" type="video/mp4">
-        </video>
+        <div class="video-label">Input | Magnified</div>
+        <img src="img/baby_demo.gif" alt="Motion magnification: subtle breathing amplified" style="width:100%;display:block;">
     </div>
 </div>
 <p class="caption">
-    Motion magnification pipeline (Laplacian pyramid + IIR temporal filter).
+    Motion magnification pipeline (&alpha;=10, IIR). Left: input. Right: amplified.
     Submillimeter chest movements from breathing are amplified to be clearly
     visible, enabling non-contact vital sign monitoring.
 </p>
