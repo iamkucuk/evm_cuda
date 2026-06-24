@@ -3,7 +3,7 @@
 Every test module in tests/cuda/ is gated on the ``have_cuda`` marker: if
 the compiled extension isn't importable (e.g. on the Mac dev host, or on a
 build without nvcc), the whole suite skips cleanly. When the extension IS
-present (i.e. on TRUBA after `bash deploy/build.sh`), the tests run and
+present (i.e. after `make build`), the tests run and
 compare each kernel's output to the Python baseline ``evm/`` within the
 tolerances documented in AGENTS.md §2.
 """

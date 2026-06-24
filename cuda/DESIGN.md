@@ -10,9 +10,9 @@ AGENTS.md §2 requires for any numerical-contract decision.
 | Decision | Choice | Why |
 |---|---|---|
 | Binding | Raw CUDA (`.cu`/`nvcc`) + pybind11 | Maximum control, no heavyweight framework dep |
-| Deploy | TRUBA ARF-ACC (`ssh truba`, GPU queues) | Has internet on login nodes, dedicated GPU partitions |
+| Deploy | Any machine with NVIDIA GPU + CUDA toolkit | Standard CMake + nvcc build (`make build`) |
 | Mode | Batch — whole clip in device memory | Simplest, supports the FFT-based ideal filter natively |
-| GPU | Portable: `sm_60 sm_70 sm_80 sm_89 sm_90` | One `.so` covers TRUBA's whole fleet (P100→H100) |
+| GPU | Portable: `sm_60 sm_70 sm_80 sm_89 sm_90` | One `.so` covers P100 through H100 |
 | Precision | FP32 hot path + FP64 IIR accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
 
 ## Repository layout
@@ -219,7 +219,7 @@ rule. The Python baseline is the oracle.
 
 ## Validation strategy
 
-1. **Build succeeds on TRUBA.** `bash deploy/build.sh` produces
+1. **Build succeeds.** `make build` produces
    `cuda/evm_cuda/_evm_cuda.so`.
 2. **Each kernel matches the Python baseline within its tolerance.**
    `tests/cuda/test_*.py` (48 tests across 8 test files).

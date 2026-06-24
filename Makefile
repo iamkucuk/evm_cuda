@@ -8,12 +8,12 @@
 #   make help           # list all targets
 #
 # All targets are phony (no output file artifacts). The venv must already
-# be active (`.venv` locally, or `source deploy/truba_env.sh` on TRUBA).
+# be active (`source .venv/bin/activate`).
 
-.PHONY: help build build-truba clean download \
+.PHONY: help build clean download \
         test test-baseline test-cuda \
         run-color run-motion \
-        profile-color profile-motion profile slurm
+        profile-color profile-motion profile
 
 # --- Paths + variables ------------------------------------------------------
 ROOT     := $(PWD)
@@ -34,14 +34,11 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 # --- Build ------------------------------------------------------------------
-build: ## Build _evm_cuda.so via CMake + nvcc (any machine with nvcc)
+build: ## Build _evm_cuda.so via CMake + nvcc
 	cmake -S $(CUDA_DIR) -B $(CUDA_DIR)/build \
 		-DCMAKE_BUILD_TYPE=Release -G Ninja 2>/dev/null || \
 	cmake -S $(CUDA_DIR) -B $(CUDA_DIR)/build -DCMAKE_BUILD_TYPE=Release
 	cmake --build $(CUDA_DIR)/build --config Release -j
-
-build-truba: ## Build on TRUBA (loads gcc/cuda/cmake modules first)
-	source deploy/truba_env.sh && bash deploy/build.sh
 
 clean: ## Remove the CMake build directory
 	rm -rf $(CUDA_DIR)/build
@@ -79,7 +76,3 @@ profile-motion: ## Motion pipeline FP32 stage breakdown
 
 profile: ## Full CPU vs FP32 vs FP16 comparison + render all videos
 	python $(SCRIPTS)/profile_full_comparison.py
-
-# --- TRUBA -------------------------------------------------------------------
-slurm: ## Submit TRUBA SLURM job (build + test + profile in one job)
-	sbatch deploy/submit_profile.slurm

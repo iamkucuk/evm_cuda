@@ -2,7 +2,7 @@
 """GPU-only profiler: FP32 + FP16 for both pipelines on any GPU.
 
 The CPU baseline is the same Python code regardless of GPU, so we use the
-TRUBA A100 measurements as reference. This script focuses on measuring how
+A100 measurements as reference. This script focuses on measuring how
 the GPU pipelines scale across different hardware (P100, T4, A100, etc).
 
 If a pipeline doesn't fit in VRAM (e.g. FP32 motion on 16 GB), it's skipped.
@@ -22,7 +22,7 @@ REPO_URL = "https://github.com/iamkucuk/evm_cuda.git"
 BRANCH = "feature/kernel-optimization"
 REPO_DIR = Path("evm_cuda")
 
-# CPU reference (TRUBA A100 run, 2026-06-24). These don't depend on the GPU.
+# CPU reference (A100 run, 2026-06-24). These don't depend on the GPU.
 CPU_REF = {
     "color": {
         "1) color_cvt": 1.418,

@@ -7,7 +7,7 @@ the CUDA extension for the detected GPU arch, runs the GPU-only profiler
 (FP32 + FP16 for both pipelines with per-stage breakdown), and renders
 all 4 output videos (skipping any that OOM on 16 GB GPUs).
 
-CPU reference numbers come from the TRUBA A100 run (hardcoded in the
+CPU reference numbers come from an A100 run (hardcoded in the
 script) since the CPU baseline doesn't depend on the GPU.
 
 ## Setup (one-time)

@@ -120,7 +120,7 @@ Performance was measured with stage-by-stage profilers
 with `cudaDeviceSynchronize` and report median of 5 iterations with a
 warmup run. All device buffers are pre-allocated so `cudaMalloc` doesn't
 contaminate kernel measurements. Measurements were taken on NVIDIA A100
-(TRUBA HPC, palamut2) and Tesla P100 (Kaggle).
+an NVIDIA A100-80GB node and a Tesla P100 (Kaggle).
 
 All numbers below are **compute-only** (pipeline stages only, excluding
 video decode/encode). End-to-end times are ~15x higher because mp4
@@ -286,7 +286,7 @@ for (int e = 0; e < 4; ++e) {
 }
 ```
 
-This gave 22% gains on both render stages (measured on H100, kolyoz21):
+This gave 22% gains on both render stages (measured on H100):
 
 | Stage | Before | After |
 |-------|--------|-------|
@@ -369,7 +369,7 @@ also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB GPUs
 | **P100** (16GB, sm_60) | 732 GB/s | 138 ms | 120 ms | 1,143 ms | 676 ms |
 | **A100** (80GB, sm_80) | 1,935 GB/s | 72 ms | 84 ms | 209 ms | 172 ms |
 
-Speedups vs CPU (Python/NumPy on TRUBA Xeon):
+Speedups vs CPU (Python/NumPy):
 
 | GPU | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |-----|-----------|-----------|------------|------------|
@@ -515,7 +515,7 @@ performance. CPU stages use the same boundary definitions, profiling
 `evm.magnify_*` with `perf_counter` around each algorithmic stage.
 
 Measurements were taken on:
-- **A100-SXM4-80GB** (sm_80, TRUBA HPC palamut2): 1,935 GB/s bandwidth
+- **A100-SXM4-80GB** (sm_80): 1,935 GB/s bandwidth
 - **Tesla P100-PCIE-16GB** (sm_60, Kaggle): 732 GB/s bandwidth
 
 [harris]: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
