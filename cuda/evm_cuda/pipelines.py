@@ -3,7 +3,7 @@
 Drop-in replacements for ``evm.magnify_color_gdown_ideal`` /
 ``magnify_motion_lpyr_ideal`` / ``magnify_motion_lpyr_butter`` /
 ``magnify_motion_lpyr_iir``. Same signatures, same parameters, same outputs
-(within the per-stage tolerances documented in AGENTS.md §2).
+(within the per-stage tolerances documented in DESIGN.md).
 
 Strategy
 --------

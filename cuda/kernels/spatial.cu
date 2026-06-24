@@ -9,7 +9,7 @@
 // Each thread computes one output element by gathering 5 input samples
 // under reflect1 padding and dot-producting with the (flipped) binom5 kernel.
 //
-// Numerical contract (tolerance < 1e-5 vs Python, AGENTS.md §2):
+// Numerical contract (tolerance < 1e-5 vs Python, see DESIGN.md):
 //   - Filter is applied as correlation (kernel flipped inside the math
 //     below; matches the Python `filt[::-1]` convention).
 //   - reflect1 padding via evm::reflect1(i, n) device helper.

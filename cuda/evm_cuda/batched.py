@@ -174,8 +174,8 @@ def figure6_alpha_schedule(
 #   Stage 2b: 1 D2H of the Gaussian pyramid + 3 H2D/D2H for per-channel bandpass
 #
 # Everything else (color_cvt, blur_dn, upsample, render) is fully device-resident.
-# The Stage 2b host round-trip is the remaining transfer bottleneck — see the
-# HANDOFF for the device-resident ideal_bandpass optimization opportunity.
+# The Stage 2b host round-trip is the remaining transfer bottleneck — a
+# device-resident ideal_bandpass would eliminate it.
 
 def magnify_color_gdown_ideal(
     vid_path: str | Path,

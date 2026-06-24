@@ -17,7 +17,7 @@ SIGGRAPH 2012. <http://people.csail.mit.edu/mrub/vidmag/>
 - [x] FP16 storage — **269x** motion (FP16, A100), fits 16 GB GPUs
 
 See [`docs/blog_speedup.md`](docs/blog_speedup.md) for the full optimization
-write-up and [`HANDOFF.md`](HANDOFF.md) for current state.
+write-up and [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel architecture.
 
 ## Quick start with make
 

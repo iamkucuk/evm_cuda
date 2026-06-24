@@ -5,7 +5,7 @@ the compiled extension isn't importable (e.g. on the Mac dev host, or on a
 build without nvcc), the whole suite skips cleanly. When the extension IS
 present (i.e. after `make build`), the tests run and
 compare each kernel's output to the Python baseline ``evm/`` within the
-tolerances documented in AGENTS.md §2.
+tolerances documented in DESIGN.md.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ skip_no_cuda = pytest.mark.skipif(
     reason=f"evm_cuda._evm_cuda not built ({cuda_import_error!r})",
 )
 
-# Per-stage tolerances (AGENTS.md §2). Centralized so tests stay DRY.
+# Per-stage tolerances (see DESIGN.md). Centralized so tests stay DRY.
 TOL = {
     "color_cvt":       1e-6,
     "corr_dn":         1e-5,

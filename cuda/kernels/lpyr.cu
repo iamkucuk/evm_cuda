@@ -18,7 +18,7 @@
 //   - recon_lpyr is the exact inverse: band + upsample(recon of sub-pyramid).
 //
 // Note on the round-trip tolerance: evm/'s FP64 round-trip is < 1e-9; the
-// CUDA port's FP32 round-trip is held to < 1e-5 (AGENTS.md table).
+// CUDA port's FP32 round-trip is held to < 1e-5 (see DESIGN.md).
 
 #include <vector>
 #include "../include/evm_common.cuh"
