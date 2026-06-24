@@ -1,7 +1,7 @@
 {
-  "id": "furkankucuk/evm-cuda-fp16-profile",
-  "title": "evm-cuda-fp16-profile",
-  "code_file": "run_fp16_profile.py",
+  "id": "furkankucuk/evm-cuda-gpu-comparison",
+  "title": "evm-cuda-gpu-comparison",
+  "code_file": "run_gpu_comparison.py",
   "language": "python",
   "kernel_type": "script",
   "is_private": true,

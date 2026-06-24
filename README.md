@@ -68,5 +68,13 @@ bash deploy/build.sh
 ### Profiling
 
 ```bash
-python scripts/profile_cuda.py    # per-stage breakdown, run on a GPU node
+# Full comparison: CPU vs FP32 vs FP16, both pipelines, per-stage + output videos
+PYTHONPATH=$PWD/cuda python scripts/profile_full_comparison.py
+
+# FP32-only per-stage breakdown (faster, no CPU baseline)
+PYTHONPATH=$PWD/cuda python scripts/profile_color.py
+PYTHONPATH=$PWD/cuda python scripts/profile_motion.py
+
+# SLURM job: builds + tests + profiles in one job
+sbatch deploy/submit_profile.slurm
 ```

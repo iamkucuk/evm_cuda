@@ -21,4 +21,4 @@ bash deploy/build.sh >/dev/null 2>&1 || bash deploy/build.sh
 
 nvidia-smi --query-gpu=name,memory.total,memory.bandwidth --format=csv,noheader
 
-python scripts/profile_cuda.py
+python scripts/profile_full_comparison.py
