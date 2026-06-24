@@ -21,38 +21,20 @@ baseline while producing bit-for-bit equivalent output (RMSE < 0.01).
 ### Pulse magnification (color pipeline)
 
 <p align="center">
-  <img src="docs/img/face_demo.png" alt="Pulse magnification: blood flow becomes visible">
+  <img src="docs/img/face_demo.gif" alt="Pulse magnification: blood flow becomes visible" width="600">
 </p>
 
-<p align="center"><sub>The green tint on the right shows amplified blood flow —
-each heartbeat causes sub-pixel skin color changes that EVM makes visible.</sub></p>
-
-<details>
-<summary><b>Watch the full videos</b> (input vs magnified, side by side)</summary>
-
-https://github.com/iamkucuk/evm_cuda/raw/main/docs/video/face_input.mp4
-
-https://github.com/iamkucuk/evm_cuda/raw/main/docs/video/face_pulse_output.mp4
-
-</details>
+<p align="center"><sub>Left: original. Right: amplified. The green tint shows amplified
+blood flow — each heartbeat causes sub-pixel skin color changes that EVM makes visible.</sub></p>
 
 ### Motion magnification (IIR pipeline)
 
 <p align="center">
-  <img src="docs/img/baby_demo.png" alt="Motion magnification: subtle breathing amplified">
+  <img src="docs/img/baby_demo.gif" alt="Motion magnification: subtle breathing amplified" width="600">
 </p>
 
-<p align="center"><sub>Submillimeter chest movements from breathing are amplified
-to be clearly visible, enabling non-contact vital sign monitoring.</sub></p>
-
-<details>
-<summary><b>Watch the full videos</b> (input vs magnified, side by side)</summary>
-
-https://github.com/iamkucuk/evm_cuda/raw/main/docs/video/baby_input.mp4
-
-https://github.com/iamkucuk/evm_cuda/raw/main/docs/video/baby_motion_output.mp4
-
-</details>
+<p align="center"><sub>Left: original. Right: amplified. Submillimeter chest movements
+from breathing are amplified to be clearly visible, enabling non-contact vital sign monitoring.</sub></p>
 
 ---
 
