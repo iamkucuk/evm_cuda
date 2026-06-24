@@ -5,7 +5,7 @@
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
 [![Tests](https://img.shields.io/badge/tests-125%20passed-brightgreen)](#)
 [![Speedup](https://img.shields.io/badge/speedup-269x-success)](#)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
 **A CUDA-accelerated implementation of Eulerian Video Magnification (EVM) that
 reveals invisible temporal changes in video — a person's pulse, a baby's
@@ -140,12 +140,27 @@ evm_cuda/
 └── Makefile              # build, test, run, profile targets
 ```
 
-## Reference
+## Citation
 
-Wu, Rubinstein, Freeman, Durand, Guttag. "Eulerian Video Magnification for
-Revealing Subtle Changes in the World." SIGGRAPH 2012.
-<http://people.csail.mit.edu/mrub/vidmag/>
+If you use this work in your research, please cite it:
+
+```bibtex
+@misc{kucuk2026evm_cuda,
+  title     = {Eulerian Video Magnification on {CUDA}},
+  author    = {Kucuk, Furkan},
+  year      = {2026},
+  url       = {https://github.com/iamkucuk/evm_cuda},
+}
+```
+
+This project builds on the original EVM work:
+
+> Wu, Rubinstein, Freeman, Durand, Guttag. "Eulerian Video Magnification for
+> Revealing Subtle Changes in the World." SIGGRAPH 2012.
+> <http://people.csail.mit.edu/mrub/vidmag/>
 
 ## License
 
-[MIT](LICENSE)
+[BSD 3-Clause (Non-Commercial Research Use)](LICENSE) — free for academic
+research and non-commercial educational use. Commercial use requires written
+permission. Citation is required for any derived publication.
