@@ -272,15 +272,11 @@ A100-80GB and Tesla P100-16GB:
 </table>
 <p>
 At 1080p (1920&times;1080), a single A100 can process <b>20 parallel color
-streams or 14 parallel motion streams at 30 FPS</b> in real time.
-</p>
-<p>
-<b>Edge deployment:</b> On a Jetson AGX Orin (204.8 GB/s, 15&ndash;60W), both
-pipelines remain real-time capable at 1080p/30fps &mdash; an estimated ~65 fps
-color and ~45 fps motion, scaled by bandwidth ratio from the A100 (both Ampere
-architecture). FP16 motion fits entirely within the Orin's unified memory.
-See the <a href="https://github.com/iamkucuk/evm_cuda/blob/main/docs/blog_speedup.md">optimization
-writeup</a> for the full per-stage breakdown.
+streams or 14 parallel motion streams at 30 FPS</b> in real time. FP16 motion
+halves VRAM from 23 GB to 12 GB, running on 16 GB consumer GPUs like the
+Tesla P100 and T4. See the
+<a href="https://github.com/iamkucuk/evm_cuda/blob/main/docs/blog_speedup.md">optimization
+writeup</a> for the full per-stage breakdown across both GPU generations.
 </p>
 
 <h2>Architecture</h2>
