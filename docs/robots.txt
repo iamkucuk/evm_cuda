@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://iamkucuk.github.io/evm_cuda/sitemap.xml

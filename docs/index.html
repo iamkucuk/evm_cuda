@@ -3,16 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eulerian Video Magnification on CUDA</title>
-    <meta name="description" content="A CUDA-accelerated implementation of Eulerian Video Magnification that reveals invisible temporal changes in video — pulse, breathing, vibration — by amplifying sub-pixel color and motion variations. 269x speedup over the Python baseline.">
-    <meta name="keywords" content="Eulerian Video Magnification, CUDA, GPU acceleration, video processing, signal processing, pybind11, real-time magnification">
+    <title>Eulerian Video Magnification on CUDA — 269x Speedup, Raw CUDA C++</title>
+    <meta name="description" content="A CUDA-accelerated implementation of Eulerian Video Magnification that reveals invisible temporal changes in video — pulse, breathing, vibration — by amplifying sub-pixel color and motion variations. 269x speedup over the Python baseline, raw CUDA C++, validated bit-for-bit against the MIT SIGGRAPH 2012 reference.">
+    <meta name="keywords" content="Eulerian Video Magnification, CUDA, GPU acceleration, video processing, signal processing, pybind11, real-time magnification, CUDA programming, computer vision, FFT, IIR filter, Laplacian pyramid">
     <meta name="author" content="Furkan Kucuk">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://iamkucuk.github.io/evm_cuda/">
 
+    <!-- Open Graph -->
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Eulerian Video Magnification on CUDA">
-    <meta property="og:description" content="269x speedup over Python baseline. Raw CUDA C++, bit-for-bit validated against the MIT SIGGRAPH 2012 reference.">
-    <meta property="og:image" content="https://github.com/iamkucuk/evm_cuda/releases/download/demo-videos/face_color.mp4">
+    <meta property="og:site_name" content="Eulerian Video Magnification on CUDA">
+    <meta property="og:title" content="Eulerian Video Magnification on CUDA — 269x Speedup">
+    <meta property="og:description" content="Raw CUDA C++ port of MIT's EVM. Reveals invisible pulse and motion in video. 269x speedup, bit-for-bit validated.">
+    <meta property="og:image" content="https://iamkucuk.github.io/evm_cuda/img/og_preview.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Pulse magnification demo — blood flow becomes visible">
     <meta property="og:url" content="https://iamkucuk.github.io/evm_cuda/">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Eulerian Video Magnification on CUDA — 269x Speedup">
+    <meta name="twitter:description" content="Raw CUDA C++ port of MIT's EVM. Reveals invisible pulse and motion in video. 269x speedup, bit-for-bit validated.">
+    <meta name="twitter:image" content="https://iamkucuk.github.io/evm_cuda/img/og_preview.png">
+    <meta name="twitter:image:alt" content="Pulse magnification demo — blood flow becomes visible">
+
+    <!-- Structured data for Google rich results -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Eulerian Video Magnification on CUDA",
+        "description": "A CUDA-accelerated implementation of Eulerian Video Magnification that reveals invisible temporal changes in video. 269x speedup over Python baseline.",
+        "author": {
+            "@type": "Person",
+            "name": "Furkan Kucuk",
+            "url": "https://github.com/iamkucuk"
+        },
+        "datePublished": "2026-06-24",
+        "image": "https://iamkucuk.github.io/evm_cuda/img/og_preview.png",
+        "url": "https://iamkucuk.github.io/evm_cuda/",
+        "about": ["CUDA", "Eulerian Video Magnification", "GPU programming", "computer vision", "video processing"],
+        "keywords": "CUDA, Eulerian Video Magnification, GPU, video processing, signal processing, pybind11"
+    }
+    </script>
 
     <style>
         body {
