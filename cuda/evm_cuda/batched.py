@@ -390,52 +390,56 @@ def magnify_motion_lpyr_iir(
 
     _warmup_gpu_pool_motion(n, h, w, levels)  # motion uses larger buffers
 
-    # --- Stage A: batched NTSC convert (whole clip, 1 launch) --------------
-    # ntsc STAYS ON DEVICE — used by Stage D's add_and_quantize (device-resident).
-    d_clip = DeviceBuffer.from_array(clip_u8)
-    d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
-    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
-
-    # --- Stage B: batched Laplacian pyramid build (whole clip on-device) ----
-    # Bands stay on-device through Stage C (IIR) and Stage D (recon). The ONLY
-    # host<->device transfers in Stages B-D are the alpha upload and the final
-    # delta download. The channel-major output layout makes each (level,
-    # channel) a contiguous (T=n, N=lh*lw) block for the temporal filter.
-    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
-    _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
-
     lvl_sizes = [s[0] * s[1] for s in level_sizes]
     total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
-    d_bands = DeviceBuffer(total_band_floats * 4)
-    _evm_cuda.batched_lpyr_build(
-        d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
-        _d_binom5(), 5)
-
-    # Per-level offset table (must match the C++ binding's layout).
     level_offsets = []
     offset = 0
     for sz in lvl_sizes:
         level_offsets.append(offset)
         offset += sz * n * 3
 
+    # --- Stage A: batched NTSC convert (whole clip, 1 launch) --------------
+    # ntsc STAYS ON DEVICE — used by Stage D's add_and_quantize (device-resident).
+    d_clip = DeviceBuffer.from_array(clip_u8)
+    d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
+    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
+    del d_clip  # clip_u8 no longer needed on device after NTSC convert
+
+    # --- Stage B: batched Laplacian pyramid build (whole clip on-device) ----
+    # The channel-major output layout makes each (level, channel) a contiguous
+    # (T=n, N=lh*lw) block for the temporal filter. d_ntsc_planar is transient:
+    # it is consumed by lpyr_build and freed before Stage C so it does not add
+    # to peak VRAM alongside d_bands.
+    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+    _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+    d_bands = DeviceBuffer(total_band_floats * 4)
+    _evm_cuda.batched_lpyr_build(
+        d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
+        _d_binom5(), 5)
+    del d_ntsc_planar
+
     # --- Stage C: temporal IIR (fully on-device, no host round-trip) ---------
-    # Was: 27 H2D+kernel+D2H cycles (~5.8s, 52% of pipeline).
-    # Now: per (level, channel), the n frames are a contiguous (T,N) block in
+    # Per (level, channel), the n frames are a contiguous (T,N) block in
     # d_bands. Transpose to (N,T) on-device, run IIR, transpose back with
     # per-level alpha folded into the transpose (no separate scale pass).
     # All device-to-device — zero host transfers.
+    #
+    # The transpose/IIR temporaries are hoisted out of the loop and REUSED on
+    # every iteration. Allocating fresh DeviceBuffers inside the loop leaks one
+    # pair per (level, channel) until the function returns (~45 GB peak on
+    # baby.mp4), which hard-OOMs 16 GB GPUs and crashes the runtime.
     d_filtered = DeviceBuffer(total_band_floats * 4)
+    max_sz = max(lvl_sizes)
+    d_nt = DeviceBuffer(n * max_sz * 4)
+    d_filt_nt = DeviceBuffer(n * max_sz * 4)
     for l in range(levels):
         sz = lvl_sizes[l]
         for c in range(3):
             # Source: channel c's n frames at this level (T=n, N=sz), contiguous
             sig_off = level_offsets[l] + c * n * sz
-            # Temp buffer for transpose (N,T)
-            d_nt = DeviceBuffer(n * sz * 4)
             _evm_cuda.batched_thwc_to_nt(
                 d_bands.ptr_at(sig_off), d_nt.ptr, n, sz)
             # IIR on (N,T)
-            d_filt_nt = DeviceBuffer(n * sz * 4)
             _evm_cuda.batched_iir_bandpass(
                 d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
             # Transpose back (N,T) -> (T,N) with alpha_sched[l] folded in —
@@ -443,15 +447,18 @@ def magnify_motion_lpyr_iir(
             dst_off = level_offsets[l] + c * n * sz
             _evm_cuda.batched_nt_to_thwc_scaled(
                 d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
+    del d_bands, d_nt, d_filt_nt
 
     # --- Stage D: batched recon + device-resident render --------------------
     # lpyr_recon output stays on-device in planar (n*3, H, W) layout. The render
     # kernel reads delta directly from planar layout (folding the transpose
     # inline), adds to NTSC with chromAtt, and writes uint8 BGR. No intermediate
-    # interleaved buffer, no separate transpose pass.
+    # interleaved buffer, no separate transpose pass. d_filtered is consumed by
+    # recon and freed before the output buffer is allocated.
     d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
     _evm_cuda.batched_lpyr_recon(
         d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
+    del d_filtered
 
     # Fused planar-delta add + quantize (keep d_ntsc from Stage A).
     d_out_u8 = DeviceBuffer(n * h * w * 3)
