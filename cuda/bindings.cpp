@@ -1435,6 +1435,15 @@ PYBIND11_MODULE(_evm_cuda, m) {
         CUDA_CHECK(cudaDeviceSynchronize());
     });
 
+    // Query free and total GPU memory (in bytes). Used by profilers and
+    // notebooks to report VRAM headroom before memory-intensive sections.
+    // Returns (free_bytes, total_bytes).
+    m.def("gpu_mem_info", []() -> std::pair<size_t, size_t> {
+        size_t free_b = 0, total_b = 0;
+        CUDA_CHECK(cudaMemGetInfo(&free_b, &total_b));
+        return {free_b, total_b};
+    });
+
     // FP16↔FP32 batch conversion for the FP16 storage path.
     // Converts n elements between float32 and __half. Used to halve VRAM for
     // intermediate buffers (NTSC, bands, scratch) while keeping compute in FP32.
