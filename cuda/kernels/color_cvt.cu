@@ -10,7 +10,7 @@
 // Grid:  (ceil(W/32), ceil(H/32))   Block: (32, 32, 1)
 // Each thread does one pixel; the 3 color channels live in registers.
 //
-// Numerical contract (tolerance < 1e-6 vs Python, AGENTS.md §2):
+// Numerical contract (tolerance < 1e-6 vs Python, see DESIGN.md):
 //   - Matrices kRgbToYiq / kYiqToRgb verbatim from evm_common.cuh.
 //   - /255.0 on the u8->float path; clip[0,1] + rintf(*255) on float->u8.
 //   - rintf uses round-half-to-even by default, matching numpy.round.

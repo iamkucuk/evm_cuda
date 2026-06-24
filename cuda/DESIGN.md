@@ -2,8 +2,8 @@
 
 This document records the kernel-by-kernel mapping from the Python baseline
 (`evm/`) to the CUDA port (`cuda/`), the grid/block rationale, and the
-precision choices behind the per-stage tolerances. It is the written record
-AGENTS.md §2 requires for any numerical-contract decision.
+precision choices behind the per-stage tolerances. It is the authoritative
+reference for the numerical contract.
 
 ## Locked decisions
 
@@ -200,7 +200,7 @@ motion pipeline is fully device-resident through Stages A–D.
 
 ## Known divergences from MATLAB (intentional)
 
-These are documented per AGENTS.md §1's "CUDA matches Python, not MATLAB"
+These are documented per the "CUDA matches Python, not MATLAB"
 rule. The Python baseline is the oracle.
 
 1. **Color pipeline upsample** uses `cv2.INTER_LINEAR` (half-pixel-centered
