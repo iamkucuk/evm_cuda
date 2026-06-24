@@ -253,26 +253,28 @@ A100-80GB and Tesla P100-16GB:
     <th>Python CPU</th>
     <th>CUDA FP32</th>
     <th>CUDA FP16</th>
-    <th>Best speedup</th>
+    <th>Throughput</th>
 </tr>
 <tr>
     <td>Color (pulse)</td>
     <td>10,350 ms</td>
     <td><b>72 ms</b> (144x)</td>
     <td>84 ms (124x)</td>
-    <td><b>144x</b></td>
+    <td>1.08 Gpx/s</td>
 </tr>
 <tr>
     <td>Motion (breathing)</td>
     <td>46,255 ms</td>
     <td>209 ms (222x)</td>
     <td><b>172 ms</b> (269x)</td>
-    <td><b>269x</b></td>
+    <td>0.88 Gpx/s</td>
 </tr>
 </table>
 <p>
-FP16 motion halves VRAM from 23 GB to 12 GB, running on 16 GB consumer GPUs
-like the Tesla P100 and T4. See the
+At 1080p (1920&times;1080), a single A100 can process <b>20 parallel color
+streams or 14 parallel motion streams at 30 FPS</b> in real time. FP16 motion
+halves VRAM from 23 GB to 12 GB, running on 16 GB consumer GPUs like the
+Tesla P100 and T4. See the
 <a href="https://github.com/iamkucuk/evm_cuda/blob/main/docs/blog_speedup.md">optimization
 writeup</a> for the full per-stage breakdown across both GPU generations.
 </p>
