@@ -20,6 +20,7 @@ into ~50. See bindings.cpp batched_lpyr_build / batched_blur_dn_color.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import cv2
@@ -130,19 +131,71 @@ def _read_frames(path: str | Path) -> tuple[list[np.ndarray], float]:
     return frames, float(fps)
 
 
+def _h264_via_ffmpeg(src: Path, dst: Path, fps: float) -> bool:
+    """Transcode ``src`` to H.264 ``yuv420p`` +faststart at ``dst``.
+
+    Browsers (Colab's HTML5 <video>), VSCode, and most non-VLC players need
+    H.264; OpenCV's pip wheel can't encode it (no libx264 backend), so we let
+    OpenCV write the raw frames and hand the transcode to ffmpeg. Returns True
+    on success, False if ffmpeg/libx264 is unavailable (caller falls back).
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        return False
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(src),
+        "-r", str(fps),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        str(dst),
+    ]
+    try:
+        subprocess.run(
+            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except Exception:
+        return False
+    return True
+
+
 def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     t, h, w, _ = frames_uint8.shape
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(out_path), fourcc, float(fps), (w, h), isColor=True)
-    if not writer.isOpened():
-        raise RuntimeError(f"VideoWriter failed to open for {out_path!r}")
+
+    # OpenCV reliably writes MPEG-4 Part 2 (mp4v). We stage the frames to a
+    # temporary .mp4, then transcode to H.264 for browser/VSCode playback.
+    # AVI is the most universally-writable OpenCV container; .mp4 also works
+    # but some OpenCV builds refuse fourcc mp4v in an .mp4 without FFmpeg.
+    import tempfile
+
+    suffix = ".mp4"
+    fd, tmp_name = tempfile.mkstemp(suffix=suffix, dir=str(out_path.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
     try:
-        for i in range(t):
-            writer.write(frames_uint8[i])
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(
+            str(tmp_path), fourcc, float(fps), (w, h), isColor=True)
+        if not writer.isOpened():
+            raise RuntimeError(f"VideoWriter failed to open for {out_path!r}")
+        try:
+            for i in range(t):
+                writer.write(frames_uint8[i])
+        finally:
+            writer.release()
+
+        if _h264_via_ffmpeg(tmp_path, out_path, fps):
+            return  # browser-playable H.264 written
+        # No ffmpeg/libx264: keep the mp4v file so VLC/OpenCV can still read it.
+        if out_path.exists() or out_path == tmp_path:
+            return
+        tmp_path.replace(out_path)
     finally:
-        writer.release()
+        if tmp_path.exists() and tmp_path != out_path:
+            tmp_path.unlink(missing_ok=True)
 
 
 def figure6_alpha_schedule(

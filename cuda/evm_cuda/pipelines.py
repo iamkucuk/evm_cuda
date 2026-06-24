@@ -70,18 +70,11 @@ def _ntsc_f32_to_bgr_u8(ntsc: np.ndarray) -> np.ndarray:
 
 
 def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    t, h, w, _ = frames_uint8.shape
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(out_path), fourcc, float(fps), (w, h), isColor=True)
-    if not writer.isOpened():
-        raise RuntimeError(f"VideoWriter failed to open for {out_path!r}")
-    try:
-        for i in range(t):
-            writer.write(frames_uint8[i])
-    finally:
-        writer.release()
+    # Delegates to the H.264-transcoding writer in batched.py so every CUDA
+    # path emits browser/VSCode-playable video (falls back to mp4v without
+    # ffmpeg). Kept here only to avoid an import cycle at module load.
+    from .batched import _write as _batched_write
+    _batched_write(out_path, frames_uint8, fps)
 
 
 def figure6_alpha_schedule(
