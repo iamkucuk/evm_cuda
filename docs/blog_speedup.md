@@ -271,7 +271,7 @@ for (int k = 0; k < 5; ++k) f[k] = filt[k];
 This gave 10 to 12% gains on the spatial stages (blur_dn, lpyr_build,
 lpyr_recon).
 
-Multiple elements per thread (Harris V6) addresses the render stage.
+Multiple elements per thread addresses the render stage.
 Each thread processes 4 adjacent pixels instead of 1, giving the
 compiler 4 independent sets of memory reads to pipeline. The warp
 scheduler fills the stall cycles on one read with the compute and memory
@@ -497,7 +497,7 @@ change. The data access does.
 This project applied the same principle at three levels. At the pipeline
 level: eliminating host-device transfers, batching kernel launches,
 caching cuFFT plans. At the kernel level: register hoisting for filter
-taps, V6 multiple-elements-per-thread for the render stage (22%
+taps, multiple-elements-per-thread for the render stage (22%
 improvement), and FP16 storage to halve memory traffic. At the system
 level: profiling across two GPU generations (P100 and A100) to find that
 the optimal precision choice depends on the hardware's memory bandwidth.

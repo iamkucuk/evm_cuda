@@ -14,8 +14,8 @@
 // T is small (~291) and N is large (~500K): a [TILE_T][TILE_N] 2D tile would
 // need 291*256*4 = 288 KB of shared memory, exceeding the H100's 228 KB per SM.
 //
-// Instead, each thread processes ELEMS_PER_THREAD spatial locations (Harris V6:
-// "multiple elements per thread"). This amortizes the per-thread loop overhead
+// Instead, each thread processes ELEMS_PER_THREAD spatial locations ("multiple
+// elements per thread"). This amortizes the per-thread loop overhead
 // and gives the compiler more independent memory operations to pipeline,
 // improving instruction-level parallelism and hiding latency through the
 // warp scheduler rather than through occupancy.
