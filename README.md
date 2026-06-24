@@ -27,6 +27,22 @@ baseline while producing bit-for-bit equivalent output (RMSE < 0.01).
 <p align="center"><sub>The green tint on the right shows amplified blood flow —
 each heartbeat causes sub-pixel skin color changes that EVM makes visible.</sub></p>
 
+<details>
+<summary><b>Watch the full videos</b> (input vs magnified, side by side)</summary>
+
+<table>
+<tr>
+<td align="center"><b>Input (raw)</b></td>
+<td align="center"><b>Pulse magnified (alpha=50)</b></td>
+</tr>
+<tr>
+<td><video src="docs/video/face_input.mp4" controls muted width="100%"></video></td>
+<td><video src="docs/video/face_pulse_output.mp4" controls muted width="100%"></video></td>
+</tr>
+</table>
+
+</details>
+
 ### Motion magnification (IIR pipeline)
 
 <p align="center">
@@ -35,6 +51,22 @@ each heartbeat causes sub-pixel skin color changes that EVM makes visible.</sub>
 
 <p align="center"><sub>Submillimeter chest movements from breathing are amplified
 to be clearly visible, enabling non-contact vital sign monitoring.</sub></p>
+
+<details>
+<summary><b>Watch the full videos</b> (input vs magnified, side by side)</summary>
+
+<table>
+<tr>
+<td align="center"><b>Input (raw)</b></td>
+<td align="center"><b>Motion magnified (alpha=10, IIR)</b></td>
+</tr>
+<tr>
+<td><video src="docs/video/baby_input.mp4" controls muted width="100%"></video></td>
+<td><video src="docs/video/baby_motion_output.mp4" controls muted width="100%"></video></td>
+</tr>
+</table>
+
+</details>
 
 ---
 
