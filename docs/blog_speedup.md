@@ -525,4 +525,4 @@ baseline (RMSE < 0.01 for end-to-end pipelines, per-kernel tolerances
 from 10^-6 to 10^-4 depending on the operation). The full test suite and
 profiler scripts are in the [repository][repo].
 
-[repo]: https://github.com/iamkucuk/evm_cuda
+[repo]: https://github.com/iamkucuk/eulerian-video-magnification-cuda

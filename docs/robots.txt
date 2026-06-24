@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://iamkucuk.github.io/evm_cuda/sitemap.xml
+Sitemap: https://iamkucuk.github.io/eulerian-video-magnification-cuda/sitemap.xml

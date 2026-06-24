@@ -8,24 +8,24 @@
     <meta name="keywords" content="Eulerian Video Magnification, CUDA, GPU acceleration, video processing, signal processing, pybind11, real-time magnification, CUDA programming, computer vision, FFT, IIR filter, Laplacian pyramid">
     <meta name="author" content="Furkan Kucuk">
     <meta name="robots" content="index, follow">
-    <link rel="canonical" href="https://iamkucuk.github.io/evm_cuda/">
+    <link rel="canonical" href="https://iamkucuk.github.io/eulerian-video-magnification-cuda/">
 
     <!-- Open Graph -->
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Eulerian Video Magnification on CUDA">
     <meta property="og:title" content="Eulerian Video Magnification on CUDA — 269x Speedup">
     <meta property="og:description" content="Raw CUDA C++ port of MIT's EVM. Reveals invisible pulse and motion in video. 269x speedup, bit-for-bit validated.">
-    <meta property="og:image" content="https://iamkucuk.github.io/evm_cuda/img/og_preview.png">
+    <meta property="og:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="Pulse magnification demo — blood flow becomes visible">
-    <meta property="og:url" content="https://iamkucuk.github.io/evm_cuda/">
+    <meta property="og:url" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Eulerian Video Magnification on CUDA — 269x Speedup">
     <meta name="twitter:description" content="Raw CUDA C++ port of MIT's EVM. Reveals invisible pulse and motion in video. 269x speedup, bit-for-bit validated.">
-    <meta name="twitter:image" content="https://iamkucuk.github.io/evm_cuda/img/og_preview.png">
+    <meta name="twitter:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
     <meta name="twitter:image:alt" content="Pulse magnification demo — blood flow becomes visible">
 
     <!-- Structured data for Google rich results -->
@@ -41,8 +41,8 @@
             "url": "https://github.com/iamkucuk"
         },
         "datePublished": "2026-06-24",
-        "image": "https://iamkucuk.github.io/evm_cuda/img/og_preview.png",
-        "url": "https://iamkucuk.github.io/evm_cuda/",
+        "image": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png",
+        "url": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/",
         "about": ["CUDA", "Eulerian Video Magnification", "GPU programming", "computer vision", "video processing"],
         "keywords": "CUDA, Eulerian Video Magnification, GPU, video processing, signal processing, pybind11"
     }
@@ -277,11 +277,11 @@
     <div class="affil">Independent Research</div>
 
     <div class="links">
-        <a href="https://github.com/iamkucuk/evm_cuda" class="btn-primary">
+        <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda" class="btn-primary">
             <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
             Code
         </a>
-        <a href="https://github.com/iamkucuk/evm_cuda/blob/main/docs/blog_speedup.md" class="btn-secondary">Writeup</a>
+        <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md" class="btn-secondary">Writeup</a>
         <a href="http://people.csail.mit.edu/mrub/vidmag/" class="btn-secondary">Original Paper</a>
     </div>
 </div>
@@ -372,7 +372,7 @@ The port validates against the Python baseline (<code>evm/</code>), which is
 itself validated against MIT's published output videos. Per-kernel tolerances
 range from <code>1e-6</code> (pure arithmetic) to <code>1e-4</code> (cuFFT),
 with end-to-end RMSE held below <code>0.01</code>. See
-<a href="https://github.com/iamkucuk/evm_cuda/blob/main/cuda/DESIGN.md">DESIGN.md</a>
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/cuda/DESIGN.md">DESIGN.md</a>
 for the kernel-by-kernel mapping.
 </p>
 
@@ -410,7 +410,7 @@ At 1080p (1920&times;1080), a single A100 can process <b>20 parallel color
 streams or 14 parallel motion streams at 30 FPS</b> in real time. FP16 motion
 halves VRAM from 23 GB to 12 GB, running on 16 GB GPUs like the Tesla P100.
 Full breakdown in the
-<a href="https://github.com/iamkucuk/evm_cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>.
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>.
 </p>
 
 <!-- ===================== ARCHITECTURE ===================== -->
@@ -435,13 +435,13 @@ pybind11 bindings.
   title     = {Eulerian Video Magnification on {CUDA}},
   author    = {Kucuk, Furkan},
   year      = {2026},
-  url       = {https://github.com/iamkucuk/evm_cuda},
+  url       = {https://github.com/iamkucuk/eulerian-video-magnification-cuda},
 }</pre>
 </div>
 
 <footer>
-    <a href="https://github.com/iamkucuk/evm_cuda">GitHub</a> &middot;
-    <a href="https://github.com/iamkucuk/evm_cuda/blob/main/LICENSE">BSD-3-Clause (Non-Commercial)</a> &middot;
+    <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda">GitHub</a> &middot;
+    <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/LICENSE">BSD-3-Clause (Non-Commercial)</a> &middot;
     Based on Wu et al., <a href="http://people.csail.mit.edu/mrub/vidmag/">SIGGRAPH 2012</a>
 </footer>
 
