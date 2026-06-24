@@ -152,7 +152,7 @@ If you use this work in your research, please cite it:
   title     = {Eulerian Video Magnification on {CUDA}},
   author    = {Kucuk, Furkan},
   year      = {2026},
-  url       = {https://github.com/iamkucuk/evm_cuda},
+  url       = {https://github.com/iamkucuk/eulerian-video-magnification-cuda},
 }
 ```
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import gc, json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 
-REPO_URL = "https://github.com/iamkucuk/evm_cuda.git"
+REPO_URL = "https://github.com/iamkucuk/eulerian-video-magnification-cuda.git"
 BRANCH = "feature/kernel-optimization"
 REPO_DIR = Path("evm_cuda")
 
