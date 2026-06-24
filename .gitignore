@@ -29,3 +29,4 @@ cuda/build/
 # Misc
 *.pdf
 kaggle/results*/
+.playwright-cli/
