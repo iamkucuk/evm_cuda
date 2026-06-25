@@ -23,10 +23,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-import cv2
 import numpy as np
 
 from . import _evm_cuda
+from ._common import figure6_alpha_schedule, read_frames as _read_frames
 
 
 class DeviceBuffer:
@@ -114,23 +114,6 @@ def _warmup_gpu_pool_motion(n: int, h: int, w: int, levels: int):
     nbytes = max(1024 * 1024 * 1024, ((largest + 1024*1024*1024 - 1) // (1024*1024*1024)) * (1024*1024*1024))
     _evm_cuda.warmup_device_pool(nbytes)
 
-def _read_frames(path: str | Path) -> tuple[list[np.ndarray], float]:
-    cap = cv2.VideoCapture(str(path))
-    if not cap.isOpened():
-        raise FileNotFoundError(f"could not open video: {path!r}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    frames: list[np.ndarray] = []
-    while True:
-        ok, fr = cap.read()
-        if not ok:
-            break
-        frames.append(fr)
-    cap.release()
-    if len(frames) > _evm_cuda.drop_last:
-        frames = frames[: len(frames) - _evm_cuda.drop_last]
-    return frames, float(fps)
-
-
 def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
     """Write a ``(T, H, W, 3)`` uint8 BGR frame array to an H.264 MP4.
 
@@ -164,25 +147,6 @@ def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
                 container.mux(packet)
         for packet in stream.encode():  # flush the encoder
             container.mux(packet)
-
-
-def figure6_alpha_schedule(
-    n_levels: int, alpha: float, lambda_c: float,
-    vid_h: int, vid_w: int,
-    *, exaggeration_factor: float = _evm_cuda.exaggeration_factor,
-) -> list[float]:
-    delta = lambda_c / 8.0 / (1.0 + alpha)
-    lam = (vid_h ** 2 + vid_w ** 2) ** 0.5 / 3.0
-    coarse_first: list[float] = []
-    for l in range(n_levels, 0, -1):
-        if l == n_levels or l == 1:
-            a = 0.0
-        else:
-            curr = (lam / delta / 8.0 - 1.0) * exaggeration_factor
-            a = min(curr, alpha) if curr > alpha else curr
-        coarse_first.append(a)
-        lam /= 2.0
-    return list(reversed(coarse_first))
 
 
 # ---------------------------------------------------------------------------

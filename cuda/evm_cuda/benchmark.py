@@ -28,6 +28,7 @@ from typing import Callable
 
 from . import _evm_cuda
 from . import batched
+from ._common import read_frames
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +200,7 @@ def run(
     call_params = {k: v for k, v in params.items() if k not in ("vid", "out")}
 
     # Probe clip dimensions for the VRAM check (reads metadata only).
-    frames, fps = batched._read_frames(vid)
+    frames, fps = read_frames(vid)
     n = len(frames); h, w = frames[0].shape[:2]
     del frames
 
