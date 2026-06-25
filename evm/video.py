@@ -68,33 +68,46 @@ def load_video(path: str | Path) -> tuple[np.ndarray, VideoInfo]:
     return stack, info
 
 
-def _h264_via_ffmpeg(src, dst, fps) -> bool:
-    """Transcode ``src`` to H.264 ``yuv420p`` +faststart at ``dst``.
+def encode_video(
+    frames_uint8: np.ndarray,
+    path: str | Path,
+    fps: float,
+    *,
+    codec: str = "libx264",
+) -> None:
+    """Write a ``(T, H, W, 3)`` uint8 BGR frame array to an H.264 MP4.
 
-    Browsers (Colab's HTML5 <video>), VSCode, and most non-VLC players need
-    H.264; OpenCV's pip wheel can't encode it (no libx264 backend), so we let
-    OpenCV write the raw frames and hand the transcode to ffmpeg. Returns True
-    on success, False if ffmpeg/libx264 is unavailable (caller falls back).
+    This is the single encoder implementation shared by every writer in the
+    package. It encodes directly to H.264 ``yuv420p`` with a faststart
+    (``moov`` before ``mdat``) atom via PyAV, so the output plays in browsers
+    (Colab's HTML5 <video>), VSCode, and QuickTime — not just VLC. Single
+    pass, no temp file, no external binary.
     """
-    import shutil
-    import subprocess
+    import av
+    from fractions import Fraction
 
-    if not shutil.which("ffmpeg"):
-        return False
-    cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-i", str(src),
-        "-r", str(fps),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-        str(dst),
-    ]
-    try:
-        subprocess.run(
-            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    except Exception:
-        return False
-    return True
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    t, h, w, _ = frames_uint8.shape
+
+    # PyAV expects a rational (not float) framerate; limit_denominator maps
+    # common floats like 29.97 to 30000/1001 cleanly.
+    rate = Fraction(fps).limit_denominator(1_000_000)
+
+    with av.open(
+        str(path), mode="w", options={"movflags": "+faststart"}
+    ) as container:
+        stream = container.add_stream(codec, rate=rate)
+        stream.width = w
+        stream.height = h
+        stream.pix_fmt = "yuv420p"
+        stream.options = {"preset": "veryfast", "crf": "18"}
+        for i in range(t):
+            frame = av.VideoFrame.from_ndarray(frames_uint8[i], format="bgr24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():  # flush the encoder
+            container.mux(packet)
 
 
 def save_video(
@@ -102,62 +115,25 @@ def save_video(
     path: str | Path,
     fps: float,
     *,
-    codec: str = "mp4v",
+    codec: str = "libx264",
 ) -> None:
-    """Write a float32 array in ``[0, 1]`` back to a video file.
+    """Write a float32 array in ``[0, 1]`` back to an H.264 MP4.
 
     ``frames`` is ``(T, H, W, C)`` with C in {1, 3}. Single-channel arrays are
-    squeezed to 2-D for the writer. Values are clipped to the valid range and
-    converted to ``uint8``.
-
-    The frames are staged to a temporary file with OpenCV (``codec``), then
-    transcoded to H.264 ``yuv420p`` +faststart via ffmpeg so the result plays
-    in browsers (Colab) and VSCode, not just VLC. If ffmpeg/libx264 is absent
-    the staged mp4v file is kept as a fallback (still readable by OpenCV/VLC).
+    broadcast to 3 channels for the encoder. Values are clipped to the valid
+    range and converted to ``uint8`` (BGR), then handed to :func:`encode_video`.
     """
-    import os
-    import tempfile
-
-    path = Path(path)
     if frames.ndim != 4:
         raise ValueError(f"Expected (T,H,W,C); got shape {frames.shape!r}")
 
-    t, h, w, c = frames.shape
-    path.parent.mkdir(parents=True, exist_ok=True)
+    c = frames.shape[3]
+    clipped = np.clip(frames, 0.0, 1.0)
+    scaled = np.round(clipped * 255.0).astype(np.uint8)
+    if c == 1:
+        # H.264/yuv420p needs a 3-channel source; replicate grayscale to BGR.
+        scaled = np.repeat(scaled, 3, axis=3)
 
-    suffix = os.path.splitext(str(path))[1] or ".mp4"
-    fd, tmp_name = tempfile.mkstemp(suffix=suffix, dir=str(path.parent))
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    try:
-        fourcc = cv2.VideoWriter_fourcc(*codec)
-        writer = cv2.VideoWriter(
-            str(tmp_path), fourcc, float(fps), (w, h), isColor=(c == 3))
-        if not writer.isOpened():
-            raise RuntimeError(
-                f"VideoWriter failed to open for {path!r} (codec={codec!r}, "
-                f"size={w}x{h}, fps={fps})"
-            )
-
-        try:
-            clipped = np.clip(frames, 0.0, 1.0)
-            scaled = np.round(clipped * 255.0).astype(np.uint8)
-            for i in range(t):
-                frame = scaled[i]
-                if c == 1:
-                    frame = frame[:, :, 0]
-                writer.write(frame)
-        finally:
-            writer.release()
-
-        if _h264_via_ffmpeg(tmp_path, path, fps):
-            return
-        if path.exists() or path == tmp_path:
-            return
-        tmp_path.replace(path)
-    finally:
-        if tmp_path.exists() and tmp_path != path:
-            tmp_path.unlink(missing_ok=True)
+    encode_video(scaled, path, fps, codec=codec)
 
 
 def rgb_to_yiq(rgb: np.ndarray) -> np.ndarray:

@@ -409,38 +409,8 @@ def magnify_motion_lpyr_iir(
 
 
 def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
-    # Stage uint8 frames to a temp file via OpenCV, then transcode to H.264
-    # (browser/VSCode-playable) via ffmpeg. Falls back to the staged mp4v
-    # file when ffmpeg/libx264 is unavailable.
-    import os
-    import tempfile
-
-    from .video import _h264_via_ffmpeg
-
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    t, h, w, _ = frames_uint8.shape
-
-    fd, tmp_name = tempfile.mkstemp(suffix=".mp4", dir=str(out_path.parent))
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    try:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(
-            str(tmp_path), fourcc, float(fps), (w, h), isColor=True)
-        if not writer.isOpened():
-            raise RuntimeError(f"VideoWriter failed to open for {out_path!r}")
-        try:
-            for i in range(t):
-                writer.write(frames_uint8[i])
-        finally:
-            writer.release()
-
-        if _h264_via_ffmpeg(tmp_path, out_path, fps):
-            return
-        if out_path.exists() or out_path == tmp_path:
-            return
-        tmp_path.replace(out_path)
-    finally:
-        if tmp_path.exists() and tmp_path != out_path:
-            tmp_path.unlink(missing_ok=True)
+    # Delegates to the shared H.264 encoder in evm.video so every writer
+    # (batched CUDA, host CUDA, and this pure-Python path) emits identical
+    # browser/VSCode-playable video.
+    from .video import encode_video
+    encode_video(frames_uint8, out_path, fps)

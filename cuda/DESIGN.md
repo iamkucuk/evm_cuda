@@ -192,7 +192,7 @@ What's on-device vs on-host (batched.py):
 | Temporal filter | Device | On-device transpose + IIR, alpha folded into transpose |
 | Figure-6 schedule | Host | Small `n_levels`-length float array |
 | Fused render (upsample/planar + add + quant) | Device | Eliminates intermediate buffers |
-| Video encode | Host | OpenCV VideoWriter |
+| Video encode | Host | PyAV (libx264, H.264 yuv420p +faststart) |
 
 The only remaining host round-trip in the color pipeline is Stage 2b
 (downsampled clip D2H + reshape for the per-channel ideal_bandpass). The
