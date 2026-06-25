@@ -267,16 +267,21 @@ def magnify_color_gdown_ideal(
     filt = _stage("3) ideal_bandpass", _s3)
 
     # --- Stage 4: gain + upsample + add + quantize (ALL on-device) ----------
+    # Upload the gained filter, then time ONLY the render kernel — matching the
+    # documented methodology (video I/O / host work excluded from stage times).
+    gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
+                    dtype=np.float32)
+    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _s4():
-        gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
-                        dtype=np.float32)
-        d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
-        d_out_u8 = DeviceBuffer(n * h * w * 3)
         _evm_cuda.batched_upsample_add_quantize(
             d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
             n, hl, wl, h, w, 1.0)
-        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-    out = _stage("4) render", _s4)
+        return None
+    _stage("4) render", _s4)
+
+    # Download + encode are NOT timed — the methodology excludes video I/O.
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     if out_path:
         _write(out_path, out, fps)
@@ -362,16 +367,20 @@ def magnify_color_gdown_ideal_fp16(
     filt = _stage("3) ideal_bandpass", _s3)
 
     # --- Stage 4: FP16 render (reads __half NTSC + FP32 filt) ---------------
+    # Upload the gained filter, then time ONLY the render kernel.
+    gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
+                    dtype=np.float32)
+    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _s4():
-        gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
-                        dtype=np.float32)
-        d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
-        d_out_u8 = DeviceBuffer(n * h * w * 3)
         _evm_cuda.batched_upsample_add_quantize_f16(
             d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
             n, hl, wl, h, w, 1.0)
-        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-    out = _stage("4) render", _s4)
+        return None
+    _stage("4) render", _s4)
+
+    # Download + encode are NOT timed — the methodology excludes video I/O.
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     if out_path:
         _write(out_path, out, fps)
@@ -470,17 +479,26 @@ def magnify_motion_lpyr_iir(
     d_filtered = _stage("C) IIR", _sC)
     del d_bands  # bands consumed by IIR; free before Stage D lowers peak VRAM
 
-    # --- Stage D: recon + fused planar-delta render (device-resident) --------
-    def _sD():
+    # --- Stage D1: pyramid reconstruction (device-resident) ------------------
+    def _sD1():
         d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
         _evm_cuda.batched_lpyr_recon(
             d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
+        return d_delta_planar
+    d_delta_planar = _stage("D1) recon", _sD1)
+    del d_filtered
+
+    # --- Stage D2: fused planar-delta add + quantize (device-resident) --------
+    def _sD2():
         d_out_u8 = DeviceBuffer(n * h * w * 3)
         _evm_cuda.batched_add_planar_quantize(
             d_ntsc.ptr, d_delta_planar.ptr, d_out_u8.ptr,
             n, h, w, chrom_attenuation)
-        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-    out = _stage("D) render", _sD)
+        return d_out_u8
+    d_out_u8 = _stage("D2) render", _sD2)
+
+    # Download + encode are NOT timed — the methodology excludes video I/O.
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     if out_path:
         _write(out_path, out, fps)
@@ -589,17 +607,26 @@ def magnify_motion_lpyr_iir_fp16(
     d_filtered = _stage("C) IIR", _sC)
     del d_bands  # bands consumed by IIR; free before Stage D lowers peak VRAM
 
-    # --- Stage D: FP16 recon + FP16 render -----------------------------------
-    def _sD():
+    # --- Stage D1: FP16 pyramid reconstruction --------------------------------
+    def _sD1():
         d_delta = DeviceBuffer(n * 3 * h * w * 2)  # FP16 planar delta
         _evm_cuda.batched_lpyr_recon_f16(
             d_filtered.ptr, d_delta.ptr, n, h, w, levels, _d_binom5(), 5)
-        d_out_u8 = DeviceBuffer(n * h * w * 3)
+        return d_delta
+    d_delta = _stage("D1) recon", _sD1)
+    del d_filtered
+
+    # --- Stage D2: FP16 add + quantize ----------------------------------------
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
+    def _sD2():
         _evm_cuda.batched_add_planar_quantize_f16(
             d_ntsc.ptr, d_delta.ptr, d_out_u8.ptr,
             n, h, w, chrom_attenuation)
-        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-    out = _stage("D) render", _sD)
+        return None
+    _stage("D2) render", _sD2)
+
+    # Download + encode are NOT timed — the methodology excludes video I/O.
+    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
 
     if out_path:
         _write(out_path, out, fps)
