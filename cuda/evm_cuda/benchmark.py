@@ -236,7 +236,6 @@ def run(
             result.notes = f"skipped (out of memory)"
             return result
         raise                                    # genuine CUDA errors must surface
-        return result
 
     gc.collect(); _sync()
 
