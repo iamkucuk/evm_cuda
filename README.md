@@ -106,7 +106,8 @@ make help              # all targets
 | Python bindings | pybind11 | Thin, zero-copy device pointer passing |
 | Build | CMake + Ninja | Standard, portable |
 | FFT | cuFFT (batched C2C) | Hardware-accelerated temporal filtering |
-| Color | OpenCV (VideoWriter) | Codec for mp4 output |
+| Color | OpenCV (VideoCapture) | Input video decode |
+| Encode | PyAV (libx264) | H.264 yuv420p +faststart output (browser/VSCode-playable) |
 | Compute | NumPy / SciPy (baseline) | The correctness oracle |
 
 No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.

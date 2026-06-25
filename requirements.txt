@@ -2,3 +2,4 @@ numpy>=1.26
 scipy>=1.11
 opencv-python>=4.8
 requests>=2.31
+av>=14.0.0
