@@ -30,3 +30,6 @@ cuda/build/
 *.pdf
 kaggle/results*/
 .playwright-cli/
+
+# Generated profiling artifacts
+comparison_results.json

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evm-cuda"
+version = "0.1.0"
+description = "CUDA-accelerated Eulerian Video Magnification for revealing subtle temporal changes in video."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "BSD-3-Clause-NonCommercial" }
+authors = [{ name = "Furkan Kucuk" }]
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "opencv-python>=4.8",
+    "requests>=2.31",
+    "av>=14.0.0",
+]
+
+[project.optional-dependencies]
+# Tools needed to compile the CUDA extension (nvcc + the CUDA toolkit are still
+# required from the system). Mirrors what the Colab notebook installs.
+build = [
+    "cmake>=3.18",
+    "ninja",
+    "pybind11>=2.10",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+Repository = "https://github.com/iamkucuk/eulerian-video-magnification-cuda"
+
+# The compiled _evm_cuda extension lives under cuda/evm_cuda/ and is built by
+# cuda/setup.py + CMake (not by this metadata). These tool configs are for the
+# pure-Python packages (evm/, cuda/evm_cuda/ wrappers).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
