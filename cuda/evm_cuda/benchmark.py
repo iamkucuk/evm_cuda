@@ -36,22 +36,24 @@ from . import batched
 
 def gpu_name() -> str:
     """The CUDA device name (e.g. 'NVIDIA A100-SXM4-80GB'), or 'unknown'."""
+    import subprocess
     try:
-        import subprocess
         r = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True, text=True, check=True, timeout=10)
         return r.stdout.strip().splitlines()[0]
-    except Exception:
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
         return "unknown"
 
 
 def gpu_free_bytes() -> int:
-    """Free GPU memory in bytes (0 if unavailable)."""
+    """Free GPU memory in bytes (0 if the device/introspection is unavailable)."""
+    # gpu_mem_info raises RuntimeError when no CUDA device is present; that's the
+    # expected "unavailable" case. Anything else is a real error and propagates.
     try:
         free_b, _ = _evm_cuda.gpu_mem_info()
         return int(free_b)
-    except Exception:
+    except RuntimeError:
         return 0
 
 
@@ -224,9 +226,16 @@ def run(
         _one_call(recorder, write=True)         # iter 1 — also renders the video
         for _ in range(n_iter - 1):             # remaining timed iters (no write)
             _one_call(recorder, write=False)
-    except Exception as e:                      # pragma: no cover - OOM/runtime
+    except MemoryError as e:                    # GPU/CPU OOM — report, don't crash
         gc.collect(); _sync()
-        result.notes = f"failed during run: {e!r}"
+        result.notes = f"skipped (out of memory: {e})"
+        return result
+    except RuntimeError as e:                    # CUDA runtime errors (incl. OOM)
+        if "out of memory" in str(e).lower():
+            gc.collect(); _sync()
+            result.notes = f"skipped (out of memory)"
+            return result
+        raise                                    # genuine CUDA errors must surface
         return result
 
     gc.collect(); _sync()
