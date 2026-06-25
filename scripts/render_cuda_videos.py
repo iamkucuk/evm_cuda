@@ -27,7 +27,7 @@ for p in (str(ROOT), str(CUDA_DIR)):
 import numpy as np  # noqa: E402
 
 import evm  # Python baseline  # noqa: E402
-from evm_cuda import pipelines as cu  # CUDA pipelines  # noqa: E402
+from evm_cuda import batched as cu  # optimized device-resident CUDA pipelines  # noqa: E402
 
 DATA = ROOT / "data"
 OUT = ROOT / "output" / "cuda_render"

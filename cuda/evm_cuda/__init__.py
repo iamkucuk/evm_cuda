@@ -8,8 +8,11 @@ Layout:
 - ``_evm_cuda``  — the compiled pybind11 module (loaded lazily; raises on
                    machines without CUDA / nvcc-built .so).
 - ``runtime``    — small helpers (cuFFT plan cache, version probe).
-- ``pipelines``  — the four ``magnify_*`` pipeline orchestrators that call
-                   into `_evm_cuda` kernels.
+- ``batched``    — the OPTIMIZED, device-resident pipelines (color gdown+ideal,
+                   motion lpyr+iir, both FP32 + FP16). The hot path.
+- ``pipelines``  — the per-frame pipelines (motion lpyr+ideal, lpyr+butter);
+                   the only implementations of those two rarer variants.
+- ``benchmark``  — fair per-stage profiling harness (``run``/``summarize``).
 
 Tests in `tests/cuda/` import from this package; they skip cleanly if the
 CUDA module isn't built (see `tests/cuda/conftest.py`).
@@ -28,12 +31,20 @@ from .runtime import have_cuda, import_error, require_cuda  # noqa: F401
 
 
 def __getattr__(name: str):
-    # Surface the four pipeline entry points lazily; avoids importing the
+    # Surface the pipeline entry points lazily; avoids importing the
     # pipeline orchestration code (which needs _evm_cuda) on a non-CUDA host.
-    if name in {"magnify_color_gdown_ideal",
-                "magnify_motion_lpyr_ideal",
-                "magnify_motion_lpyr_butter",
-                "magnify_motion_lpyr_iir"}:
+    #
+    # The two hot pipelines (color gdown+ideal, motion lpyr+iir) resolve to
+    # the OPTIMIZED batched path (batched.py) — the device-resident,
+    # launch-collapsed implementation. The two rarer motion variants
+    # (lpyr+ideal, lpyr+butter) resolve to the per-frame path (pipelines.py),
+    # which is the only place they're implemented.
+    _BATCHED = {"magnify_color_gdown_ideal", "magnify_motion_lpyr_iir"}
+    _PIPELINES = {"magnify_motion_lpyr_ideal", "magnify_motion_lpyr_butter"}
+    if name in _BATCHED:
+        from . import batched
+        return getattr(batched, name)
+    if name in _PIPELINES:
         from . import pipelines
         return getattr(pipelines, name)
     raise AttributeError(name)
