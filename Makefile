@@ -13,7 +13,7 @@
 .PHONY: help build clean download \
         test test-baseline test-cuda \
         run-color run-motion \
-        profile-color profile-motion profile
+        profile
 
 # --- Paths + variables ------------------------------------------------------
 ROOT     := $(PWD)
@@ -68,11 +68,5 @@ run-motion: ## Motion magnification on baby.mp4 (IIR)
 		--mode iir --alpha 10 --lambda-c 16 --r1 0.4 --r2 0.05 --chromatt 0.1
 
 # --- Profiling --------------------------------------------------------------
-profile-color: ## Color pipeline FP32 stage breakdown
-	python $(SCRIPTS)/profile_color.py $(N)
-
-profile-motion: ## Motion pipeline FP32 stage breakdown
-	python $(SCRIPTS)/profile_motion.py $(N)
-
 profile: ## Full CPU vs FP32 vs FP16 comparison + render all videos
 	python $(SCRIPTS)/profile_full_comparison.py

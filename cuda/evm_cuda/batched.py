@@ -21,6 +21,7 @@ into ~50. See bindings.cpp batched_lpyr_build / batched_blur_dn_color.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -207,7 +208,11 @@ def magnify_color_gdown_ideal(
     fh: float,
     chrom_attenuation: float = 1.0,
     sampling_rate: float | None = None,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
+    def _stage(name, body):
+        return body() if on_stage is None else on_stage(name, body)
+
     frames, fps = _read_frames(vid_path)
     if sampling_rate is None:
         sampling_rate = fps
@@ -218,72 +223,63 @@ def magnify_color_gdown_ideal(
 
     _warmup_gpu_pool()  # first cudaMalloc is ~1s without this; ~0s with
 
-    # --- Stage 1: batched color convert (whole clip, 1 kernel launch) ------
-    # ntsc STAYS ON DEVICE — we never download it. The add-back in stage 4
-    # happens on-device via batched_upsample_add_quantize, so the ntsc
-    # buffer never crosses PCIe. Only the final uint8 output comes down.
-    d_clip = DeviceBuffer.from_array(clip_u8)
-    d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
-    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
-
-    # --- Stage 2: batched blur_dn downsample (whole clip on-device) ---------
-    # Was: 873-call Python loop (291 frames * 3 channels), each call doing
-    # cudaMalloc*5 + H2D*2 + kernel + D2H + cudaFree*5 = the color pipeline's
-    # biggest hotspot (55% of time per the profiler).
-    #
-    # Now: 1 planar transpose kernel + 1 batched C++ loop over n*3 contiguous
-    # slices (scratch allocated once). Data stays on-device the whole time.
     hl, wl = h, w
     for _ in range(level):
         hl = (hl + 1) // 2
         wl = (wl + 1) // 2
 
-    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
-    _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+    # State threaded through the stages (device buffers persist across stages).
+    d_clip = DeviceBuffer.from_array(clip_u8)
 
-    d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)
-    _evm_cuda.batched_blur_dn_color(
-        d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
-        _d_binom5_sum1(), 5)
+    # --- Stage 1: batched color convert (whole clip, 1 kernel launch) ------
+    def _s1():
+        d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
+        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
+        return d_ntsc
+    d_ntsc = _stage("1) color_cvt", _s1)
 
-    # D2H once: reshape planar (n,3,hl,wl) -> interleaved (n,hl,wl,3) for the
-    # bandpass stage, which expects channel as the last axis.
-    gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
-    gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+    # --- Stage 2: planar transpose + batched blur_dn downsample -------------
+    def _s2():
+        d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+        _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+        d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)
+        _evm_cuda.batched_blur_dn_color(
+            d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
+            _d_binom5_sum1(), 5)
+        # D2H once: reshape planar (n,3,hl,wl) -> interleaved (n,hl,wl,3).
+        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
+        gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+        return gdown
+    gdown = _stage("2) blur_dn", _s2)
 
     # --- Stage 3: ideal bandpass per channel (batched over all pixels) ------
-    # ONE H2D + ONE kernel + ONE D2H per channel (3 total), vs n*1 in the old
-    # path. This is where the big win is for the temporal stage.
-    filt = np.empty_like(gdown)
-    for c in range(3):
-        sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
-        d_sig = DeviceBuffer.from_array(sig)
-        d_out = DeviceBuffer(n * hl * wl * 4)
-        _evm_cuda.batched_ideal_bandpass(
-            d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
-        filt[..., c] = d_out.download_f32(n * hl * wl).reshape(hl * wl, n).T.reshape(n, hl, wl)
+    def _s3():
+        filt = np.empty_like(gdown)
+        for c in range(3):
+            sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
+            d_sig = DeviceBuffer.from_array(sig)
+            d_out = DeviceBuffer(n * hl * wl * 4)
+            _evm_cuda.batched_ideal_bandpass(
+                d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
+            filt[..., c] = d_out.download_f32(n * hl * wl).reshape(
+                hl * wl, n).T.reshape(n, hl, wl)
+        return filt
+    filt = _stage("3) ideal_bandpass", _s3)
 
     # --- Stage 4: gain + upsample + add + quantize (ALL on-device) ----------
-    # Was: 291x host cv2.resize(INTER_LINEAR) calls + np.stack + host add +
-    # upload. Now: upload the small filt once, GPU bilinear upsample (matches
-    # cv2 half-pixel + replicate convention bit-exactly), fused add+quantize.
-    # The only host<->device transfer in this stage is the small filt upload
-    # and the final uint8 output download.
-    gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
-                    dtype=np.float32)
-    filt = filt * gain
+    def _s4():
+        gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
+                        dtype=np.float32)
+        d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
+        d_out_u8 = DeviceBuffer(n * h * w * 3)
+        _evm_cuda.batched_upsample_add_quantize(
+            d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
+            n, hl, wl, h, w, 1.0)
+        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    out = _stage("4) render", _s4)
 
-    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
-    # Fused upsample + add + quantize: reads the small filtered signal + the
-    # full-res NTSC frame, interpolates inline, writes uint8 output directly.
-    # Eliminates the n*h*w*3*4 float32 intermediate buffer + 1 kernel launch.
-    d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_upsample_add_quantize(
-        d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
-        n, hl, wl, h, w, 1.0)
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-
-    _write(out_path, out, fps)
+    if out_path:
+        _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
 
 
@@ -297,6 +293,7 @@ def magnify_color_gdown_ideal_fp16(
     fh: float,
     chrom_attenuation: float = 1.0,
     sampling_rate: float | None = None,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
     """Color pipeline with FP16 NTSC storage.
 
@@ -307,6 +304,9 @@ def magnify_color_gdown_ideal_fp16(
     kernel is halved, which is where the bandwidth win lands (render is ~73%
     of GPU time in the FP32 color pipeline).
     """
+    def _stage(name, body):
+        return body() if on_stage is None else on_stage(name, body)
+
     frames, fps = _read_frames(vid_path)
     if sampling_rate is None:
         sampling_rate = fps
@@ -317,59 +317,64 @@ def magnify_color_gdown_ideal_fp16(
 
     _warmup_gpu_pool()
 
-    # --- Stage 1: NTSC convert (FP32 compute) -> FP16 storage ----------------
-    # ntsc persists as __half through Stage 4's render. Only this momentary
-    # FP32 compute buffer + one f32_to_f16 conversion is the overhead.
     ntsc_floats = n * h * w * 3
-    d_clip = DeviceBuffer.from_array(clip_u8)
-    d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
-    d_ntsc = DeviceBuffer(ntsc_floats * 2)  # __half, persists to Stage 4
-    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc_f32.ptr, n, h, w)
-    _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc.ptr, ntsc_floats)
-    del d_ntsc_f32
-
-    # --- Stage 2: FP16 planar + FP16 blur_dn -> FP32 gdown -------------------
     hl, wl = h, w
     for _ in range(level):
         hl = (hl + 1) // 2
         wl = (wl + 1) // 2
 
-    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 2)  # __half
-    _evm_cuda.batched_to_planar_3ch_f16(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+    d_clip = DeviceBuffer.from_array(clip_u8)
 
-    d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)  # FP32 (FFT needs float)
-    _evm_cuda.batched_blur_dn_color_f16(
-        d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
-        _d_binom5_sum1(), 5)
-    del d_ntsc_planar
+    # --- Stage 1: NTSC convert (FP32 compute) -> FP16 storage ---------------
+    def _s1():
+        d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
+        d_ntsc = DeviceBuffer(ntsc_floats * 2)  # __half, persists to Stage 4
+        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc_f32.ptr, n, h, w)
+        _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc.ptr, ntsc_floats)
+        return d_ntsc
+    d_ntsc = _stage("1) color_cvt", _s1)
 
-    # D2H + reshape: same as FP32 pipeline (FFT bandpass runs on host-FP32).
-    gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
-    gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+    # --- Stage 2: FP16 planar + FP16 blur_dn -> FP32 gdown -------------------
+    def _s2():
+        d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 2)  # __half
+        _evm_cuda.batched_to_planar_3ch_f16(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+        d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)  # FP32 (FFT needs float)
+        _evm_cuda.batched_blur_dn_color_f16(
+            d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
+            _d_binom5_sum1(), 5)
+        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
+        gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+        return gdown
+    gdown = _stage("2) blur_dn", _s2)
 
     # --- Stage 3: ideal bandpass per channel (FP32, same as FP32 pipeline) ---
-    filt = np.empty_like(gdown)
-    for c in range(3):
-        sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
-        d_sig = DeviceBuffer.from_array(sig)
-        d_out = DeviceBuffer(n * hl * wl * 4)
-        _evm_cuda.batched_ideal_bandpass(
-            d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
-        filt[..., c] = d_out.download_f32(n * hl * wl).reshape(hl * wl, n).T.reshape(n, hl, wl)
+    def _s3():
+        filt = np.empty_like(gdown)
+        for c in range(3):
+            sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
+            d_sig = DeviceBuffer.from_array(sig)
+            d_out = DeviceBuffer(n * hl * wl * 4)
+            _evm_cuda.batched_ideal_bandpass(
+                d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
+            filt[..., c] = d_out.download_f32(n * hl * wl).reshape(
+                hl * wl, n).T.reshape(n, hl, wl)
+        return filt
+    filt = _stage("3) ideal_bandpass", _s3)
 
     # --- Stage 4: FP16 render (reads __half NTSC + FP32 filt) ---------------
-    gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
-                    dtype=np.float32)
-    filt = filt * gain
+    def _s4():
+        gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
+                        dtype=np.float32)
+        d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
+        d_out_u8 = DeviceBuffer(n * h * w * 3)
+        _evm_cuda.batched_upsample_add_quantize_f16(
+            d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
+            n, hl, wl, h, w, 1.0)
+        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    out = _stage("4) render", _s4)
 
-    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
-    d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_upsample_add_quantize_f16(
-        d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
-        n, hl, wl, h, w, 1.0)
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-
-    _write(out_path, out, fps)
+    if out_path:
+        _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
 
 
@@ -387,7 +392,11 @@ def magnify_motion_lpyr_iir(
     r2: float,
     chrom_attenuation: float = 0.1,
     exaggeration_factor: float = _evm_cuda.exaggeration_factor,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
+    def _stage(name, body):
+        return body() if on_stage is None else on_stage(name, body)
+
     frames, fps = _read_frames(vid_path)
     n = len(frames)
     h, w = frames[0].shape[:2]
@@ -418,76 +427,63 @@ def magnify_motion_lpyr_iir(
         level_offsets.append(offset)
         offset += sz * n * 3
 
-    # --- Stage A: batched NTSC convert (whole clip, 1 launch) --------------
-    # ntsc STAYS ON DEVICE — used by Stage D's add_and_quantize (device-resident).
     d_clip = DeviceBuffer.from_array(clip_u8)
-    d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
-    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
+
+    # --- Stage A: batched NTSC convert (whole clip, 1 launch) ----------------
+    def _sA():
+        d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
+        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
+        return d_ntsc
+    d_ntsc = _stage("A) NTSC", _sA)
     del d_clip  # clip_u8 no longer needed on device after NTSC convert
 
-    # --- Stage B: batched Laplacian pyramid build (whole clip on-device) ----
-    # The channel-major output layout makes each (level, channel) a contiguous
-    # (T=n, N=lh*lw) block for the temporal filter. d_ntsc_planar is transient:
-    # it is consumed by lpyr_build and freed before Stage C so it does not add
-    # to peak VRAM alongside d_bands.
-    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
-    _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
-    d_bands = DeviceBuffer(total_band_floats * 4)
-    _evm_cuda.batched_lpyr_build(
-        d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
-        _d_binom5(), 5)
-    del d_ntsc_planar
+    # --- Stage B: batched Laplacian pyramid build ----------------------------
+    def _sB():
+        d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+        _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+        d_bands = DeviceBuffer(total_band_floats * 4)
+        _evm_cuda.batched_lpyr_build(
+            d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels, _d_binom5(), 5)
+        return d_bands
+    d_bands = _stage("B) lpyr_build", _sB)
 
     # --- Stage C: temporal IIR (fully on-device, no host round-trip) ---------
-    # Per (level, channel), the n frames are a contiguous (T,N) block in
-    # d_bands. Transpose to (N,T) on-device, run IIR, transpose back with
-    # per-level alpha folded into the transpose (no separate scale pass).
-    # All device-to-device — zero host transfers.
-    #
-    # The transpose/IIR temporaries are hoisted out of the loop and REUSED on
-    # every iteration. Allocating fresh DeviceBuffers inside the loop leaks one
-    # pair per (level, channel) until the function returns (~45 GB peak on
-    # baby.mp4), which hard-OOMs 16 GB GPUs and crashes the runtime.
-    d_filtered = DeviceBuffer(total_band_floats * 4)
-    max_sz = max(lvl_sizes)
-    d_nt = DeviceBuffer(n * max_sz * 4)
-    d_filt_nt = DeviceBuffer(n * max_sz * 4)
-    for l in range(levels):
-        sz = lvl_sizes[l]
-        for c in range(3):
-            # Source: channel c's n frames at this level (T=n, N=sz), contiguous
-            sig_off = level_offsets[l] + c * n * sz
-            _evm_cuda.batched_thwc_to_nt(
-                d_bands.ptr_at(sig_off), d_nt.ptr, n, sz)
-            # IIR on (N,T)
-            _evm_cuda.batched_iir_bandpass(
-                d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
-            # Transpose back (N,T) -> (T,N) with alpha_sched[l] folded in —
-            # replaces a separate scale_inplace launch.
-            dst_off = level_offsets[l] + c * n * sz
-            _evm_cuda.batched_nt_to_thwc_scaled(
-                d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
-    del d_bands, d_nt, d_filt_nt
+    # Transpose/IIR temporaries are hoisted out of the loop and REUSED: a fresh
+    # DeviceBuffer per iteration would leak ~45 GB peak and crash 16 GB GPUs.
+    def _sC():
+        d_filtered = DeviceBuffer(total_band_floats * 4)
+        max_sz = max(lvl_sizes)
+        d_nt = DeviceBuffer(n * max_sz * 4)
+        d_filt_nt = DeviceBuffer(n * max_sz * 4)
+        for l in range(levels):
+            sz = lvl_sizes[l]
+            for c in range(3):
+                sig_off = level_offsets[l] + c * n * sz
+                _evm_cuda.batched_thwc_to_nt(
+                    d_bands.ptr_at(sig_off), d_nt.ptr, n, sz)
+                _evm_cuda.batched_iir_bandpass(
+                    d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
+                dst_off = level_offsets[l] + c * n * sz
+                _evm_cuda.batched_nt_to_thwc_scaled(
+                    d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
+        return d_filtered
+    d_filtered = _stage("C) IIR", _sC)
+    del d_bands  # bands consumed by IIR; free before Stage D lowers peak VRAM
 
-    # --- Stage D: batched recon + device-resident render --------------------
-    # lpyr_recon output stays on-device in planar (n*3, H, W) layout. The render
-    # kernel reads delta directly from planar layout (folding the transpose
-    # inline), adds to NTSC with chromAtt, and writes uint8 BGR. No intermediate
-    # interleaved buffer, no separate transpose pass. d_filtered is consumed by
-    # recon and freed before the output buffer is allocated.
-    d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
-    _evm_cuda.batched_lpyr_recon(
-        d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
-    del d_filtered
+    # --- Stage D: recon + fused planar-delta render (device-resident) --------
+    def _sD():
+        d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
+        _evm_cuda.batched_lpyr_recon(
+            d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
+        d_out_u8 = DeviceBuffer(n * h * w * 3)
+        _evm_cuda.batched_add_planar_quantize(
+            d_ntsc.ptr, d_delta_planar.ptr, d_out_u8.ptr,
+            n, h, w, chrom_attenuation)
+        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    out = _stage("D) render", _sD)
 
-    # Fused planar-delta add + quantize (keep d_ntsc from Stage A).
-    d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_planar_quantize(
-        d_ntsc.ptr, d_delta_planar.ptr, d_out_u8.ptr,
-        n, h, w, chrom_attenuation)
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-
-    _write(out_path, out, fps)
+    if out_path:
+        _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
 
 
@@ -501,6 +497,7 @@ def magnify_motion_lpyr_iir_fp16(
     r2: float,
     chrom_attenuation: float = 0.1,
     exaggeration_factor: float = _evm_cuda.exaggeration_factor,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
     """Motion pipeline with end-to-end FP16 storage.
 
@@ -512,6 +509,9 @@ def magnify_motion_lpyr_iir_fp16(
     This eliminates the conversion overhead that made the previous FP16
     prototype 5x slower than FP32. Peak VRAM: ~12 GB for baby.mp4.
     """
+    def _stage(name, body):
+        return body() if on_stage is None else on_stage(name, body)
+
     frames, fps = _read_frames(vid_path)
     n = len(frames)
     h, w = frames[0].shape[:2]
@@ -536,29 +536,31 @@ def magnify_motion_lpyr_iir_fp16(
     ntsc_floats = n * h * w * 3
     planar_floats = n * 3 * h * w
 
-    # --- Stage A: NTSC convert (FP32 compute), one f32->f16 conversion ------
     d_clip = DeviceBuffer.from_array(clip_u8)
-    d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
-    d_ntsc = DeviceBuffer(ntsc_floats * 2)  # FP16 storage, persists to Stage D
-    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc_f32.ptr, n, h, w)
-    _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc.ptr, ntsc_floats)
-    del d_ntsc_f32  # only FP16 NTSC persists
 
-    # --- Stage B: FP16 planar + FP16 lpyr_build ----------------------------
-    d_ntsc_planar = DeviceBuffer(planar_floats * 2)
-    _evm_cuda.batched_to_planar_3ch_f16(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+    # --- Stage A: NTSC convert (FP32 compute), one f32->f16 conversion ------
+    def _sA():
+        d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
+        d_ntsc = DeviceBuffer(ntsc_floats * 2)  # FP16 storage, persists to Stage D
+        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc_f32.ptr, n, h, w)
+        _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc.ptr, ntsc_floats)
+        return d_ntsc
+    d_ntsc = _stage("A) NTSC", _sA)
 
+    # --- Stage B: FP16 planar + FP16 lpyr_build -----------------------------
     lvl_sizes = [s[0] * s[1] for s in level_sizes]
     total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
-    # Build outputs FP32 bands (scatter writes float), convert to FP16 for Stage C.
-    d_bands_f32 = DeviceBuffer(total_band_floats * 4)
-    _evm_cuda.batched_lpyr_build_f16(
-        d_ntsc_planar.ptr, d_bands_f32.ptr, n, h, w, levels,
-        _d_binom5(), 5)
-    del d_ntsc_planar
-    d_bands = DeviceBuffer(total_band_floats * 2)
-    _evm_cuda.f32_to_f16(d_bands_f32.ptr, d_bands.ptr, total_band_floats)
-    del d_bands_f32
+    def _sB():
+        d_ntsc_planar = DeviceBuffer(planar_floats * 2)
+        _evm_cuda.batched_to_planar_3ch_f16(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+        d_bands_f32 = DeviceBuffer(total_band_floats * 4)
+        _evm_cuda.batched_lpyr_build_f16(
+            d_ntsc_planar.ptr, d_bands_f32.ptr, n, h, w, levels,
+            _d_binom5(), 5)
+        d_bands = DeviceBuffer(total_band_floats * 2)
+        _evm_cuda.f32_to_f16(d_bands_f32.ptr, d_bands.ptr, total_band_floats)
+        return d_bands
+    d_bands = _stage("B) lpyr_build", _sB)
 
     level_offsets = []
     offset = 0
@@ -566,35 +568,39 @@ def magnify_motion_lpyr_iir_fp16(
         level_offsets.append(offset)
         offset += sz * n * 3
 
-    # --- Stage C: FP16 temporal IIR -----------------------------------------
-    d_filtered = DeviceBuffer(total_band_floats * 2)  # FP16
-    max_sz = max(lvl_sizes)
-    d_nt = DeviceBuffer(n * max_sz * 2)  # FP16
-    d_filt_nt = DeviceBuffer(n * max_sz * 2)  # FP16
-    for l in range(levels):
-        sz = lvl_sizes[l]
-        for c in range(3):
-            sig_off = level_offsets[l] + c * n * sz
-            _evm_cuda.batched_thwc_to_nt_f16(
-                d_bands.ptr_at_half(sig_off), d_nt.ptr, n, sz)
-            _evm_cuda.batched_iir_bandpass_f16(
-                d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
-            dst_off = level_offsets[l] + c * n * sz
-            _evm_cuda.batched_nt_to_thwc_scaled_f16(
-                d_filt_nt.ptr, d_filtered.ptr_at_half(dst_off), n, sz, alpha_sched[l])
-    del d_bands, d_nt, d_filt_nt
+    # --- Stage C: FP16 temporal IIR ------------------------------------------
+    def _sC():
+        d_filtered = DeviceBuffer(total_band_floats * 2)  # FP16
+        max_sz = max(lvl_sizes)
+        d_nt = DeviceBuffer(n * max_sz * 2)  # FP16
+        d_filt_nt = DeviceBuffer(n * max_sz * 2)  # FP16
+        for l in range(levels):
+            sz = lvl_sizes[l]
+            for c in range(3):
+                sig_off = level_offsets[l] + c * n * sz
+                _evm_cuda.batched_thwc_to_nt_f16(
+                    d_bands.ptr_at_half(sig_off), d_nt.ptr, n, sz)
+                _evm_cuda.batched_iir_bandpass_f16(
+                    d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
+                dst_off = level_offsets[l] + c * n * sz
+                _evm_cuda.batched_nt_to_thwc_scaled_f16(
+                    d_filt_nt.ptr, d_filtered.ptr_at_half(dst_off), n, sz, alpha_sched[l])
+        return d_filtered
+    d_filtered = _stage("C) IIR", _sC)
+    del d_bands  # bands consumed by IIR; free before Stage D lowers peak VRAM
 
-    # --- Stage D: FP16 recon + FP16 render ----------------------------------
-    d_delta = DeviceBuffer(n * 3 * h * w * 2)  # FP16 planar delta
-    _evm_cuda.batched_lpyr_recon_f16(
-        d_filtered.ptr, d_delta.ptr, n, h, w, levels, _d_binom5(), 5)
-    del d_filtered
+    # --- Stage D: FP16 recon + FP16 render -----------------------------------
+    def _sD():
+        d_delta = DeviceBuffer(n * 3 * h * w * 2)  # FP16 planar delta
+        _evm_cuda.batched_lpyr_recon_f16(
+            d_filtered.ptr, d_delta.ptr, n, h, w, levels, _d_binom5(), 5)
+        d_out_u8 = DeviceBuffer(n * h * w * 3)
+        _evm_cuda.batched_add_planar_quantize_f16(
+            d_ntsc.ptr, d_delta.ptr, d_out_u8.ptr,
+            n, h, w, chrom_attenuation)
+        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    out = _stage("D) render", _sD)
 
-    d_out_u8 = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_planar_quantize_f16(
-        d_ntsc.ptr, d_delta.ptr, d_out_u8.ptr,
-        n, h, w, chrom_attenuation)
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-
-    _write(out_path, out, fps)
+    if out_path:
+        _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
