@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import _evm_cuda
-from . import batched
+from . import batched  # noqa: E402  (submodule; the pipelines live here)
 from ._common import read_frames
 
 

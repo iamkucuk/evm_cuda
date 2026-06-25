@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=evm-regress
-#SBATCH --partition=kolyoz-cuda
+#SBATCH --partition=palamut-cuda
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=01:00:00
 #SBATCH --output=/arf/scratch/fkucuk/logs/%j.out
