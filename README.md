@@ -3,8 +3,10 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](#)
 [![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia&logoColor=white)](#)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
-[![Tests](https://img.shields.io/badge/tests-61%20passed-brightgreen)](#)
+[![GPU: H100/A100/T4/P100](https://img.shields.io/badge/GPU-H100%20%7C%20A100%20%7C%20T4%20%7C%20P100-76B900?logo=nvidia)](#)
+[![Tests](https://img.shields.io/badge/tests-83%20passed-brightgreen)](#)
 [![Speedup](https://img.shields.io/badge/speedup-557x-success)](#)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/colab/evm_cuda_benchmark.ipynb)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
 **A CUDA-accelerated implementation of Eulerian Video Magnification (EVM) that
@@ -109,7 +111,7 @@ make run-color         # pulse magnification on face.mp4
 make run-motion        # motion magnification on baby.mp4
 
 # Test
-make test              # 61 tests (25 Python baseline + 36 CUDA)
+make test              # 83 tests (25 Python baseline + 58 CUDA parametrized)
 
 # Profile
 make profile           # CPU vs FP32 vs FP16 comparison
@@ -140,7 +142,7 @@ No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.
   via `cvt_in`/`cvt_out` helpers; compute stays FP32, storage halves
 - **Multiple-elements-per-thread** — render and transpose kernels process
   4 pixels per thread to pipeline independent memory reads (22% speedup)
-- **61 tests** validating every kernel against the Python baseline, including
+- **83 tests** (61 functions, parametrized to 83 cases) validating every kernel
   end-to-end RMSE checks and MIT reference output comparison
 
 ## Project structure
@@ -157,7 +159,7 @@ evm_cuda/
 │   ├── blog_speedup.md   # full optimization writeup
 │   └── img/              # demo images
 ├── scripts/              # CLI + profilers
-├── tests/                # 25 Python + 36 CUDA tests
+├── tests/                # 25 Python + 36 CUDA test functions (83 cases)
 ├── kaggle/               # free-GPU benchmark harness
 └── Makefile              # build, test, run, profile targets
 ```
