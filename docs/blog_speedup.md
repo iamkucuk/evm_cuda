@@ -593,7 +593,7 @@ Measurements were taken on:
 
 [harris]: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 
-125 unit and integration tests validate correctness against the Python
+83 unit and integration tests validate correctness against the Python
 baseline (RMSE < 0.01 for end-to-end pipelines, per-kernel tolerances
 from 10^-6 to 10^-4 depending on the operation). The full test suite and
 profiler scripts are in the [repository][repo].
