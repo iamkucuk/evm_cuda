@@ -92,4 +92,6 @@ def test_summarize_handles_mixed():
                               stages=[], total_ms=0, notes="skipped (OOM)", gpu="T4"),
     ]
     table = benchmark.summarize(results)
-    assert "color" in table and "skipped (OOM)" in table and "FP16/FP32" in table
+    assert "color" in table, table
+    assert "skipped (OOM)" in table, table
+    assert "compute speedup" in table, table  # the FP16/FP32 ratio row label
