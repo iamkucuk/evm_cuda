@@ -57,7 +57,12 @@ def test_color_benchmark_matches_magnify(tmp_path):
     assert res.measured, f"benchmark did not measure: {res.notes}"
     assert res.pipeline == "color" and res.precision == "fp32"
     assert any(s.name.startswith("1)") for s in res.stages)
+    # Transfers (H2D/D2H) are now their own stages — verify they're reported.
+    assert any("H2D" in s.name for s in res.stages), "no H2D transfer stage"
+    assert any("D2H" in s.name for s in res.stages), "no D2H transfer stage"
     assert res.total_ms > 0
+    assert res.compute_ms > 0 and res.transfer_ms > 0
+    assert abs(res.compute_ms + res.transfer_ms - res.total_ms) < 0.1  # ms
     assert (tmp_path / "face_bench.mp4").exists()
     # Re-execute through the hook to compare the data path is untouched:
     # the on_stage callback only adds sync+timing, so output is identical.

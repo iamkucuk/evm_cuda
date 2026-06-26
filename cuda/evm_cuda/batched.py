@@ -193,7 +193,11 @@ def magnify_color_gdown_ideal(
         wl = (wl + 1) // 2
 
     # State threaded through the stages (device buffers persist across stages).
-    d_clip = DeviceBuffer.from_array(clip_u8)
+    # Stage 0: input H2D upload (the whole clip). Measured as its own transfer
+    # stage so PCIe cost is reported separately from GPU compute.
+    def _s0():
+        return DeviceBuffer.from_array(clip_u8)
+    d_clip = _stage("0) H2D: clip", _s0)
 
     # --- Stage 1: batched color convert (whole clip, 1 kernel launch) ------
     def _s1():
@@ -210,42 +214,63 @@ def magnify_color_gdown_ideal(
         _evm_cuda.batched_blur_dn_color(
             d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
             _d_binom5_sum1(), 5)
-        # D2H once: reshape planar (n,3,hl,wl) -> interleaved (n,hl,wl,3).
-        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
-        gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
-        return gdown
-    gdown = _stage("2) blur_dn", _s2)
+        return d_gdown_planar
+    d_gdown_planar = _stage("2) blur_dn", _s2)
 
-    # --- Stage 3: ideal bandpass per channel (batched over all pixels) ------
-    def _s3():
-        filt = np.empty_like(gdown)
+    # Stage 2b: D2H + reshape (host round-trip for the per-channel FFT bandpass).
+    def _s2b():
+        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
+        return np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+    gdown = _stage("2b) D2H: gdown", _s2b)
+
+    # --- Stage 3a: H2D per-channel bandpass signals -------------------------
+    def _s3a():
+        sigs = [np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
+                for c in range(3)]
+        d_sigs = [DeviceBuffer.from_array(s) for s in sigs]
+        return d_sigs
+    d_sigs = _stage("3a) H2D: sig x3", _s3a)
+
+    # --- Stage 3b: ideal bandpass per channel (batched over all pixels) ------
+    def _s3b():
+        d_outs = []
         for c in range(3):
-            sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
-            d_sig = DeviceBuffer.from_array(sig)
             d_out = DeviceBuffer(n * hl * wl * 4)
             _evm_cuda.batched_ideal_bandpass(
-                d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
-            filt[..., c] = d_out.download_f32(n * hl * wl).reshape(
+                d_sigs[c].ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
+            d_outs.append(d_out)
+        return d_outs
+    d_outs = _stage("3b) ideal_bandpass", _s3b)
+
+    # --- Stage 3c: D2H per-channel bandpass outputs -------------------------
+    def _s3c():
+        filt = np.empty_like(gdown)
+        for c in range(3):
+            filt[..., c] = d_outs[c].download_f32(n * hl * wl).reshape(
                 hl * wl, n).T.reshape(n, hl, wl)
         return filt
-    filt = _stage("3) ideal_bandpass", _s3)
+    filt = _stage("3c) D2H: filt x3", _s3c)
 
-    # --- Stage 4: gain + upsample + add + quantize (ALL on-device) ----------
-    # Upload the gained filter, then time ONLY the render kernel — matching the
-    # documented methodology (video I/O / host work excluded from stage times).
+    # --- Stage 4a: H2D gained filter ----------------------------------------
     gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
                     dtype=np.float32)
-    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
+    def _s4a():
+        return DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
+    d_filt = _stage("4a) H2D: filt", _s4a)
+
+    # --- Stage 4b: fused upsample + add + quantize (kernel only) ------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
-    def _s4():
+    def _s4b():
         _evm_cuda.batched_upsample_add_quantize(
             d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
             n, hl, wl, h, w, 1.0)
         return None
-    _stage("4) render", _s4)
+    _stage("4b) render", _s4b)
 
-    # Download + encode are NOT timed — the methodology excludes video I/O.
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    # --- Stage 4c: D2H output frames ----------------------------------------
+    def _s4c():
+        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    out = _stage("4c) D2H: output", _s4c)
 
     if out_path:
         _write(out_path, out, fps)
@@ -292,7 +317,7 @@ def magnify_color_gdown_ideal_fp16(
         hl = (hl + 1) // 2
         wl = (wl + 1) // 2
 
-    d_clip = DeviceBuffer.from_array(clip_u8)
+    d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
     # --- Stage 1: NTSC convert (FP32 compute) -> FP16 storage ---------------
     def _s1():
@@ -311,40 +336,60 @@ def magnify_color_gdown_ideal_fp16(
         _evm_cuda.batched_blur_dn_color_f16(
             d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
             _d_binom5_sum1(), 5)
-        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
-        gdown = np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
-        return gdown
-    gdown = _stage("2) blur_dn", _s2)
+        return d_gdown_planar
+    d_gdown_planar = _stage("2) blur_dn", _s2)
 
-    # --- Stage 3: ideal bandpass per channel (FP32, same as FP32 pipeline) ---
-    def _s3():
-        filt = np.empty_like(gdown)
+    # Stage 2b: D2H + reshape (host round-trip for the per-channel FFT bandpass).
+    def _s2b():
+        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
+        return np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
+    gdown = _stage("2b) D2H: gdown", _s2b)
+
+    # --- Stage 3a: H2D per-channel bandpass signals -------------------------
+    def _s3a():
+        sigs = [np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
+                for c in range(3)]
+        return [DeviceBuffer.from_array(s) for s in sigs]
+    d_sigs = _stage("3a) H2D: sig x3", _s3a)
+
+    # --- Stage 3b: ideal bandpass per channel (FP32, same as FP32 pipeline) ---
+    def _s3b():
+        d_outs = []
         for c in range(3):
-            sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
-            d_sig = DeviceBuffer.from_array(sig)
             d_out = DeviceBuffer(n * hl * wl * 4)
             _evm_cuda.batched_ideal_bandpass(
-                d_sig.ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
-            filt[..., c] = d_out.download_f32(n * hl * wl).reshape(
+                d_sigs[c].ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
+            d_outs.append(d_out)
+        return d_outs
+    d_outs = _stage("3b) ideal_bandpass", _s3b)
+
+    # --- Stage 3c: D2H per-channel bandpass outputs -------------------------
+    def _s3c():
+        filt = np.empty_like(gdown)
+        for c in range(3):
+            filt[..., c] = d_outs[c].download_f32(n * hl * wl).reshape(
                 hl * wl, n).T.reshape(n, hl, wl)
         return filt
-    filt = _stage("3) ideal_bandpass", _s3)
+    filt = _stage("3c) D2H: filt x3", _s3c)
 
-    # --- Stage 4: FP16 render (reads __half NTSC + FP32 filt) ---------------
-    # Upload the gained filter, then time ONLY the render kernel.
+    # --- Stage 4a: H2D gained filter ----------------------------------------
     gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
                     dtype=np.float32)
-    d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
+    d_filt = _stage("4a) H2D: filt",
+                    lambda: DeviceBuffer.from_array(np.ascontiguousarray(filt * gain)))
+
+    # --- Stage 4b: FP16 render (reads __half NTSC + FP32 filt) ---------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
-    def _s4():
+    def _s4b():
         _evm_cuda.batched_upsample_add_quantize_f16(
             d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
             n, hl, wl, h, w, 1.0)
         return None
-    _stage("4) render", _s4)
+    _stage("4b) render", _s4b)
 
-    # Download + encode are NOT timed — the methodology excludes video I/O.
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    # --- Stage 4c: D2H output frames ----------------------------------------
+    out = _stage("4c) D2H: output",
+                 lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3))
 
     if out_path:
         _write(out_path, out, fps)
@@ -400,7 +445,7 @@ def magnify_motion_lpyr_iir(
         level_offsets.append(offset)
         offset += sz * n * 3
 
-    d_clip = DeviceBuffer.from_array(clip_u8)
+    d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
     # --- Stage A: batched NTSC convert (whole clip, 1 launch) ----------------
     def _sA():
@@ -452,17 +497,18 @@ def magnify_motion_lpyr_iir(
     d_delta_planar = _stage("D1) recon", _sD1)
     del d_filtered
 
-    # --- Stage D2: fused planar-delta add + quantize (device-resident) --------
+    # --- Stage D2: fused planar-delta add + quantize (kernel only) -----------
+    d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _sD2():
-        d_out_u8 = DeviceBuffer(n * h * w * 3)
         _evm_cuda.batched_add_planar_quantize(
             d_ntsc.ptr, d_delta_planar.ptr, d_out_u8.ptr,
             n, h, w, chrom_attenuation)
-        return d_out_u8
-    d_out_u8 = _stage("D2) render", _sD2)
+        return None
+    _stage("D2) render", _sD2)
 
-    # Download + encode are NOT timed — the methodology excludes video I/O.
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    # --- Stage D2H: output frames download -----------------------------------
+    out = _stage("D2H) output",
+                 lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3))
 
     if out_path:
         _write(out_path, out, fps)
@@ -518,7 +564,7 @@ def magnify_motion_lpyr_iir_fp16(
     ntsc_floats = n * h * w * 3
     planar_floats = n * 3 * h * w
 
-    d_clip = DeviceBuffer.from_array(clip_u8)
+    d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
     # --- Stage A: NTSC convert (FP32 compute), one f32->f16 conversion ------
     def _sA():
@@ -580,7 +626,7 @@ def magnify_motion_lpyr_iir_fp16(
     d_delta = _stage("D1) recon", _sD1)
     del d_filtered
 
-    # --- Stage D2: FP16 add + quantize ----------------------------------------
+    # --- Stage D2: FP16 add + quantize (kernel only) -------------------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _sD2():
         _evm_cuda.batched_add_planar_quantize_f16(
@@ -589,8 +635,9 @@ def magnify_motion_lpyr_iir_fp16(
         return None
     _stage("D2) render", _sD2)
 
-    # Download + encode are NOT timed — the methodology excludes video I/O.
-    out = d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
+    # --- Stage D2H: output frames download -----------------------------------
+    out = _stage("D2H) output",
+                 lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3))
 
     if out_path:
         _write(out_path, out, fps)
