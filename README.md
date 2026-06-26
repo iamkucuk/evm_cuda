@@ -4,7 +4,7 @@
 [![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia&logoColor=white)](#)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
 [![Tests](https://img.shields.io/badge/tests-61%20passed-brightgreen)](#)
-[![Speedup](https://img.shields.io/badge/speedup-269x-success)](#)
+[![Speedup](https://img.shields.io/badge/speedup-557x-success)](#)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
 **A CUDA-accelerated implementation of Eulerian Video Magnification (EVM) that
@@ -13,8 +13,9 @@ breathing, the vibration of machinery — by amplifying sub-pixel color and
 motion variations that the eye cannot detect.**
 
 This project ports the MIT SIGGRAPH 2012 reference implementation from
-MATLAB to raw CUDA C++, achieving **269x speedup** over the Python/NumPy
-baseline while producing bit-for-bit equivalent output (RMSE < 0.01).
+MATLAB to raw CUDA C++, achieving **557x compute-only speedup** (273x full
+pipeline including H2D/D2H transfers) over the Python/NumPy baseline on an
+NVIDIA H100, while producing bit-for-bit equivalent output (RMSE < 0.01).
 
 ---
 
@@ -40,19 +41,30 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 ## Performance
 
-Compute-only (pipeline stages, excluding video I/O), measured on A100-80GB
-and Tesla P100-16GB:
+Measured on an NVIDIA H100-80GB (sm_90) and the Python/NumPy CPU baseline.
+Each stage — including every H2D/D2H transfer — is timed separately with
+`cudaDeviceSynchronize`, median of 5 runs after one warmup. The speedup is
+reported at three inclusion levels because transfers are a comparable cost to
+compute:
 
-| Pipeline | Python CPU | CUDA FP32 | CUDA FP16 | Throughput (FP16) |
-|----------|-----------|-----------|-----------|-------------------|
-| Color (pulse) | 10,350 ms | 72 ms (**144x**) | 84 ms (124x) | 1.08 Gpx/s |
-| Motion (breathing) | 46,255 ms | 209 ms (222x) | 172 ms (**269x**) | 0.88 Gpx/s |
+| Pipeline | Python CPU | GPU compute | + H2D | + H2D + D2H (full) |
+|----------|-----------:|------------:|------:|-------------------:|
+| Color FP32 | 11,194 ms | 9 ms (**1,302x**) | 47 ms (238x) | 119 ms (94x) |
+| Motion FP32 | 44,190 ms | 85 ms (**522x**) | 135 ms (329x) | 162 ms (**273x**) |
+| Motion FP16 | 44,190 ms | 79 ms (**557x**) | 141 ms (314x) | 183 ms (242x) |
 
-At 1080p (1920x1080), a single A100 can process **20 parallel color streams
-or 14 parallel motion streams at 30 FPS** in real time.
+- **compute-only** = kernels (data already on GPU) — the headline speedup.
+- **+ H2D** = realistic cost of feeding the GPU from host memory.
+- **+ H2D + D2H** = full accelerator-offload cost, reading the result back.
+
+On color, transfers dominate total time (the output D2H alone is 66 ms), so
+the realistic full speedup is ~94x. On motion, compute is heavier and the full
+speedup stays ~273x. FP16 is a wash on color (bandwidth-bound transfers) but
+the fastest compute-only motion (557x).
 
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
-the Tesla P100 and T4. Full benchmark breakdown in the
+the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
+multi-GPU (P100/A100/H100) comparison in the
 [optimization writeup](docs/blog_speedup.md).
 
 ## How it works
