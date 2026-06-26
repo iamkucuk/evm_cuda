@@ -114,47 +114,68 @@ The implementation has 32 CUDA kernels across 10 source files:
 
 ## Bottleneck analysis
 
-Performance was measured with stage-by-stage profilers
-(`scripts/profile_color.py`, `scripts/profile_motion.py`,
-`scripts/profile_full_comparison.py`) that bracket each pipeline stage
-with `cudaDeviceSynchronize` and report median of 5 iterations with a
+Performance was measured with the `evm_cuda.benchmark` harness
+(`scripts/profile_full_comparison.py` invokes it), which brackets every
+pipeline stage — including each H2D/D2H transfer — with
+`cudaDeviceSynchronize` and reports the median of 5 iterations after one
 warmup run. All device buffers are pre-allocated so `cudaMalloc` doesn't
-contaminate kernel measurements. Measurements were taken on NVIDIA A100
-an NVIDIA A100-80GB node and a Tesla P100 (Kaggle).
+contaminate kernel measurements.
 
-All numbers below are **compute-only** (pipeline stages only, excluding
-video decode/encode). End-to-end times are ~15x higher because mp4
-encoding via OpenCV dominates.
+The reference GPU for the measurements below is an **NVIDIA H100 80GB HBM3**
+(sm_90). Prior A100 numbers are retained where relevant for comparison.
+Numbers are split into **compute** (GPU kernels) and **transfer** (PCIe
+H2D/D2H), since on the H100 transfers are a comparable cost to compute and
+must be reported separately to be honest about the real pipeline cost.
 
-### Steady-state timings (A100-80GB)
+### Steady-state timings (H100-80GB)
 
-**Color pipeline (face.mp4, 291 frames, 528x592): 72 ms total**
+**Color pipeline (face.mp4, 291 frames, 528x592): 9 ms compute / 119 ms total**
 
-| Stage | Time | Share | What limits it |
-|-------|------|-------|-----------------|
-| color_cvt | 0.9 ms | 1% | Nothing. Trivial per-pixel 3x3 matrix multiply. |
-| blur_dn | 7.9 ms | 11% | Compute. Separable filter, batched across all slices. |
-| D2H + reshape | 3.8 ms | 5% | PCIe bandwidth plus a host-side numpy transpose. |
-| ideal_bandpass | 6.2 ms | 9% | cuFFT compute. Plan is cached. |
-| **upsample + render** | **52.8 ms** | **73%** | See analysis below. |
+| Stage | Time | Kind | What limits it |
+|-------|------|------|-----------------|
+| H2D: clip | 29.9 ms | transfer | PCIe upload of the input clip. |
+| color_cvt | 1.2 ms | compute | Nothing. Trivial per-pixel 3x3 matrix multiply. |
+| blur_dn | 5.6 ms | compute | Separable filter, batched across all slices. |
+| D2H: gdown | 2.8 ms | transfer | Host round-trip for the per-channel FFT. |
+| H2D: sig x3 | 3.9 ms | transfer | Per-channel bandpass input upload. |
+| ideal_bandpass | 1.2 ms | compute | cuFFT compute. Plan is cached. |
+| D2H: filt x3 | 3.0 ms | transfer | Per-channel bandpass output download. |
+| H2D: filt | 4.7 ms | transfer | Gained-filter upload. |
+| render | 0.6 ms | compute | See analysis below. |
+| **D2H: output** | **65.6 ms** | **transfer** | **PCIe download of the output clip — 55% of total.** |
 
-**Motion pipeline (baby.mp4, 291 frames, 960x544, 9 levels): 205 ms total**
+**Motion pipeline (baby.mp4, 291 frames, 960x544, 9 levels): 85 ms compute / 162 ms total**
 
-| Stage | Time | Share | What limits it |
-|-------|------|-------|-----------------|
-| NTSC convert | 1.6 ms | 0.8% | Nothing. Trivial. |
-| lpyr_build | 35.3 ms | 17% | Compute. Separable filter, batched. |
-| temporal IIR | 61.4 ms | 30% | Algorithmic seriality. Each output depends on the previous two. |
-| lpyr_recon | 23.6 ms | 12% | Compute. Separable filter, batched. |
-| **render** | **82.3 ms** | **40%** | See analysis below. |
+| Stage | Time | Kind | What limits it |
+|-------|------|------|-----------------|
+| H2D: clip | 49.9 ms | transfer | PCIe upload of the input clip. |
+| NTSC convert | 2.0 ms | compute | Nothing. Trivial. |
+| lpyr_build | 20.9 ms | compute | Separable filter, batched. |
+| temporal IIR | 46.0 ms | compute | Algorithmic seriality. Each output depends on the previous two. |
+| lpyr_recon | 14.2 ms | compute | Separable filter, batched. |
+| render | 1.5 ms | compute | See analysis below. |
+| **D2H: output** | **27.2 ms** | **transfer** | PCIe download of the output clip. |
 
-### The render stage: underutilized resources
+**The headline change from earlier measurements:** the previous profiler
+lumped the D2H download into the "render" stage, which inflated the H100
+"render" to ~208 ms and made it look slower than A100. With transfers
+separated, the render *kernel* is 0.6–1.5 ms and the dominant non-compute cost
+is the output D2H (PCIe-bound). Transfers now dominate color total time (93%)
+and are a substantial share of motion (48%).
 
-The render stage takes 40 to 73% of GPU time. Each output pixel reads
-~12 bytes from the NTSC frame (3 floats), does about 35 FLOPs of math
-(bilinear interpolation plus NTSC-to-BGR matrix multiply), and writes 3
-bytes. The arithmetic intensity is 2.3 FLOPs per byte, which on the A100
-roofline puts this in the memory-bound regime.
+### The render stage: now a minor cost
+
+After the Level-4 optimization below (multiple-elements-per-thread), the
+render *kernel* dropped to 0.6 ms (color) / 1.5 ms (motion) on the H100 —
+under 1% of compute time. The historical analysis that follows describes the
+pre-optimization state (where render was 40-73% of compute and the prime
+optimization target); it is retained because it explains the access-pattern
+problem and the techniques that solved it.
+
+Each output pixel reads ~12 bytes from the NTSC frame (3 floats), does about
+35 FLOPs of math (bilinear interpolation plus NTSC-to-BGR matrix multiply),
+and writes 3 bytes. The arithmetic intensity is 2.3 FLOPs per byte, which on
+the A100 roofline puts this in the memory-bound regime.
 
 But the kernel achieves only 0.4% of peak memory bandwidth and 0.003%
 of peak FP32 throughput. The GPU has the bandwidth and the compute
@@ -315,19 +336,19 @@ compute output (freed after one `f32_to_f16` conversion) and the band
 output from `lpyr_build` (scatter kernels write float, converted to FP16
 before the temporal filter).
 
-| Stage | A100 FP32 | A100 FP16 | P100 FP32 | P100 FP16 |
-|-------|-----------|-----------|-----------|-----------|
-| NTSC convert | 1.6 ms | 5.6 ms | 16.6 ms | 28.5 ms |
-| lpyr_build | 35.3 ms | 37.0 ms | 402.8 ms | 183.4 ms |
-| temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms |
-| lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms |
-| render | 82.3 ms | 44.7 ms | 8.6 ms | 5.6 ms |
-| **Total** | **209 ms** | **172 ms** | **1,143 ms** | **676 ms** |
+| Stage | A100 FP32 | A100 FP16 | P100 FP32 | P100 FP16 | H100 FP32 | H100 FP16 |
+|-------|-----------|-----------|-----------|-----------|-----------|-----------|
+| NTSC convert | 1.6 ms | 5.6 ms | 16.6 ms | 28.5 ms | 2.0 ms | 4.2 ms |
+| lpyr_build | 35.3 ms | 37.0 ms | 402.8 ms | 183.4 ms | 20.9 ms | 20.5 ms |
+| temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms | 46.0 ms | 41.7 ms |
+| lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms | 14.2 ms | 12.0 ms |
+| render (kernel) | 82.3 ms¹ | 44.7 ms¹ | 8.6 ms | 5.6 ms | 1.5 ms | 0.9 ms |
+| **compute total** | **~205 ms** | **~172 ms** | **1,143 ms** | **676 ms** | **85 ms** | **79 ms** |
 
-The render stage halves on both GPUs because reading `__half` NTSC
-instead of `float` halves the memory traffic. The NTSC convert is slower
-by 3-12 ms (the f32-to-f16 conversion pass), but that is small against
-the render savings.
+¹ A100/P100 render figures are from the pre-transfer-separation profiler
+(which bundled the D2H download into "render"); the H100 render is the
+kernel-only number. Transfer costs are reported separately in the
+[bottleneck analysis](#steady-state-timings-h100-80gb) above.
 
 On the P100, the IIR stage also benefits substantially (608 ms to 366
 ms). The P100 (sm_60) processes `__half2` operations at 2x the FP32 rate
@@ -362,31 +383,48 @@ also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB GPUs
 
 ## Throughput and theoretical limits
 
+### Speedup vs CPU: three tiers (H100-80GB)
+
+The Python/NumPy CPU baseline has no transfers (everything is in host RAM), so
+the meaningful comparison is CPU-compute vs GPU at three inclusion levels:
+
+| Metric | What it counts | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
+|--------|----------------|-----------:|-----------:|------------:|------------:|
+| **CPU baseline** | compute | 11,194 ms | 11,194 ms | 44,190 ms | 44,190 ms |
+| GPU **compute only** | kernels | 8.6 ms | 8.6 ms | 84.6 ms | 79.4 ms |
+| — speedup | | **1,302x** | **1,302x** | **522x** | **557x** |
+| GPU **compute + H2D** | + input upload | 47.1 ms | 46.5 ms | 134.5 ms | 140.7 ms |
+| — speedup | | **238x** | **241x** | **329x** | **314x** |
+| GPU **compute + H2D + D2H** | full pipeline | 118.5 ms | 116.3 ms | 161.7 ms | 182.5 ms |
+| — speedup | | **94x** | **96x** | **273x** | **242x** |
+
+**Reading the tiers:** "compute only" is what a device-resident library call
+costs (data already on the GPU). "compute + H2D" is the realistic cost when
+feeding the GPU from host memory. "compute + H2D + D2H" is the full
+accelerator-offload cost, including reading the result back. The large gap
+between the tiers on color (1,302x → 94x) is because the color pipeline's
+output D2H alone is 66 ms — most of the wall-clock time is PCIe transfer, not
+GPU compute. Motion degrades less (522x → 273x) because its compute is heavier
+relative to its single D2H.
+
+**Note on FP16:** FP16 is a wash on color (same compute, marginally less
+transfer) but a net loss on motion-with-transfers: FP16 motion's larger D2H
+(41.8 ms vs FP32's 27.2 ms) plus slightly higher H2D outweighs the compute
+savings, making total FP16 motion slower than FP32. Compute-only, FP16 motion
+is still the fastest (557x). This is a transfer-cost artifact, not a kernel
+regression.
+
 ### Multi-GPU comparison (compute-only)
 
 | GPU | BW | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |-----|-----|-----------|-----------|------------|------------|
 | **P100** (16GB, sm_60) | 732 GB/s | 138 ms | 120 ms | 1,143 ms | 676 ms |
 | **A100** (80GB, sm_80) | 1,935 GB/s | 72 ms | 84 ms | 209 ms | 172 ms |
+| **H100** (80GB, sm_90) | 3,350 GB/s | 9 ms | 9 ms | 85 ms | 79 ms |
 
-Speedups vs CPU (Python/NumPy):
-
-| GPU | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
-|-----|-----------|-----------|------------|------------|
-| P100 | 75x | 86x | 40x | 68x |
-| A100 | 144x | 124x | 222x | 269x |
-
-**FP16 helps more on the P100 than the A100.** The P100 has 2.6x lower
-memory bandwidth than the A100, so halving the render's memory traffic
-has proportionally more impact. On the A100, the bandwidth headroom is
-large enough that FP16's conversion overhead dominates.
-
-**The P100 IIR surprise.** The temporal IIR stage drops from 608 ms to
-366 ms on the P100 with FP16. This is not just bandwidth. The P100's
-sm_60 architecture processes `__half2` (two half-precision values packed
-in 32 bits) at 2x the FP32 throughput. The sequential IIR loop is
-compute-bound, not memory-bound, so the doubled SIMD rate directly
-translates to faster execution.
+The H100 is the new reference. Its compute-only color is 8x faster than A100
+and 15x faster than P100, reflecting the sm_90 architecture gains plus the
+multiple-elements-per-thread render optimization.
 
 ### Measured throughput
 
@@ -404,29 +442,31 @@ location. FP16 motion on the A100 is faster per pixel than FP32 because
 the render stage's halved memory traffic more than compensates for the
 conversion overhead.
 
-### Realtime performance projection (A100)
+### Realtime performance projection (H100, compute-only)
 
 Scaling linearly by pixel count (the bottleneck stages scale with pixels):
 
 | Resolution | Color FP32 | Motion FP16 | Realtime (30 fps)? |
 |-----------|-------|--------|---------------------|
-| 1080p (1920x1080) | 526 fps | 469 fps | **18x and 16x headroom** |
-| 4K (3840x2160) | 131 fps | 117 fps | **4.4x and 3.9x headroom** |
+| 1080p (1920x1080) | 5,156 fps | 586 fps | **170x and 20x headroom** |
+| 4K (3840x2160) | 1,289 fps | 147 fps | **43x and 4.9x headroom** |
 
-At 1080p, a single A100 can run the full color pipeline at 526 fps and
-FP16 motion at 469 fps. Even at 4K, both pipelines exceed 30 fps with 4x
-margin.
+At 1080p, a single H100 can run the full color pipeline at over 5,000 fps
+(compute-only). These are **GPU compute-only** numbers — the realistic
+throughput including H2D/D2H transfers is ~9-12x lower for color (PCIe-bound)
+and ~2x lower for motion (see the [three-tier speedup table](#speedup-vs-cpu-three-tiers-h100-80gb)).
 
-These are GPU-only numbers. The end-to-end pipeline (including video
-decode and encode) is currently bottlenecked by the CPU codec at about
-1.6s per clip, which limits realtime throughput regardless of GPU speed.
+The end-to-end pipeline (including video decode and encode) is currently
+bottlenecked by the CPU codec, which limits realtime throughput regardless of
+GPU speed.
 
 ### Resource utilization: both underutilized
 
-The render stage takes 40 to 73% of GPU time, yet it achieves only 0.4%
-of peak memory bandwidth and 0.003% of peak FP32 throughput. Neither
-resource is saturated. The GPU has the bandwidth and the compute capacity,
-but the kernel's data access patterns don't let it use either.
+Pre-optimization, the render stage took 40 to 73% of GPU compute yet achieved
+only 0.4% of peak memory bandwidth and 0.003% of peak FP32 throughput — neither
+resource was saturated. The Level-4 multiple-elements-per-thread fix (below)
+addressed the worst of this, but the underlying access-pattern problem
+remains the limiting factor on the bandwidth-bound stages.
 
 Harris's reduction paper shows the same pattern. His seven kernel
 versions all run on the same hardware, process the same data, and produce
@@ -447,9 +487,17 @@ thread does too little independent work to keep the memory pipeline busy.
 
 ## Open optimization surfaces
 
-The render stage (40 to 73% of GPU time) underutilizes both memory
-bandwidth and compute. The remaining headroom is in changing how the
-kernel accesses data, not how much data it processes.
+On the H100 the compute kernel cost is small (9-85 ms); the remaining
+headroom is split between (a) the transfer cost — the output D2H dominates
+color total time and is a large share of motion — and (b) the still-memory-bound
+render/IIR access patterns at the architectural level.
+
+**Output D2H / host round-trips.** The color pipeline does four host
+round-trips (gdown D2H, per-channel sig/filt H2D/D2H, output D2H) totaling
+~110 ms — 93% of its wall clock. The motion pipeline is cleaner (one input
+H2D, one output D2H). Eliminating the color bandpass host round-trip (running
+cuFFT on-device end-to-end) and keeping the result device-resident would cut
+most of this.
 
 FP16 `filt` in color render. The color render kernel reads 12 values per
 pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32 because
