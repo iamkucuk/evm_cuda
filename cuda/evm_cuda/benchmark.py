@@ -103,13 +103,27 @@ class BenchResult:
     def measured(self) -> bool:
         return not self.notes and bool(self.stages)
 
+    @property
+    def transfer_ms(self) -> float:
+        """Sum of H2D/D2H transfer stages (PCIe cost), in ms."""
+        return sum(s.median_ms for s in self.stages
+                   if "H2D" in s.name or "D2H" in s.name)
+
+    @property
+    def compute_ms(self) -> float:
+        """Sum of GPU-compute stages (kernels), in ms."""
+        return sum(s.median_ms for s in self.stages
+                   if "H2D" not in s.name and "D2H" not in s.name)
+
     def __str__(self) -> str:
         head = f"{self.pipeline} {self.precision.upper()} on {self.gpu}"
         if self.notes:
             return f"{head}: {self.notes}"
-        lines = [head, "-" * 52]
+        lines = [head, "-" * 60]
         lines += [str(s) for s in self.stages]
-        lines.append("-" * 52)
+        lines.append("-" * 60)
+        lines.append(f"  {'compute total':<22s} {self.compute_ms:>8.1f} ms")
+        lines.append(f"  {'transfer total':<22s} {self.transfer_ms:>8.1f} ms")
         lines.append(f"  {'TOTAL':<22s} {self.total_ms:>8.1f} ms")
         return "\n".join(lines)
 
@@ -257,25 +271,33 @@ def run(
 def summarize(results: list[BenchResult], *, n_iter: int | None = None) -> str:
     """A one-table FP32-vs-FP16 comparison across both pipelines.
 
-    ``n_iter`` (if given) is reflected in the methodology footnote so the
-    printed iteration count can't drift from how the runs were actually made.
+    Shows compute (GPU kernels) and transfer (H2D/D2H PCIe) costs separately,
+    plus the full total. ``n_iter`` (if given) is reflected in the methodology
+    footnote so the printed iteration count can't drift.
     """
     gpu = next((r.gpu for r in results if r.gpu), "unknown")
     by = {(r.pipeline, r.precision): r for r in results}
+
+    def _cell(r):
+        if r and r.measured:
+            return f"{r.compute_ms:.0f}+{r.transfer_ms:.0f}ms"
+        return r.notes if r else "-"
+
     lines = [f"GPU: {gpu}", "",
-             f"{'Pipeline':<12s} {'FP32':>12s} {'FP16':>12s} {'FP16/FP32':>10s}",
-             "-" * 48]
+             f"{'Pipeline':<10s} {'FP32 (comp+xf)':>16s} {'FP16 (comp+xf)':>16s}",
+             "-" * 46]
     for pipe in ("color", "motion"):
         fp32 = by.get((pipe, "fp32"))
         fp16 = by.get((pipe, "fp16"))
-        t32 = fp32.total_ms if fp32 and fp32.measured else 0
-        t16 = fp16.total_ms if fp16 and fp16.measured else 0
-        s32 = f"{t32:.0f} ms" if t32 else (fp32.notes if fp32 else "-")
-        s16 = f"{t16:.0f} ms" if t16 else (fp16.notes if fp16 else "-")
-        ratio = f"{t16/t32:.2f}x" if t32 and t16 else "-"
-        lines.append(f"{pipe:<12s} {s32:>12s} {s16:>12s} {ratio:>10s}")
+        c32 = fp32.compute_ms if fp32 and fp32.measured else 0
+        c16 = fp16.compute_ms if fp16 and fp16.measured else 0
+        ratio = f"{c16/c32:.2f}x" if c32 and c16 else "-"
+        lines.append(f"{pipe:<10s} {_cell(fp32):>16s} {_cell(fp16):>16s}")
+        lines.append(f"{'  (compute speedup)':<10s} {'':>16s} {ratio:>16s}")
     lines.append("")
+    lines.append("comp+xf = GPU compute + H2D/D2H PCIe transfers; "
+                 "video decode/encode excluded.")
     iter_part = f"median of {n_iter} timed runs" if n_iter else "median of timed runs"
     lines.append(f"Methodology: 1 warmup + {iter_part}; "
-                 "cudaDeviceSynchronize after every stage; video I/O excluded.")
+                 "cudaDeviceSynchronize after every stage.")
     return "\n".join(lines)
