@@ -41,26 +41,32 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 ## Performance
 
-Measured on an NVIDIA H100-80GB (sm_90) and the Python/NumPy CPU baseline.
-Each stage — including every H2D/D2H transfer — is timed separately with
-`cudaDeviceSynchronize`, median of 5 runs after one warmup. The speedup is
-reported at three inclusion levels because transfers are a comparable cost to
-compute:
+Measured on an NVIDIA H100-80GB (sm_90) vs the Python/NumPy CPU baseline. Each
+stage — including every H2D/D2H transfer — is timed separately with
+`cudaDeviceSynchronize`, median of 5 runs after one warmup. We report the
+speedup at three inclusion levels because they answer different questions:
 
-| Pipeline | Python CPU | GPU compute | + H2D | + H2D + D2H (full) |
-|----------|-----------:|------------:|------:|-------------------:|
+| Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
+|----------|-----------:|---------------:|--------------------:|---------------------:|
 | Color FP32 | 11,194 ms | 9 ms (**1,302x**) | 47 ms (238x) | 119 ms (94x) |
-| Motion FP32 | 44,190 ms | 85 ms (**522x**) | 135 ms (329x) | 162 ms (**273x**) |
+| Motion FP32 | 44,190 ms | 85 ms (**522x**) | 135 ms (**329x**) | 162 ms (**273x**) |
 | Motion FP16 | 44,190 ms | 79 ms (**557x**) | 141 ms (314x) | 183 ms (242x) |
 
-- **compute-only** = kernels (data already on GPU) — the headline speedup.
-- **+ H2D** = realistic cost of feeding the GPU from host memory.
-- **+ H2D + D2H** = full accelerator-offload cost, reading the result back.
+- **① Compute only** — the kernel speedup, pure compute capability (data
+  already on the GPU, e.g. part of a larger device-resident graph).
+- **② + H2D** — realistic *inference* cost: the data starts on the host, so you
+  pay the input upload. The output D2H is **deliberately excluded**: in most
+  real uses the amplified signal is *consumed on the GPU* (heart-rate
+  estimation, motion-feature extraction, a downstream neural net) — you don't
+  need the magnified video on the host to extract information from it. This is
+  the cost of an embedded EVM stage in a GPU pipeline.
+- **③ + H2D + D2H** — full standalone "decode → magnify → encode" offload,
+  when you must materialize a viewable video on the host.
 
-On color, transfers dominate total time (the output D2H alone is 66 ms), so
-the realistic full speedup is ~94x. On motion, compute is heavier and the full
-speedup stays ~273x. FP16 is a wash on color (bandwidth-bound transfers) but
-the fastest compute-only motion (557x).
+For motion the inference speedup (②, 329x) is within 1.2x of the compute
+speedup (①, 522x) — the upload is a minor tax and the GPU genuinely does the
+work. For color the output D2H dominates if included (66 ms alone), so ② is the
+honest headline for any real invocation.
 
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
