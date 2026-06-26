@@ -5,7 +5,6 @@
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
 [![GPU: H100/A100/T4/P100](https://img.shields.io/badge/GPU-H100%20%7C%20A100%20%7C%20T4%20%7C%20P100-76B900?logo=nvidia)](#)
 [![Tests](https://img.shields.io/badge/tests-83%20passed-brightgreen)](#)
-[![Speedup](https://img.shields.io/badge/speedup-557x-success)](#)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/colab/evm_cuda_benchmark.ipynb)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
