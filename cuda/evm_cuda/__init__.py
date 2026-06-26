@@ -23,11 +23,19 @@ from __future__ import annotations
 try:
     from . import _evm_cuda  # noqa: F401  (built by CMake into this package dir)
     _have_cuda = True
+    import_error: Exception | None = None
 except ImportError as _e:  # pragma: no cover - exercised on Mac dev host
     _have_cuda = False
-    _import_error = _e
+    import_error = _e
 
-from .runtime import have_cuda, import_error, require_cuda  # noqa: F401
+from .runtime import have_cuda, require_cuda  # noqa: F401
+
+# Set runtime.import_error to the real captured error (it defaults to None).
+# Done after the runtime import completes to avoid the circular import that
+# previously swallowed the error.
+from . import runtime as _runtime  # noqa: E402
+_runtime.import_error = import_error
+del _runtime
 
 
 def __getattr__(name: str):
