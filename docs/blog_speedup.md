@@ -383,36 +383,61 @@ also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB GPUs
 
 ## Throughput and theoretical limits
 
-### Speedup vs CPU: three tiers (H100-80GB)
+### Speedup vs CPU: three scenarios (H100-80GB)
 
-The Python/NumPy CPU baseline has no transfers (everything is in host RAM), so
-the meaningful comparison is CPU-compute vs GPU at three inclusion levels:
+We report the speedup at three inclusion levels. They are not arbitrary
+"with and without transfers" cuts — each answers a distinct real-world
+question about where the amplified signal is consumed.
 
-| Metric | What it counts | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
-|--------|----------------|-----------:|-----------:|------------:|------------:|
-| **CPU baseline** | compute | 11,194 ms | 11,194 ms | 44,190 ms | 44,190 ms |
-| GPU **compute only** | kernels | 8.6 ms | 8.6 ms | 84.6 ms | 79.4 ms |
-| — speedup | | **1,302x** | **1,302x** | **522x** | **557x** |
-| GPU **compute + H2D** | + input upload | 47.1 ms | 46.5 ms | 134.5 ms | 140.7 ms |
-| — speedup | | **238x** | **241x** | **329x** | **314x** |
-| GPU **compute + H2D + D2H** | full pipeline | 118.5 ms | 116.3 ms | 161.7 ms | 182.5 ms |
-| — speedup | | **94x** | **96x** | **273x** | **242x** |
+| Scenario | What it measures | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
+|----------|------------------|-----------:|-----------:|------------:|------------:|
+| **CPU baseline** | Python/NumPy compute | 11,194 ms | 11,194 ms | 44,190 ms | 44,190 ms |
+| **① Compute only** | GPU kernels (no transfers) | 8.6 ms | 8.6 ms | 84.6 ms | 79.4 ms |
+| — *speedup* | | **1,302x** | **1,302x** | **522x** | **557x** |
+| **② Compute + H2D** | + input upload from host | 47.1 ms | 46.5 ms | 134.5 ms | 140.7 ms |
+| — *speedup* | | **238x** | **241x** | **329x** | **314x** |
+| **③ Compute + H2D + D2H** | + output download to host | 118.5 ms | 116.3 ms | 161.7 ms | 182.5 ms |
+| — *speedup* | | **94x** | **96x** | **273x** | **242x** |
 
-**Reading the tiers:** "compute only" is what a device-resident library call
-costs (data already on the GPU). "compute + H2D" is the realistic cost when
-feeding the GPU from host memory. "compute + H2D + D2H" is the full
-accelerator-offload cost, including reading the result back. The large gap
-between the tiers on color (1,302x → 94x) is because the color pipeline's
-output D2H alone is 66 ms — most of the wall-clock time is PCIe transfer, not
-GPU compute. Motion degrades less (522x → 273x) because its compute is heavier
-relative to its single D2H.
+**① Compute-only** isolates the *compute speedup* the kernels deliver. It
+measures how much faster the GPU does the actual magnification math than the
+CPU — pure arithmetic capability, independent of how the data arrives. This
+is the right number when the pipeline is part of a larger device-resident
+graph (data already on the GPU from an upstream kernel).
 
-**Note on FP16:** FP16 is a wash on color (same compute, marginally less
-transfer) but a net loss on motion-with-transfers: FP16 motion's larger D2H
-(41.8 ms vs FP32's 27.2 ms) plus slightly higher H2D outweighs the compute
-savings, making total FP16 motion slower than FP32. Compute-only, FP16 motion
-is still the fastest (557x). This is a transfer-cost artifact, not a kernel
-regression.
+**② Compute + H2D** is the realistic *inference* cost: the data starts on the
+host (a decoded video, a camera frame), so you must pay the input upload before
+the GPU can do anything. Crucially, this tier **deliberately excludes the
+output D2H**. The reason is that in most real uses the amplified signal is
+*consumed on the GPU*, not read back. You do not need the magnified video on
+the host to extract information from it — heart-rate estimation from the
+amplified color signal, motion-feature extraction, or feeding a downstream
+neural network all run as follow-on GPU kernels on the device-resident output.
+The D2H download is only paid if you insist on materializing a viewable video
+on the host, which is a presentation concern, not an analysis one. So ② is the
+number that reflects what an embedded EVM stage in a GPU pipeline actually
+costs.
+
+**③ Compute + H2D + D2H** is the *full accelerator-offload* cost — the literal
+"decode on CPU, magnify on GPU, write an .mp4 on CPU" standalone path, where the
+result must come back to the host. This is the conservative, worst-case number
+for a self-contained tool.
+
+The large gap between ① and ③ on color (1,302x → 94x) is the output D2H: it is
+66 ms on its own — more than the entire compute — because the PCIe download of
+the full-resolution uint8 clip is bandwidth-bound. Motion degrades far less
+(522x → 273x): its compute is heavier relative to its single output download,
+and its D2H is smaller (27 ms). For motion the inference speedup (②, 329x) is
+within 1.2x of the compute speedup (①, 522x) — the GPU genuinely does the work
+and the upload is a minor tax. For color the inference speedup (238x) is the
+more honest headline than compute-only, because the input upload is unavoidable
+in any real invocation.
+
+**On FP16:** compute-only, FP16 motion is the fastest configuration (557x).
+But once transfers are included, FP16 motion's larger D2H (41.8 ms vs FP32's
+27.2 ms) outweighs the compute savings, so FP32 is faster end-to-end. This is a
+transfer-cost artifact, not a kernel regression — the FP16 kernels themselves
+are faster.
 
 ### Multi-GPU comparison (compute-only)
 
