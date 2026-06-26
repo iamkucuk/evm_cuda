@@ -77,37 +77,12 @@ def encode_video(
 ) -> None:
     """Write a ``(T, H, W, 3)`` uint8 BGR frame array to an H.264 MP4.
 
-    This is the single encoder implementation shared by every writer in the
-    package. It encodes directly to H.264 ``yuv420p`` with a faststart
-    (``moov`` before ``mdat``) atom via PyAV, so the output plays in browsers
-    (Colab's HTML5 <video>), VSCode, and QuickTime — not just VLC. Single
-    pass, no temp file, no external binary.
+    Delegates to the shared encoder in ``shared.h264`` (browser/VSCode-playable
+    H.264 ``yuv420p`` +faststart via PyAV) so the CPU baseline and the CUDA port
+    share one encode implementation.
     """
-    import av
-    from fractions import Fraction
-
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    t, h, w, _ = frames_uint8.shape
-
-    # PyAV expects a rational (not float) framerate; limit_denominator maps
-    # common floats like 29.97 to 30000/1001 cleanly.
-    rate = Fraction(fps).limit_denominator(1_000_000)
-
-    with av.open(
-        str(path), mode="w", options={"movflags": "+faststart"}
-    ) as container:
-        stream = container.add_stream(codec, rate=rate)
-        stream.width = w
-        stream.height = h
-        stream.pix_fmt = "yuv420p"
-        stream.options = {"preset": "veryfast", "crf": "18"}
-        for i in range(t):
-            frame = av.VideoFrame.from_ndarray(frames_uint8[i], format="bgr24")
-            for packet in stream.encode(frame):
-                container.mux(packet)
-        for packet in stream.encode():  # flush the encoder
-            container.mux(packet)
+    from shared.h264 import encode_h264
+    encode_h264(frames_uint8, path, fps, codec=codec)
 
 
 def save_video(

@@ -4,10 +4,14 @@ The numpy-in/numpy-out wrappers in `_evm_cuda` each do cudaMalloc + H2D +
 kernel + D2H + cudaFree per call. The profiler (docs/profile_baseline.txt)
 showed >95% of wall time is that overhead.
 
-Design principle: the ONLY host<->device transfers are:
-  1. ONE upload of the input clip at pipeline entry.
-  2. ONE download of the final uint8 output at pipeline exit.
-Everything in between stays on-device via DeviceBuffer pointers.
+Design principle: minimize host<->device transfers.
+  - Motion pipeline: ONE upload at entry + ONE download at exit. Everything
+    in between (NTSC, pyramid, IIR, recon, render) stays on-device.
+  - Color pipeline: same two end-to-end transfers PLUS a small host round-trip
+    in Stage 2b/3 (the per-channel ideal bandpass runs via cuFFT, which needs
+    a host-side reshape). This is the remaining transfer bottleneck; a fully
+    device-resident ideal_bandpass would eliminate it.
+Each transfer is measured as its own stage (see the benchmark module).
 
 This is harder to read than pipelines.py (explicit buffer management) but
 the profiler justifies it: the old per-frame API did ~1773 binding calls;
@@ -117,36 +121,12 @@ def _warmup_gpu_pool_motion(n: int, h: int, w: int, levels: int):
 def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
     """Write a ``(T, H, W, 3)`` uint8 BGR frame array to an H.264 MP4.
 
-    Encodes directly to H.264 ``yuv420p`` with a faststart (``moov`` before
-    ``mdat``) atom via PyAV, so the output plays in browsers (Colab's HTML5
-    <video>), VSCode, and QuickTime — not just VLC. Single pass, no temp file,
-    no external binary.
+    Delegates to the shared encoder in ``shared.h264`` (browser/VSCode-playable
+    H.264 ``yuv420p`` +faststart via PyAV) so the CPU baseline (``evm``) and
+    this CUDA port share one encode implementation.
     """
-    import av
-    from fractions import Fraction
-
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    t, h, w, _ = frames_uint8.shape
-
-    # PyAV expects a rational (not float) framerate; limit_denominator maps
-    # common floats like 29.97 to 30000/1001 cleanly.
-    rate = Fraction(fps).limit_denominator(1_000_000)
-
-    with av.open(
-        str(out_path), mode="w", options={"movflags": "+faststart"}
-    ) as container:
-        stream = container.add_stream("libx264", rate=rate)
-        stream.width = w
-        stream.height = h
-        stream.pix_fmt = "yuv420p"
-        stream.options = {"preset": "veryfast", "crf": "18"}
-        for i in range(t):
-            frame = av.VideoFrame.from_ndarray(frames_uint8[i], format="bgr24")
-            for packet in stream.encode(frame):
-                container.mux(packet)
-        for packet in stream.encode():  # flush the encoder
-            container.mux(packet)
+    from shared.h264 import encode_h264
+    encode_h264(frames_uint8, out_path, fps)
 
 
 # ---------------------------------------------------------------------------

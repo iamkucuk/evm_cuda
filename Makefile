@@ -2,7 +2,7 @@
 #
 # Quick start:
 #   make build          # compile the _evm_cuda.so extension (needs nvcc)
-#   make test           # all 125 tests (needs GPU for CUDA suite)
+#   make test           # all 61 tests (needs GPU for CUDA suite)
 #   make run-color      # magnify pulse on face.mp4
 #   make profile        # CPU vs FP32 vs FP16 comparison
 #   make help           # list all targets
@@ -47,7 +47,7 @@ download: ## Download MIT sample videos + reference outputs
 	python $(SCRIPTS)/download_samples.py face baby --with-references
 
 # --- Tests ------------------------------------------------------------------
-test: ## All tests: Python baseline + CUDA kernels (125 total)
+test: ## All tests: Python baseline + CUDA kernels (61 total)
 	python -m pytest tests/ tests/cuda/ -q
 
 test-baseline: ## Python baseline only (no GPU required, ~40s)

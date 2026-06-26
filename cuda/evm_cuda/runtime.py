@@ -17,15 +17,11 @@ from scipy.signal import butter
 from . import _have_cuda
 
 # The original ImportError captured in __init__.py (None if the import
-# succeeded). Exposed for tests and callers that want to surface why CUDA
-# isn't available.
+# succeeded, or if CUDA is available). __init__ sets this to the real error
+# after importing this module, so callers/tests see the truthful reason CUDA
+# isn't available. (Previously a circular re-import here swallowed the error.)
 have_cuda: bool = _have_cuda
-import_error = None
-try:
-    from .__init__ import _import_error  # type: ignore
-    import_error = _import_error
-except Exception:
-    pass
+import_error: Exception | None = None
 
 
 def require_cuda() -> None:
