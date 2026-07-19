@@ -473,10 +473,10 @@ Scaling linearly by pixel count (the bottleneck stages scale with pixels):
 
 | Resolution | Color FP32 | Motion FP16 | Realtime (30 fps)? |
 |-----------|-------|--------|---------------------|
-| 1080p (1920x1080) | 5,156 fps | 586 fps | **170x and 20x headroom** |
-| 4K (3840x2160) | 1,289 fps | 147 fps | **43x and 4.9x headroom** |
+| 1080p (1920x1080) | 4,874 fps | 928 fps | **160x and 31x headroom** |
+| 4K (3840x2160) | 1,219 fps | 232 fps | **41x and 7.7x headroom** |
 
-At 1080p, a single H100 can run the full color pipeline at over 5,000 fps
+At 1080p, a single H100 can run the full color pipeline at nearly 5,000 fps
 (compute-only). These are **GPU compute-only** numbers — the realistic
 throughput including H2D/D2H transfers is ~9-12x lower for color (PCIe-bound)
 and ~2x lower for motion (see the [three-tier speedup table](#speedup-vs-cpu-three-tiers-h100-80gb)).
@@ -517,19 +517,31 @@ headroom is split between (a) the transfer cost — the output D2H dominates
 color total time and is a large share of motion — and (b) the still-memory-bound
 render/IIR access patterns at the architectural level.
 
-**Output D2H / host round-trips.** The color pipeline does four host
+**Output D2H / host round-trips.** ~~The color pipeline does four host
 round-trips (gdown D2H, per-channel sig/filt H2D/D2H, output D2H) totaling
 ~110 ms — 93% of its wall clock. The motion pipeline is cleaner (one input
 H2D, one output D2H). Eliminating the color bandpass host round-trip (running
 cuFFT on-device end-to-end) and keeping the result device-resident would cut
-most of this.
+most of this.~~ **DONE (feature/kernel-optimization-A):** the color bandpass
+is now fully device-resident. Stage 2b's D2H+reshape plus the surrounding
+per-channel H2D/D2H round-trips are replaced by a single unified cuFFT call
+over `(N=hl*wl*3, T=n)` — cuFFT filters each row independently, so the
+unified batch is numerically identical to 3 per-channel calls. The color
+pipeline now has exactly two end-to-end transfers (input H2D, output D2H);
+only the unavoidable output D2H remains as a transfer-side cost.
 
-FP16 `filt` in color render. The color render kernel reads 12 values per
-pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32 because
-it comes from the FFT output. Converting `filt` to FP16 before render would
-halve that traffic. The filt buffer is small (~1 MB for face.mp4), so the
-conversion is sub-millisecond. This would address the 80% of render traffic
-that FP16 NTSC storage doesn't touch.
+**FP16 `filt` in color render.** ~~The color render kernel reads 12 values
+per pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32
+because it comes from the FFT output. Converting `filt` to FP16 before
+render would halve that traffic. The filt buffer is small (~1 MB for
+face.mp4), so the conversion is sub-millisecond. This would address the 80%
+of render traffic that FP16 NTSC storage doesn't touch.~~ **DONE
+(feature/kernel-optimization-A):** `upsample_add_quantize_kernel` is now
+templated on `FILT_T` (default `float`); the FP16 color pipeline converts
+`filt` to `__half` once after the device-resident bandpass and renders via
+`launch_upsample_add_quantize_f16_f16`. The FP32 path and the FP16-NTSC-only
+path are bit-unchanged. Tolerance: ≤3 ULP per channel vs FP32 (validated in
+`test_batched_upsample_add_quantize_f16_f16_matches_fp32`).
 
 Texture hardware (Harris texture path). `cudaTextureObject_t` with
 `cudaReadModeElementType` provides hardware-managed L1 texture cache with
@@ -546,6 +558,13 @@ bottleneck.
 
 CUDA streams. All kernels use stream 0. Independent stages (e.g., IIR
 filter across levels/channels) could overlap on multiple streams.
+*Investigated and deferred:* the per-level IIR at the finest pyramid level
+(sz ≈ H·W ≈ 500k threads) already saturates the H100's ~270k resident
+threads, so multi-streaming yields ~0% gain where most of the 46 ms IIR cost
+lives. Only the coarser (smaller) levels have spare SM capacity, and the
+absolute time saved there is small — estimated 1–4% end-to-end motion
+speedup. Not worth the binding/API churn (4 new bindings + 6 signature
+changes + per-stream scratch) for that payoff.
 
 For the IIR stage, the algorithmic seriality can only be addressed by
 replacing the recursive filter with a block-parallel formulation (cyclic

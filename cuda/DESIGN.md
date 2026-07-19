@@ -76,8 +76,10 @@ cuda/
 | Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | frame-major output, no scatter needed |
 | Scatter/gather | `lpyr.cu:scatter_subtract/gather/gather_add/scatter` | `(⌈n/256⌉,B) / (256,1,1)` | bridges frame-major scratch ↔ channel-major bands |
 | Scaled transpose | `transpose.cu:nt_to_thwc_kernel` (+scale param) | `(⌈N/256⌉) / (256,1,1)` | folds alpha amplification into transpose |
-| Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel<NTSC_T>` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; templated on NTSC type (float/__half); filt stays float* (FFT output) |
+| Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel<NTSC_T, FILT_T=float>` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; templated on NTSC type (float/__half) AND filt type (default float = FP32 filt from FFT; `__half` = FP16 filt, item 2 of section A) |
 | Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel<NTSC_T>` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion pipeline render; templated on NTSC type |
+| Batched channel gain | `amplify_render.cu:apply_channel_gain_batched_kernel` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | device-resident `filt * [alpha, alpha*chromAtt, alpha*chromAtt]`; replaces host numpy multiply (item 1 of section A) |
+| Planar↔interleaved 3ch | `transpose.cu:to_planar_3ch_kernel / planar_to_interleaved_3ch_kernel` | `(⌈n*HW/256⌉) / (256,1,1)` | layout transforms bridging frame-major planar and (n,H,W,3) interleaved; both batched bindings exposed (item 1 of section A) |
 | cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N); eliminates per-call plan creation |
 | Multiple elements/thread | render + transpose kernels | 4 px/thread via `#pragma unroll` | pipelines independent reads for latency hiding (22% render) |
 | FP16 storage (both pipelines) | All batched kernels templated on In/Out type | `cvt_in`/`cvt_out` in evm_common.cuh | __half storage, FP32 compute, FP64 IIR accumulator unchanged |
@@ -194,9 +196,14 @@ What's on-device vs on-host (batched.py):
 | Fused render (upsample/planar + add + quant) | Device | Eliminates intermediate buffers |
 | Video encode | Host | PyAV (libx264, H.264 yuv420p +faststart) |
 
-The only remaining host round-trip in the color pipeline is Stage 2b
-(downsampled clip D2H + reshape for the per-channel ideal_bandpass). The
-motion pipeline is fully device-resident through Stages A–D.
+The only remaining host round-trips in either pipeline are the two
+end-to-end transfers: the input clip H2D at entry and the uint8 output D2H
+at exit. The color bandpass (Stage 2b) was previously a host round-trip
+(downsampled clip D2H + reshape for the per-channel ideal_bandpass +
+per-channel H2D/D2H + gained-filt H2D = ~110 ms / 93% of color wall clock);
+it is now fully device-resident, replaced by a single unified cuFFT call
+over `(N=hl*wl*3, T=n)` plus the device-resident transpose/gain kernels.
+Both pipelines run device-resident through all intermediate stages.
 
 ## Known divergences from MATLAB (intentional)
 
