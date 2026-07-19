@@ -349,12 +349,15 @@ void launch_add_planar_quantize_f16(const __half* ntsc, const __half* delta_plan
 constexpr int UPSAMPLE_ELEMS = 4;
 
 // Templated on NTSC_T: the NTSC buffer may be stored as float (FP32 pipeline)
-// or __half (FP16 pipeline). The filt buffer stays float — it comes from the
-// FFT output, which is always FP32 regardless of pipeline precision.
-template <typename NTSC_T>
+// or __half (FP16 pipeline). FILT_T (filt buffer type) defaults to float — the
+// FP32 pipeline and the FP16-NTSC-only path both read FP32 filt (the FFT
+// output). The FP16-filt instantiation (item 2 of section A) halves the 12-
+// value-per-pixel filt read traffic, addressing the 80% of render traffic that
+// FP16 NTSC storage does not touch (see docs/blog_speedup.md "FP16 filt").
+template <typename NTSC_T, typename FILT_T = float>
 __global__ void upsample_add_quantize_kernel(
     const NTSC_T* __restrict__ ntsc,  // (M, out_H, out_W, 3)
-    const float* __restrict__ filt,   // (M, in_H, in_W, 3)
+    const FILT_T* __restrict__ filt,  // (M, in_H, in_W, 3)
     unsigned char* __restrict__ bgr_out,  // (M, out_H, out_W, 3)
     int M, int in_H, int in_W, int out_H, int out_W, float chrom_att)
 {
@@ -365,7 +368,7 @@ __global__ void upsample_add_quantize_kernel(
 
     const float scale_x = static_cast<float>(in_W) / out_W;
     const float scale_y = static_cast<float>(in_H) / out_H;
-    const float* f = filt + static_cast<size_t>(m) * in_H * in_W * 3;
+    const FILT_T* f = filt + static_cast<size_t>(m) * in_H * in_W * 3;
     const NTSC_T* n = ntsc + static_cast<size_t>(m) * out_H * out_W * 3;
     unsigned char* o = bgr_out + static_cast<size_t>(m) * out_H * out_W * 3;
     const int px_row = (y * out_W + x0) * 3;
@@ -398,10 +401,10 @@ __global__ void upsample_add_quantize_kernel(
         float i_ = 0.0f;
         float q_ = 0.0f;
         for (int c = 0; c < 3; ++c) {
-            const float v00 = f[(sy0 * in_W + sx0) * 3 + c];
-            const float v01 = f[(sy0 * in_W + sx1) * 3 + c];
-            const float v10 = f[(sy1 * in_W + sx0) * 3 + c];
-            const float v11 = f[(sy1 * in_W + sx1) * 3 + c];
+            const float v00 = cvt_in<FILT_T>(f[(sy0 * in_W + sx0) * 3 + c]);
+            const float v01 = cvt_in<FILT_T>(f[(sy0 * in_W + sx1) * 3 + c]);
+            const float v10 = cvt_in<FILT_T>(f[(sy1 * in_W + sx0) * 3 + c]);
+            const float v11 = cvt_in<FILT_T>(f[(sy1 * in_W + sx1) * 3 + c]);
             float delta = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
             if (c == 0) y_ += delta;
             else if (c == 1) i_ = cvt_in<NTSC_T>(n[px + 1]) + delta * chrom_att;
@@ -439,6 +442,22 @@ void launch_upsample_add_quantize_f16(const __half* ntsc, const float* filt,
     dim3 block(32, 32, 1);
     dim3 grid(div_up(out_W, 32 * UPSAMPLE_ELEMS), div_up(out_H, 32), M);
     upsample_add_quantize_kernel<__half><<<grid, block, 0, stream>>>(
+        ntsc, filt, bgr_out, M, in_H, in_W, out_H, out_W, chrom_att);
+}
+
+// FP16-filt variant (item 2 of section A): NTSC AND filt are __half. The filt
+// buffer is converted to FP16 once after the device-resident bandpass; this
+// halves the 12-value-per-pixel filt read traffic that FP16 NTSC storage
+// doesn't touch (filt accounts for ~80% of render memory traffic per the
+// blog's bottleneck analysis).
+void launch_upsample_add_quantize_f16_f16(const __half* ntsc, const __half* filt,
+                                          unsigned char* bgr_out,
+                                          int M, int in_H, int in_W,
+                                          int out_H, int out_W, float chrom_att,
+                                          cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(out_W, 32 * UPSAMPLE_ELEMS), div_up(out_H, 32), M);
+    upsample_add_quantize_kernel<__half, __half><<<grid, block, 0, stream>>>(
         ntsc, filt, bgr_out, M, in_H, in_W, out_H, out_W, chrom_att);
 }
 
