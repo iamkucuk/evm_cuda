@@ -103,6 +103,12 @@ void launch_upsample_add_quantize_f16(const __half* ntsc, const float* filt,
                                       int M, int in_H, int in_W,
                                       int out_H, int out_W, float chrom_att,
                                       cudaStream_t stream);
+// FP16-filt variant: NTSC and filt both __half (item 2 of section A).
+void launch_upsample_add_quantize_f16_f16(const __half* ntsc, const __half* filt,
+                                          unsigned char* bgr_out,
+                                          int M, int in_H, int in_W,
+                                          int out_H, int out_W, float chrom_att,
+                                          cudaStream_t stream);
 
 // ideal_bandpass.cu — self-contained cuFFT fwd+mask+inv pipeline.
 void launch_ideal_bandpass(
@@ -1418,6 +1424,21 @@ PYBIND11_MODULE(_evm_cuda, m) {
             evm::launch_upsample_add_quantize_f16(
                 reinterpret_cast<const __half*>(d_ntsc),
                 reinterpret_cast<const float*>(d_filt),
+                reinterpret_cast<unsigned char*>(d_bgr),
+                M, in_H, in_W, out_H, out_W, chrom_att, 0);
+        }, py::arg("d_ntsc"), py::arg("d_filt"), py::arg("d_bgr"),
+           py::arg("M"), py::arg("in_H"), py::arg("in_W"),
+           py::arg("out_H"), py::arg("out_W"), py::arg("chrom_att"));
+
+    // --- FP16-filt variant (item 2): NTSC AND filt are __half --------------
+    // The caller converts filt to FP16 once after the device-resident bandpass
+    // (item 1); this kernel halves the 12-value-per-pixel filt read traffic.
+    m.def("batched_upsample_add_quantize_f16_f16",
+        [](uintptr_t d_ntsc, uintptr_t d_filt, uintptr_t d_bgr,
+           int M, int in_H, int in_W, int out_H, int out_W, float chrom_att) {
+            evm::launch_upsample_add_quantize_f16_f16(
+                reinterpret_cast<const __half*>(d_ntsc),
+                reinterpret_cast<const __half*>(d_filt),
                 reinterpret_cast<unsigned char*>(d_bgr),
                 M, in_H, in_W, out_H, out_W, chrom_att, 0);
         }, py::arg("d_ntsc"), py::arg("d_filt"), py::arg("d_bgr"),

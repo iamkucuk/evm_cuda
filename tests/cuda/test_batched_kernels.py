@@ -345,3 +345,48 @@ def test_batched_upsample_add_quantize_f16_matches_fp32():
     # matrix multiply can flip the final rintf by 1).
     diff = np.abs(out.astype(np.int16) - ref.astype(np.int16))
     assert diff.max() <= 2, f"FP16 vs FP32 output differs by {diff.max()} (max allowed: 2)"
+
+
+@skip_no_cuda
+def test_batched_upsample_add_quantize_f16_f16_matches_fp32():
+    """FP16-filt variant: NTSC and filt both __half, must match FP32 output.
+
+    Item 2 of section A: the color render kernel reads 12 filt values per
+    output pixel (4 bilinear taps x 3 channels), which stay FP32 in the
+    existing FP16 path. This test exercises the FP16-filt path that halves
+    that traffic. Tolerance is 3 ULP — filt values are small post-bandpass
+    (~1e-3 magnitude), so the FP16 round-trip in the bilinear interpolation
+    can compound to a slightly larger u8 flip than the NTSC-only FP16 path.
+    """
+    rng = np.random.default_rng(13579)
+    n = 3
+    in_h, in_w = 8, 6
+    out_h, out_w = 16, 12
+
+    # Realistic magnitudes: NTSC in [0,1], filt is post-bandpass (small).
+    ntsc_f32 = rng.random((n, out_h, out_w, 3)).astype(np.float32)
+    filt = (rng.random((n, in_h, in_w, 3)).astype(np.float32) - 0.5) * 0.01
+
+    # FP32 reference.
+    d_ntsc_f32 = DeviceBuffer.from_array(np.ascontiguousarray(ntsc_f32))
+    d_filt_f32 = DeviceBuffer.from_array(np.ascontiguousarray(filt))
+    d_out_f32 = DeviceBuffer(n * out_h * out_w * 3)
+    _evm_cuda.batched_upsample_add_quantize(
+        d_ntsc_f32.ptr, d_filt_f32.ptr, d_out_f32.ptr,
+        n, in_h, in_w, out_h, out_w, 1.0)
+    ref = d_out_f32.download_u8(n * out_h * out_w * 3).reshape(n, out_h, out_w, 3)
+
+    # FP16 path: NTSC AND filt stored as __half.
+    ntsc_f16 = np.ascontiguousarray(ntsc_f32.astype(np.float16))
+    filt_f16 = np.ascontiguousarray(filt.astype(np.float16))
+    d_ntsc_f16 = DeviceBuffer.from_array(ntsc_f16)
+    d_filt_f16 = DeviceBuffer.from_array(filt_f16)
+    d_out = DeviceBuffer(n * out_h * out_w * 3)
+    _evm_cuda.batched_upsample_add_quantize_f16_f16(
+        d_ntsc_f16.ptr, d_filt_f16.ptr, d_out.ptr,
+        n, in_h, in_w, out_h, out_w, 1.0)
+    out = d_out.download_u8(n * out_h * out_w * 3).reshape(n, out_h, out_w, 3)
+
+    diff = np.abs(out.astype(np.int16) - ref.astype(np.int16))
+    assert diff.max() <= 3, \
+        f"FP16-filt vs FP32 output differs by {diff.max()} (max allowed: 3)"
