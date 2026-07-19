@@ -76,6 +76,10 @@ void launch_butter_bandpass(const float* in, float* out, int T, int N,
 void launch_apply_channel_gain(float* sig, int H, int W,
                                float g0, float g1, float g2,
                                cudaStream_t stream);
+// Batched variant: n frames at once via grid.z (device-resident color bandpass).
+void launch_apply_channel_gain_batched(float* sig, int n, int H, int W,
+                                       float g0, float g1, float g2,
+                                       cudaStream_t stream);
 void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,
                             cudaStream_t stream);
 void launch_scale_inplace(float* data, int n, float scale, cudaStream_t stream);
@@ -809,6 +813,18 @@ PYBIND11_MODULE(_evm_cuda, m) {
         }, py::arg("d_in"), py::arg("d_out"), py::arg("n"),
            py::arg("H"), py::arg("W"));
 
+    // --- inverse: (n*3,H,W) -> (n,H,W,3) -----------------------------------
+    // Wraps the existing planar_to_interleaved_3ch launcher (transpose.cu).
+    // Used by the device-resident color bandpass to feed the (T,H,W,C) <-> (N,T)
+    // transpose that the batched ideal_bandpass runs on.
+    m.def("batched_planar_to_interleaved_3ch",
+        [](uintptr_t d_in, uintptr_t d_out, int n, int H, int W) {
+            evm::launch_planar_to_interleaved_3ch(
+                reinterpret_cast<const float*>(d_in),
+                reinterpret_cast<float*>(d_out), n, H, W, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("n"),
+           py::arg("H"), py::arg("W"));
+
     // --- batched blur_dn over M=n*3 contiguous planar slices ----------------
     // Processes all M slices simultaneously through the level loop using the
     // batched spatial kernels (grid.z = M). Collapses the old M-iteration host
@@ -1350,6 +1366,17 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 n, H, W, chrom_att, 0);
         }, py::arg("d_ntsc"), py::arg("d_delta_planar"), py::arg("d_bgr"),
            py::arg("n"), py::arg("H"), py::arg("W"), py::arg("chrom_att"));
+
+    // Per-channel gain over (n,H,W,3): Y *= g0, I *= g1, Q *= g2. In-place.
+    // Replaces the host-side `filt * gain` numpy multiply in the color pipeline
+    // so the bandpass result stays device-resident through to the render stage.
+    m.def("batched_apply_channel_gain",
+        [](uintptr_t d_sig, int n, int H, int W,
+           float g0, float g1, float g2) {
+            evm::launch_apply_channel_gain_batched(
+                reinterpret_cast<float*>(d_sig), n, H, W, g0, g1, g2, 0);
+        }, py::arg("d_sig"), py::arg("n"), py::arg("H"), py::arg("W"),
+           py::arg("g0"), py::arg("g1"), py::arg("g2"));
 
     // --- batched bilinear upsample: M frames (in_H,in_W,3) -> (out_H,out_W,3) -
     // Replaces host-side cv2.resize(INTER_LINEAR) in the color pipeline render

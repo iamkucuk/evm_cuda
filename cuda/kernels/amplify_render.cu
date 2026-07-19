@@ -180,6 +180,34 @@ void launch_apply_channel_gain(float* sig, int H, int W,
     apply_channel_gain_kernel<<<grid, block, 0, stream>>>(sig, H, W, g0, g1, g2);
 }
 
+// Batched variant: n frames at once via grid.z. Per-thread math is identical
+// to the single-frame kernel; each frame is an independent (H,W,3) plane.
+// Used by the device-resident color bandpass to fold `filt * gain` into a
+// single launch instead of a Python loop or host-side numpy multiply.
+// Grid: (ceil(W/32), ceil(H/32), n)  Block: (32, 32, 1)
+__global__ void apply_channel_gain_batched_kernel(
+    float* __restrict__ sig, int n, int H, int W,
+    float g0, float g1, float g2)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int f = blockIdx.z;
+    if (x >= W || y >= H || f >= n) return;
+    const int px = (static_cast<size_t>(f) * H * W + y * W + x) * 3;
+    sig[px + 0] *= g0;
+    sig[px + 1] *= g1;
+    sig[px + 2] *= g2;
+}
+
+void launch_apply_channel_gain_batched(float* sig, int n, int H, int W,
+                                       float g0, float g1, float g2,
+                                       cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(W, 32), div_up(H, 32), n);
+    apply_channel_gain_batched_kernel<<<grid, block, 0, stream>>>(
+        sig, n, H, W, g0, g1, g2);
+}
+
 void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,
                             cudaStream_t stream) {
     dim3 block(32, 32, 1);

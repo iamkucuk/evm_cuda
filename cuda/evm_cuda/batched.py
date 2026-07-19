@@ -7,10 +7,10 @@ showed >95% of wall time is that overhead.
 Design principle: minimize host<->device transfers.
   - Motion pipeline: ONE upload at entry + ONE download at exit. Everything
     in between (NTSC, pyramid, IIR, recon, render) stays on-device.
-  - Color pipeline: same two end-to-end transfers PLUS a small host round-trip
-    in Stage 2b/3 (the per-channel ideal bandpass runs via cuFFT, which needs
-    a host-side reshape). This is the remaining transfer bottleneck; a fully
-    device-resident ideal_bandpass would eliminate it.
+  - Color pipeline: ONE upload at entry + ONE download at exit. The bandpass
+    (Stage 2b) is fully device-resident — the per-channel ideal filter runs as
+    a single unified cuFFT batch over (N=hl*wl*3, T=n), so no host reshape or
+    intermediate transfer is needed.
 Each transfer is measured as its own stage (see the benchmark module).
 
 This is harder to read than pipelines.py (explicit buffer management) but
@@ -197,46 +197,30 @@ def magnify_color_gdown_ideal(
         return d_gdown_planar
     d_gdown_planar = _stage("2) blur_dn", _s2)
 
-    # Stage 2b: D2H + reshape (host round-trip for the per-channel FFT bandpass).
-    def _s2b():
-        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
-        return np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
-    gdown = _stage("2b) D2H: gdown", _s2b)
-
-    # --- Stage 3a: H2D per-channel bandpass signals -------------------------
-    def _s3a():
-        sigs = [np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
-                for c in range(3)]
-        d_sigs = [DeviceBuffer.from_array(s) for s in sigs]
-        return d_sigs
-    d_sigs = _stage("3a) H2D: sig x3", _s3a)
-
-    # --- Stage 3b: ideal bandpass per channel (batched over all pixels) ------
-    def _s3b():
-        d_outs = []
-        for c in range(3):
-            d_out = DeviceBuffer(n * hl * wl * 4)
-            _evm_cuda.batched_ideal_bandpass(
-                d_sigs[c].ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
-            d_outs.append(d_out)
-        return d_outs
-    d_outs = _stage("3b) ideal_bandpass", _s3b)
-
-    # --- Stage 3c: D2H per-channel bandpass outputs -------------------------
-    def _s3c():
-        filt = np.empty_like(gdown)
-        for c in range(3):
-            filt[..., c] = d_outs[c].download_f32(n * hl * wl).reshape(
-                hl * wl, n).T.reshape(n, hl, wl)
-        return filt
-    filt = _stage("3c) D2H: filt x3", _s3c)
-
-    # --- Stage 4a: H2D gained filter ----------------------------------------
-    gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
-                    dtype=np.float32)
-    def _s4a():
-        return DeviceBuffer.from_array(np.ascontiguousarray(filt * gain))
-    d_filt = _stage("4a) H2D: filt", _s4a)
+    # --- Stages 2b-4a: fully device-resident color bandpass -----------------
+    # Collapses 4 host round-trips (D2H gdown, 3x H2D sig, 3x D2H filt, H2D
+    # gained filt) + 4 numpy reshapes/transposes into ZERO host transfers.
+    # The per-channel ideal_bandpass is replaced by a single unified cuFFT call
+    # over (N = hl*wl*3, T = n): cuFFT filters each row independently, so the
+    # unified batch is numerically identical to 3 per-channel calls.
+    N_band = hl * wl * 3  # unified batch covers all 3 channels
+    def _s_bandpass():
+        d_gdown_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
+        _evm_cuda.batched_planar_to_interleaved_3ch(
+            d_gdown_planar.ptr, d_gdown_thwc.ptr, n, hl, wl)
+        d_sig = DeviceBuffer(N_band * n * 4)
+        _evm_cuda.batched_thwc_to_nt(d_gdown_thwc.ptr, d_sig.ptr, n, N_band)
+        d_filt = DeviceBuffer(N_band * n * 4)
+        _evm_cuda.batched_ideal_bandpass(
+            d_sig.ptr, d_filt.ptr, n, N_band, fl, fh, sampling_rate)
+        d_filt_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
+        _evm_cuda.batched_nt_to_thwc_scaled(d_filt.ptr, d_filt_thwc.ptr, n, N_band, 1.0)
+        gain_y = alpha
+        gain_iq = alpha * chrom_attenuation
+        _evm_cuda.batched_apply_channel_gain(
+            d_filt_thwc.ptr, n, hl, wl, gain_y, gain_iq, gain_iq)
+        return d_filt_thwc
+    d_filt = _stage("2b) bandpass (device-resident)", _s_bandpass)
 
     # --- Stage 4b: fused upsample + add + quantize (kernel only) ------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
@@ -320,43 +304,27 @@ def magnify_color_gdown_ideal_fp16(
     d_gdown_planar = _stage("2) blur_dn", _s2)
 
     # Stage 2b: D2H + reshape (host round-trip for the per-channel FFT bandpass).
-    def _s2b():
-        gdown = d_gdown_planar.download_f32(n * 3 * hl * wl).reshape(n, 3, hl, wl)
-        return np.ascontiguousarray(gdown.transpose(0, 2, 3, 1))
-    gdown = _stage("2b) D2H: gdown", _s2b)
-
-    # --- Stage 3a: H2D per-channel bandpass signals -------------------------
-    def _s3a():
-        sigs = [np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)
-                for c in range(3)]
-        return [DeviceBuffer.from_array(s) for s in sigs]
-    d_sigs = _stage("3a) H2D: sig x3", _s3a)
-
-    # --- Stage 3b: ideal bandpass per channel (FP32, same as FP32 pipeline) ---
-    def _s3b():
-        d_outs = []
-        for c in range(3):
-            d_out = DeviceBuffer(n * hl * wl * 4)
-            _evm_cuda.batched_ideal_bandpass(
-                d_sigs[c].ptr, d_out.ptr, n, hl * wl, fl, fh, sampling_rate)
-            d_outs.append(d_out)
-        return d_outs
-    d_outs = _stage("3b) ideal_bandpass", _s3b)
-
-    # --- Stage 3c: D2H per-channel bandpass outputs -------------------------
-    def _s3c():
-        filt = np.empty_like(gdown)
-        for c in range(3):
-            filt[..., c] = d_outs[c].download_f32(n * hl * wl).reshape(
-                hl * wl, n).T.reshape(n, hl, wl)
-        return filt
-    filt = _stage("3c) D2H: filt x3", _s3c)
-
-    # --- Stage 4a: H2D gained filter ----------------------------------------
-    gain = np.array([alpha, alpha * chrom_attenuation, alpha * chrom_attenuation],
-                    dtype=np.float32)
-    d_filt = _stage("4a) H2D: filt",
-                    lambda: DeviceBuffer.from_array(np.ascontiguousarray(filt * gain)))
+    # Identical device-resident rewrite as the FP32 pipeline above — the bandpass
+    # itself runs in FP32 regardless of pipeline precision, so the same bindings
+    # apply. Only the NTSC buffer (read by render) is __half here.
+    N_band = hl * wl * 3
+    def _s_bandpass():
+        d_gdown_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
+        _evm_cuda.batched_planar_to_interleaved_3ch(
+            d_gdown_planar.ptr, d_gdown_thwc.ptr, n, hl, wl)
+        d_sig = DeviceBuffer(N_band * n * 4)
+        _evm_cuda.batched_thwc_to_nt(d_gdown_thwc.ptr, d_sig.ptr, n, N_band)
+        d_filt = DeviceBuffer(N_band * n * 4)
+        _evm_cuda.batched_ideal_bandpass(
+            d_sig.ptr, d_filt.ptr, n, N_band, fl, fh, sampling_rate)
+        d_filt_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
+        _evm_cuda.batched_nt_to_thwc_scaled(d_filt.ptr, d_filt_thwc.ptr, n, N_band, 1.0)
+        gain_y = alpha
+        gain_iq = alpha * chrom_attenuation
+        _evm_cuda.batched_apply_channel_gain(
+            d_filt_thwc.ptr, n, hl, wl, gain_y, gain_iq, gain_iq)
+        return d_filt_thwc
+    d_filt = _stage("2b) bandpass (device-resident)", _s_bandpass)
 
     # --- Stage 4b: FP16 render (reads __half NTSC + FP32 filt) ---------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
