@@ -473,10 +473,10 @@ Scaling linearly by pixel count (the bottleneck stages scale with pixels):
 
 | Resolution | Color FP32 | Motion FP16 | Realtime (30 fps)? |
 |-----------|-------|--------|---------------------|
-| 1080p (1920x1080) | 4,874 fps | 928 fps | **160x and 31x headroom** |
-| 4K (3840x2160) | 1,219 fps | 232 fps | **41x and 7.7x headroom** |
+| 1080p (1920x1080) | 5,156 fps | 586 fps | **170x and 20x headroom** |
+| 4K (3840x2160) | 1,289 fps | 147 fps | **43x and 4.9x headroom** |
 
-At 1080p, a single H100 can run the full color pipeline at nearly 5,000 fps
+At 1080p, a single H100 can run the full color pipeline at over 5,000 fps
 (compute-only). These are **GPU compute-only** numbers — the realistic
 throughput including H2D/D2H transfers is ~9-12x lower for color (PCIe-bound)
 and ~2x lower for motion (see the [three-tier speedup table](#speedup-vs-cpu-three-tiers-h100-80gb)).

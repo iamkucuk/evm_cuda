@@ -196,14 +196,13 @@ What's on-device vs on-host (batched.py):
 | Fused render (upsample/planar + add + quant) | Device | Eliminates intermediate buffers |
 | Video encode | Host | PyAV (libx264, H.264 yuv420p +faststart) |
 
-The only remaining host round-trips in either pipeline are the two
-end-to-end transfers: the input clip H2D at entry and the uint8 output D2H
-at exit. The color bandpass (Stage 2b) was previously a host round-trip
-(downsampled clip D2H + reshape for the per-channel ideal_bandpass +
-per-channel H2D/D2H + gained-filt H2D = ~110 ms / 93% of color wall clock);
-it is now fully device-resident, replaced by a single unified cuFFT call
-over `(N=hl*wl*3, T=n)` plus the device-resident transpose/gain kernels.
-Both pipelines run device-resident through all intermediate stages.
+The color bandpass (Stage 2b) is fully device-resident: the previous host
+round-trip (downsampled clip D2H + reshape for the per-channel
+ideal_bandpass) is replaced by a single unified cuFFT call over
+`(N=hl*wl*3, T=n)` plus device-resident transpose/gain kernels. Both
+pipelines now run device-resident through all intermediate stages; the only
+remaining host round-trips are the input clip H2D at entry and the uint8
+output D2H at exit.
 
 ## Known divergences from MATLAB (intentional)
 
