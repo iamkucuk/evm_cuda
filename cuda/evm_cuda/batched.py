@@ -326,18 +326,11 @@ def magnify_color_gdown_ideal_fp16(
         return d_filt_thwc
     d_filt = _stage("2b) bandpass (device-resident)", _s_bandpass)
 
-    # --- Stage 4b: FP16 render (reads __half NTSC + __half filt) -------------
-    # Item 2: convert filt to FP16 once (device-resident) and use the f16_f16
-    # render variant, halving the 12-value-per-pixel filt read traffic. The
-    # conversion is sub-millisecond (filt is small — hl*wl*3 floats, ~1 MB for
-    # face.mp4) and addresses the ~80% of render traffic that FP16 NTSC storage
-    # alone leaves untouched (see docs/blog_speedup.md "FP16 filt in color render").
+    # --- Stage 4b: FP16 render (reads __half NTSC + FP32 filt) ---------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _s4b():
-        d_filt_f16 = DeviceBuffer(n * hl * wl * 3 * 2)
-        _evm_cuda.f32_to_f16(d_filt.ptr, d_filt_f16.ptr, n * hl * wl * 3)
-        _evm_cuda.batched_upsample_add_quantize_f16_f16(
-            d_ntsc.ptr, d_filt_f16.ptr, d_out_u8.ptr,
+        _evm_cuda.batched_upsample_add_quantize_f16(
+            d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
             n, hl, wl, h, w, 1.0)
         return None
     _stage("4b) render", _s4b)
