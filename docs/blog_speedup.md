@@ -530,18 +530,20 @@ unified batch is numerically identical to 3 per-channel calls. The color
 pipeline now has exactly two end-to-end transfers (input H2D, output D2H);
 only the unavoidable output D2H remains as a transfer-side cost.
 
-**FP16 `filt` in color render.** ~~The color render kernel reads 12 values
+**FP16 `filt` in color render.** The color render kernel reads 12 values
 per pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32
 because it comes from the FFT output. Converting `filt` to FP16 before
 render would halve that traffic. The filt buffer is small (~1 MB for
 face.mp4), so the conversion is sub-millisecond. This would address the 80%
-of render traffic that FP16 NTSC storage doesn't touch.~~ **DONE
-(feature/kernel-optimization-A):** `upsample_add_quantize_kernel` is now
-templated on `FILT_T` (default `float`); the FP16 color pipeline converts
-`filt` to `__half` once after the device-resident bandpass and renders via
-`launch_upsample_add_quantize_f16_f16`. The FP32 path and the FP16-NTSC-only
-path are bit-unchanged. Tolerance: ≤3 ULP per channel vs FP32 (validated in
-`test_batched_upsample_add_quantize_f16_f16_matches_fp32`).
+of render traffic that FP16 NTSC storage doesn't touch. *Investigated and
+reverted:* on a Tesla P100 (sm_60), the FP16-filt render regressed from
+4.8 ms to 10.8 ms (+125%) — the per-pixel `cvt_in<__half>` and the extra
+`f32_to_f16` conversion kernel cost more than the bandwidth saved on this
+small buffer. The blog's "P100 FP16 = 13% faster" prediction was about
+FP16 *NTSC* storage (already in main), not FP16 filt — that extrapolation
+was wrong. The templated `FILT_T` infrastructure is preserved in the kernel
+(defaults to `float`); the FP16 color pipeline keeps reading FP32 filt. May
+be worth revisiting on sm_80+ where FP16 throughput is genuinely higher.
 
 Texture hardware (Harris texture path). `cudaTextureObject_t` with
 `cudaReadModeElementType` provides hardware-managed L1 texture cache with
