@@ -535,18 +535,22 @@ per pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32
 because it comes from the FFT output. Converting `filt` to FP16 before
 render would halve that traffic. The filt buffer is small (~1 MB for
 face.mp4), so the conversion is sub-millisecond. This would address the 80%
-of render traffic that FP16 NTSC storage doesn't touch. *Reapplied on
-feature/kernel-optimization-A; under measurement:* on Tesla P100 (sm_60)
-the FP16-filt render regressed from 4.8 ms to 10.8 ms (+125%) — the per-pixel
-`cvt_in<__half>` and the extra `f32_to_f16` conversion kernel cost more
-than the bandwidth saved on this small buffer. The blog's "P100 FP16 = 13%
-faster" prediction was about FP16 *NTSC* storage (already in main), not
-FP16 filt — that extrapolation was wrong for sm_60. H100 (sm_90) has
-different FP16 characteristics (faster conversion, larger L2, different
-roofline); the verdict on whether item 2 helps there is pending the H100
-measurement. The templated `FILT_T` infrastructure defaults to `float`
-(FP32 path unaffected); only the FP16 color pipeline uses the `__half`
-filt instantiation.
+of render traffic that FP16 NTSC storage doesn't touch. *Reverted (final)
+after measurement on two architectures:* on Tesla P100 (sm_60) the FP16-filt
+render regressed from 4.8 ms to 10.8 ms (+125%); on H100 (sm_90) it was
+neutral (0.6 → 0.7 ms — within noise, no measurable benefit). Root cause:
+the 12 per-pixel `__half→float` conversions in the bilinear tap loop are
+scalar and strided, so they cannot vectorize into `__half2` SIMD loads.
+On sm_60, scalar `__half` operations run at ½ FP32 rate (only packed
+`__half2` gets the 2× advantage), so the conversion overhead dominates the
+bandwidth saving on the small (~5 MB) filt buffer. On sm_90, the
+conversions are full-rate native instructions, so they're nearly free — but
+then there's no win either, because the buffer is too small for the
+bandwidth saving to register at 3350 GB/s. The blog's "P100 FP16 = 13%
+faster" prediction held for FP16 *NTSC* storage (large contiguous buffer,
+SIMD-friendly) but did not extrapolate to filt (small buffer, strided
+access). The templated `FILT_T` infrastructure is preserved in the kernel
+(defaults to `float`); the FP16 color pipeline keeps reading FP32 filt.
 
 Texture hardware (Harris texture path). `cudaTextureObject_t` with
 `cudaReadModeElementType` provides hardware-managed L1 texture cache with
