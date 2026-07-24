@@ -282,8 +282,7 @@
             Code
         </a>
         <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md" class="btn-secondary">Writeup</a>
-        <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_layout_and_alloc.md" class="btn-secondary">Layout &amp; alloc</a>
-        <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_pool_and_spatial.md" class="btn-secondary">Pool &amp; spatial</a>
+        <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md" class="btn-secondary">Further optimizations</a>
         <a href="http://people.csail.mit.edu/mrub/vidmag/" class="btn-secondary">Original Paper</a>
     </div>
 </div>
@@ -473,13 +472,11 @@ PCIe-bound. The end-to-end pipeline is currently capped by the CPU video codec.
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
 multi-GPU (P100/A100/H100) comparison in the
-<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>;
-RTX 3090 layout/sticky pass in
-<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_layout_and_alloc.md">layout &amp; alloc</a>
-(934&rarr;377&nbsp;ms); pool + smem-down pass in
-<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_pool_and_spatial.md">pool &amp; spatial</a>
-(~407&rarr;~100&nbsp;ms compute). Step tables:
-<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/progressive_gains.md">progressive_gains</a>.
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>.
+Further mid-pipeline work (TN IIR, sticky scratch, free-list pool, smem down)
+on RTX 3090 &mdash; motion compute ~934&rarr;~100&nbsp;ms (~9&times;) &mdash; in
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md">further optimizations</a>
+(<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/progressive_gains.md">step tables</a>).
 </p>
 
 <!-- ===================== ARCHITECTURE ===================== -->

@@ -86,12 +86,11 @@ or ~30 motion streams — while the full decode→magnify→encode path (③) dr
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
 multi-GPU (P100/A100/H100) comparison in the
-[optimization writeup](docs/blog_speedup.md); a follow-up on coalesced IIR
-layout and sticky scratch (RTX 3090 motion compute **934 → 377 ms**) in
-[layout & alloc](docs/blog_layout_and_alloc.md); and a third pass on the
-DeviceBuffer free-list pool + channel-outer layout + smem downsample
-(**~407 → ~100 ms** compute on the same 3090 baseline series) in
-[pool & spatial](docs/blog_pool_and_spatial.md).
+[optimization writeup](docs/blog_speedup.md). Further mid-pipeline work
+(TN IIR, sticky scratch, free-list pool, smem downsample) on an RTX 3090 —
+motion compute **~934 → ~100 ms** (~9×) — in
+[further optimizations](docs/blog_further_optimizations.md)
+([step tables](docs/progressive_gains.md)).
 
 ## How it works
 
@@ -174,12 +173,11 @@ evm_cuda/
 │   ├── bindings.cpp      # pybind11 + DeviceMemPool + sticky scratch
 │   └── DESIGN.md         # kernel map, tolerances, production path
 ├── docs/
-│   ├── blog_speedup.md           # first optimization writeup
-│   ├── blog_layout_and_alloc.md  # TN IIR + sticky scratch
-│   ├── blog_pool_and_spatial.md  # pool + channel-outer + smem down
-│   ├── progressive_gains.md      # step tables (third pass)
-│   ├── bound_analysis.md         # bound/probe evidence log
-│   └── img/                      # demo images
+│   ├── blog_speedup.md                 # first optimization writeup
+│   ├── blog_further_optimizations.md   # layout, pool, smem (unified)
+│   ├── progressive_gains.md            # step tables for further-opt post
+│   ├── bound_analysis.md               # bound/probe evidence log
+│   └── img/                            # demo images
 ├── scripts/              # CLI + profilers
 ├── tests/                # 25 Python + 36 CUDA test functions (83 cases)
 ├── kaggle/               # free-GPU benchmark harness

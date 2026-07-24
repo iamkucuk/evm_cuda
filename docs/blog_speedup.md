@@ -579,20 +579,14 @@ For the IIR stage, an isolation-probe study (2026-07) showed the dominant cost
 was **not** FP64 math or peak HBM saturation but **warp-uncoalesced `(N,T)`
 access plus a redundant transpose sandwich** around a filter whose bands were
 already `(T,N)`. Production now runs coalesced `iir_bandpass_tn` in place
-(no `thwc_to_nt` / `nt_to_thwc` in Stage C). A second win was a **sticky
-scratch pool** for lpyr build/recon (multi‑GB `cudaMalloc` thrash). On an
-RTX 3090 (same node, same harness, sequential before→after), motion FP32
-compute fell **934 → 377 ms**. Full writeup:
-[`docs/blog_layout_and_alloc.md`](blog_layout_and_alloc.md). Evidence log:
-[`docs/bound_analysis.md`](bound_analysis.md).
-
-A **third pass** then showed that remaining ~400 ms stage walls were still
-mostly **DeviceBuffer alloc thrash**, not 5-tap math: a free-list pool plus
-channel-outer band layout and smem fused *downsample* took mid-pipeline
-compute to **~100 ms** (~4× on that baseline). Fused *upsample* regressed
-and was reverted. Writeup:
-[`docs/blog_pool_and_spatial.md`](blog_pool_and_spatial.md). Step log:
-[`docs/progressive_gains.md`](progressive_gains.md).
+(no `thwc_to_nt` / `nt_to_thwc` in Stage C). Further mid-pipeline work —
+sticky lpyr scratch, free-list `DeviceMemPool`, channel-outer bands, smem
+fused *downsample* (fused *upsample* regressed and was reverted) — took
+RTX 3090 motion FP32 compute from **~934 ms → ~100 ms** (~9×). Full
+measurement-driven writeup:
+[`docs/blog_further_optimizations.md`](blog_further_optimizations.md).
+Step tables: [`docs/progressive_gains.md`](progressive_gains.md).
+Evidence log: [`docs/bound_analysis.md`](bound_analysis.md).
 
 ## Methodology
 
