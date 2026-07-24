@@ -193,23 +193,13 @@ void launch_up_conv_2d_batched_f16(const __half* in, __half* out,
                                const float* filt, int filt_len,
                                int stride_in, int stride_out, int B,
                                cudaStream_t stream);
-// OpenCV-style smem fused cols+rows downsample (production candidate).
+// OpenCV-style smem fused cols+rows downsample (production).
 void launch_corr_dn_fused_smem_batched(const float* in, float* out,
                                        int H, int W, const float* filt, int filt_len,
                                        int stride_in, int stride_out, int B,
                                        cudaStream_t stream);
 void launch_corr_dn_fused_smem_batched_f16(const __half* in, __half* out,
                                        int H, int W, const float* filt, int filt_len,
-                                       int stride_in, int stride_out, int B,
-                                       cudaStream_t stream);
-void launch_up_conv_fused_smem_batched(const float* in, float* out,
-                                       int in_H, int in_W, int out_H, int out_W,
-                                       const float* filt, int filt_len,
-                                       int stride_in, int stride_out, int B,
-                                       cudaStream_t stream);
-void launch_up_conv_fused_smem_batched_f16(const __half* in, __half* out,
-                                       int in_H, int in_W, int out_H, int out_W,
-                                       const float* filt, int filt_len,
                                        int stride_in, int stride_out, int B,
                                        cudaStream_t stream);
 // FP16 storage variants (compute stays FP32).
@@ -232,33 +222,6 @@ void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream);
 
-// Scatter/gather for channel-major band layout (lpyr.cu).
-void launch_scatter_subtract(const float* a, const float* b, float* dst,
-                             const int* offsets, int n_per_slice, int B,
-                             cudaStream_t stream);
-void launch_scatter(const float* src, float* dst,
-                    const int* offsets, int n_per_slice, int B,
-                    cudaStream_t stream);
-void launch_gather_add(const float* src, const float* b, float* dst,
-                       const int* offsets, int n_per_slice, int B,
-                       cudaStream_t stream);
-void launch_gather(const float* src, float* dst,
-                   const int* offsets, int n_per_slice, int B,
-                   cudaStream_t stream);
-// FP16 scatter variants (read __half scratch, write float bands).
-void launch_scatter_subtract_f16(const __half* a, const __half* b, float* dst,
-                                 const int* offsets, int n_per_slice, int B,
-                                 cudaStream_t stream);
-void launch_scatter_f16(const __half* src, float* dst,
-                    const int* offsets, int n_per_slice, int B,
-                    cudaStream_t stream);
-// FP16 gather for recon.
-void launch_gather_f16(const __half* src, __half* dst,
-                       const int* offsets, int n_per_slice, int B,
-                       cudaStream_t stream);
-void launch_gather_add_f16(const __half* src, const __half* b, __half* dst,
-                           const int* offsets, int n_per_slice, int B,
-                           cudaStream_t stream);
 // Contiguous band ops (channel-outer affine; no offset table).
 void launch_band_subtract(const float* a, const float* b, float* dst,
                           int n, cudaStream_t stream);

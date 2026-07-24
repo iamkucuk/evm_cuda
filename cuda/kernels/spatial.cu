@@ -663,123 +663,12 @@ void launch_corr_dn_fused_smem_batched_f16(const __half* in, __half* out,
 
 
 // ===========================================================================
-// Smem-fused up_conv: rows-then-cols via coarse input tile in shared memory.
-// Production order matches matlabPyrTools (rows then cols). Analytic zero-stuff
-// (only even reflected indices). Loads a small coarse neighborhood once, then
-// each output does the separable product from smem — avoids intermediate
-// (out_H, in_W) global buffer between the two 1D up_conv passes.
-// ===========================================================================
-
-constexpr int UP_BX = 32;
-constexpr int UP_BY = 8;
-constexpr int UP_HALO = 2;
-// Coarse input tile: output block of BY x BX needs ~BY/2 + halo and BX/2 + halo
-// source samples (with margin for reflect).
-constexpr int UP_Y_IN = UP_BY / 2 + 2 * UP_HALO + 4;  // 12
-constexpr int UP_X_IN = UP_BX / 2 + 2 * UP_HALO + 4;  // 24
-
-template <typename In, typename Out>
-__global__ void up_conv_fused_smem_batched_kernel(
-    const In* __restrict__ in,
-    Out* __restrict__ out,
-    int in_H, int in_W, int out_H, int out_W,
-    const float* filt, int filt_len,
-    int slice_stride_in, int slice_stride_out, int B)
-{
-    const int xo0 = blockIdx.x * UP_BX;
-    const int yo0 = blockIdx.y * UP_BY;
-    const int b   = blockIdx.z;
-    if (b >= B) return;
-
-    const int tx = threadIdx.x;
-    const int ty = threadIdx.y;
-
-    float f[5];
-#pragma unroll
-    for (int k = 0; k < 5; ++k) f[k] = filt[k];
-
-    __shared__ float tile[UP_Y_IN][UP_X_IN];
-
-    const In* sin = in + b * slice_stride_in;
-    // First coarse sample that might be needed for this output tile.
-    const int y_in0 = (yo0 - UP_HALO) / 2 - 1;
-    const int x_in0 = (xo0 - UP_HALO) / 2 - 1;
-
-    const int tile_elems = UP_Y_IN * UP_X_IN;
-    const int tid = ty * UP_BX + tx;
-    const int nthreads = UP_BX * UP_BY;
-    for (int i = tid; i < tile_elems; i += nthreads) {
-        const int ly = i / UP_X_IN;
-        const int lx = i - ly * UP_X_IN;
-        const int gy = reflect1(y_in0 + ly, in_H);
-        const int gx = reflect1(x_in0 + lx, in_W);
-        tile[ly][lx] = cvt_in<In>(sin[gy * in_W + gx]);
-    }
-    __syncthreads();
-
-    const int xo = xo0 + tx;
-    const int yo = yo0 + ty;
-    if (xo >= out_W || yo >= out_H) return;
-
-    const int pad = UP_HALO;
-    const int up_H = 2 * in_H;
-    const int up_W = 2 * in_W;
-
-    // rows-then-cols separable product with zero-stuffing at odd indices.
-    float acc = 0.0f;
-#pragma unroll
-    for (int ky = 0; ky < 5; ++ky) {
-        const int ry = reflect1(yo + (ky - pad), up_H);
-        if (ry & 1) continue;
-        const int sy = ry / 2;
-        const int ly = sy - y_in0;
-        if (ly < 0 || ly >= UP_Y_IN) continue;
-        const float fy = f[ky];
-#pragma unroll
-        for (int kx = 0; kx < 5; ++kx) {
-            const int rx = reflect1(xo + (kx - pad), up_W);
-            if (rx & 1) continue;
-            const int sx = rx / 2;
-            const int lx = sx - x_in0;
-            if (lx < 0 || lx >= UP_X_IN) continue;
-            acc += fy * f[kx] * tile[ly][lx];
-        }
-    }
-    out[b * slice_stride_out + yo * out_W + xo] = cvt_out<Out>(acc);
-}
-
-void launch_up_conv_fused_smem_batched(const float* in, float* out,
-                                       int in_H, int in_W, int out_H, int out_W,
-                                       const float* filt, int filt_len,
-                                       int stride_in, int stride_out, int B,
-                                       cudaStream_t stream) {
-    dim3 block(UP_BX, UP_BY, 1);
-    dim3 grid(div_up(out_W, UP_BX), div_up(out_H, UP_BY), B);
-    up_conv_fused_smem_batched_kernel<float, float><<<grid, block, 0, stream>>>(
-        in, out, in_H, in_W, out_H, out_W, filt, filt_len,
-        stride_in, stride_out, B);
-}
-
-void launch_up_conv_fused_smem_batched_f16(const __half* in, __half* out,
-                                       int in_H, int in_W, int out_H, int out_W,
-                                       const float* filt, int filt_len,
-                                       int stride_in, int stride_out, int B,
-                                       cudaStream_t stream) {
-    dim3 block(UP_BX, UP_BY, 1);
-    dim3 grid(div_up(out_W, UP_BX), div_up(out_H, UP_BY), B);
-    up_conv_fused_smem_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
-        in, out, in_H, in_W, out_H, out_W, filt, filt_len,
-        stride_in, stride_out, B);
-}
-
-
-// ===========================================================================
-// Dense 2-D (separable product) kernels — PROBE / DEAD only.
+// Dense 2-D (separable product) kernels — PROBE-ONLY (diagnostic).
 // Not on the production path (dense fusion was a wash or regression).
 // Production uses smem fused down + separable up_conv.
 //
-// Order if used: corr_dn cols then rows; up_conv rows then cols.
-// Kept for isolation probes only (probe_corr_dn_2d_batched).
+// Exposed as probe_corr_dn_2d_batched for bound/A-B scripts
+// (ab_corr_fuse, ab_build_only, full_bound_assessment).
 // ===========================================================================
 
 template <typename In, typename Out>
