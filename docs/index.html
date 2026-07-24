@@ -282,6 +282,8 @@
             Code
         </a>
         <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md" class="btn-secondary">Writeup</a>
+        <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_layout_and_alloc.md" class="btn-secondary">Layout &amp; alloc</a>
+        <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_pool_and_spatial.md" class="btn-secondary">Pool &amp; spatial</a>
         <a href="http://people.csail.mit.edu/mrub/vidmag/" class="btn-secondary">Original Paper</a>
     </div>
 </div>
@@ -433,11 +435,51 @@ compute speedup (&#9312;, 522&times;) &mdash; the upload is a minor tax and the 
 genuinely does the work. For color the output D2H dominates if included (66 ms
 alone), so &#9313; is the honest headline for any real invocation.
 </p>
+
+<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Throughput &amp; real-time capacity</h3>
+<p>
+At the realistic <i>inference</i> tier (&#9313;, input upload included, output kept
+on the GPU), the pipelines sustain:
+</p>
+<table>
+<tr>
+    <th>Pipeline</th>
+    <th>Throughput</th>
+    <th>Concurrent 1080p @ 30 fps streams</th>
+</tr>
+<tr>
+    <td>Color FP32</td>
+    <td>1.9 Gpx/s</td>
+    <td>~30</td>
+</tr>
+<tr>
+    <td>Motion FP32</td>
+    <td>1.1 Gpx/s</td>
+    <td>~18</td>
+</tr>
+<tr>
+    <td>Motion FP16</td>
+    <td>1.1 Gpx/s</td>
+    <td>~17</td>
+</tr>
+</table>
+<p>
+The compute-only ceiling (&#9312;, data already on the GPU) is far higher &mdash;
+~160 color or ~30 motion streams &mdash; while the full decode&rarr;magnify&rarr;encode
+path (&#9314;) drops to ~12&ndash;15 streams because the output download is
+PCIe-bound. The end-to-end pipeline is currently capped by the CPU video codec.
+</p>
 <p>
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
 multi-GPU (P100/A100/H100) comparison in the
-<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>.
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>;
+RTX 3090 layout/sticky pass in
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_layout_and_alloc.md">layout &amp; alloc</a>
+(934&rarr;377&nbsp;ms); pool + smem-down pass in
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_pool_and_spatial.md">pool &amp; spatial</a>
+(~407&rarr;~100&nbsp;ms compute). Step tables:
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/progressive_gains.md">progressive_gains</a>.
 </p>
 
 <!-- ===================== ARCHITECTURE ===================== -->

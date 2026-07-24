@@ -575,10 +575,24 @@ absolute time saved there is small — estimated 1–4% end-to-end motion
 speedup. Not worth the binding/API churn (4 new bindings + 6 signature
 changes + per-stream scratch) for that payoff.
 
-For the IIR stage, the algorithmic seriality can only be addressed by
-replacing the recursive filter with a block-parallel formulation (cyclic
-reduction or scan-based IIR). That changes the numerical characteristics
-and would require re-validation.
+For the IIR stage, an isolation-probe study (2026-07) showed the dominant cost
+was **not** FP64 math or peak HBM saturation but **warp-uncoalesced `(N,T)`
+access plus a redundant transpose sandwich** around a filter whose bands were
+already `(T,N)`. Production now runs coalesced `iir_bandpass_tn` in place
+(no `thwc_to_nt` / `nt_to_thwc` in Stage C). A second win was a **sticky
+scratch pool** for lpyr build/recon (multi‑GB `cudaMalloc` thrash). On an
+RTX 3090 (same node, same harness, sequential before→after), motion FP32
+compute fell **934 → 377 ms**. Full writeup:
+[`docs/blog_layout_and_alloc.md`](blog_layout_and_alloc.md). Evidence log:
+[`docs/bound_analysis.md`](bound_analysis.md).
+
+A **third pass** then showed that remaining ~400 ms stage walls were still
+mostly **DeviceBuffer alloc thrash**, not 5-tap math: a free-list pool plus
+channel-outer band layout and smem fused *downsample* took mid-pipeline
+compute to **~100 ms** (~4× on that baseline). Fused *upsample* regressed
+and was reverted. Writeup:
+[`docs/blog_pool_and_spatial.md`](blog_pool_and_spatial.md). Step log:
+[`docs/progressive_gains.md`](progressive_gains.md).
 
 ## Methodology
 

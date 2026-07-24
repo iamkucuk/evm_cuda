@@ -34,7 +34,7 @@ from ._common import figure6_alpha_schedule, read_frames as _read_frames
 
 
 class DeviceBuffer:
-    """Thin wrapper over _evm_cuda.DeviceBuffer (RAII cudaMalloc'd region)."""
+    """Thin wrapper over pool-backed `_evm_cuda.DeviceBuffer` (free-list by size; no hot-path cudaFree)."""
     def __init__(self, nbytes: int):
         self._buf = _evm_cuda.DeviceBuffer(nbytes)
 
@@ -393,60 +393,58 @@ def magnify_motion_lpyr_iir(
         level_offsets.append(offset)
         offset += sz * n * 3
 
+    # DeviceBuffer is pool-backed (free-list by size). Allocate sequentially
+    # so peak VRAM matches the old pipeline. Benchmark does an untimed warmup
+    # call that fills the pool; timed stages then hit reuse.
     d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
-    # --- Stage A: batched NTSC convert (whole clip, 1 launch) ----------------
-    def _sA():
-        d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
-        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
-        return d_ntsc
-    d_ntsc = _stage("A) NTSC", _sA)
-    del d_clip  # clip_u8 no longer needed on device after NTSC convert
+    d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
 
-    # --- Stage B: batched Laplacian pyramid build ----------------------------
+    def _sA():
+        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
+        return None
+    _stage("A) NTSC", _sA)
+    del d_clip
+
+    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+    d_bands = DeviceBuffer(total_band_floats * 4)
+
     def _sB():
-        d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
-        _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
-        d_bands = DeviceBuffer(total_band_floats * 4)
+        _evm_cuda.batched_to_planar_3ch_chan_outer(
+            d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
         _evm_cuda.batched_lpyr_build(
             d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels, _d_binom5(), 5)
-        return d_bands
-    d_bands = _stage("B) lpyr_build", _sB)
+        return None
+    _stage("B) lpyr_build", _sB)
+    del d_ntsc_planar
 
-    # --- Stage C: temporal IIR (fully on-device, no host round-trip) ---------
-    # Transpose/IIR temporaries are hoisted out of the loop and REUSED: a fresh
-    # DeviceBuffer per iteration would leak ~45 GB peak and crash 16 GB GPUs.
+    d_filtered = DeviceBuffer(total_band_floats * 4)
+
     def _sC():
-        d_filtered = DeviceBuffer(total_band_floats * 4)
-        max_sz = max(lvl_sizes)
-        d_nt = DeviceBuffer(n * max_sz * 4)
-        d_filt_nt = DeviceBuffer(n * max_sz * 4)
         for l in range(levels):
             sz = lvl_sizes[l]
+            a = float(alpha_sched[l])
             for c in range(3):
                 sig_off = level_offsets[l] + c * n * sz
-                _evm_cuda.batched_thwc_to_nt(
-                    d_bands.ptr_at(sig_off), d_nt.ptr, n, sz)
-                _evm_cuda.batched_iir_bandpass(
-                    d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
-                dst_off = level_offsets[l] + c * n * sz
-                _evm_cuda.batched_nt_to_thwc_scaled(
-                    d_filt_nt.ptr, d_filtered.ptr_at(dst_off), n, sz, alpha_sched[l])
-        return d_filtered
-    d_filtered = _stage("C) IIR", _sC)
-    del d_bands  # bands consumed by IIR; free before Stage D lowers peak VRAM
+                _evm_cuda.batched_iir_bandpass_tn(
+                    d_bands.ptr_at(sig_off),
+                    d_filtered.ptr_at(sig_off),
+                    n, sz, r1, r2, a)
+        return None
+    _stage("C) IIR", _sC)
+    del d_bands
 
-    # --- Stage D1: pyramid reconstruction (device-resident) ------------------
+    d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
+
     def _sD1():
-        d_delta_planar = DeviceBuffer(n * 3 * h * w * 4)
         _evm_cuda.batched_lpyr_recon(
             d_filtered.ptr, d_delta_planar.ptr, n, h, w, levels, _d_binom5(), 5)
-        return d_delta_planar
-    d_delta_planar = _stage("D1) recon", _sD1)
+        return None
+    _stage("D1) recon", _sD1)
     del d_filtered
 
-    # --- Stage D2: fused planar-delta add + quantize (kernel only) -----------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
+
     def _sD2():
         _evm_cuda.batched_add_planar_quantize(
             d_ntsc.ptr, d_delta_planar.ptr, d_out_u8.ptr,
@@ -475,15 +473,15 @@ def magnify_motion_lpyr_iir_fp16(
     exaggeration_factor: float = _evm_cuda.exaggeration_factor,
     on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
-    """Motion pipeline with end-to-end FP16 storage.
+    """Motion pipeline with FP16 storage for large intermediates.
 
-    All intermediate buffers (NTSC, planar, bands, filtered, delta) are
-    __half. Every kernel reads __half, computes in FP32, writes __half.
-    The only FP32 buffer is the momentary NTSC compute output (freed after
-    conversion to FP16). No intermediate f32<->f16 round-trips.
+    NTSC, planar, filtered bands (after convert), and delta use ``__half``.
+    ``lpyr_build_f16`` still writes **float** band storage then converts once
+    to ``__half`` (half scratch inside build, one ``f32_to_f16`` of total bands).
+    Spatial kernels: half storage, FP32 compute. IIR uses the TN path with
+    FP64 accumulators. Not a pure end-to-end half pipeline.
 
-    This eliminates the conversion overhead that made the previous FP16
-    prototype 5x slower than FP32. Peak VRAM: ~12 GB for baby.mp4.
+    Peak VRAM is lower than FP32 (~12 GB for baby.mp4 class clips).
     """
     def _stage(name, body):
         return body() if on_stage is None else on_stage(name, body)
@@ -528,7 +526,8 @@ def magnify_motion_lpyr_iir_fp16(
     total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
     def _sB():
         d_ntsc_planar = DeviceBuffer(planar_floats * 2)
-        _evm_cuda.batched_to_planar_3ch_f16(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+        _evm_cuda.batched_to_planar_3ch_chan_outer_f16(
+            d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
         d_bands_f32 = DeviceBuffer(total_band_floats * 4)
         _evm_cuda.batched_lpyr_build_f16(
             d_ntsc_planar.ptr, d_bands_f32.ptr, n, h, w, levels,
@@ -544,23 +543,18 @@ def magnify_motion_lpyr_iir_fp16(
         level_offsets.append(offset)
         offset += sz * n * 3
 
-    # --- Stage C: FP16 temporal IIR ------------------------------------------
+    # --- Stage C: FP16 temporal IIR on (T,N) (coalesced) ----------------------
     def _sC():
         d_filtered = DeviceBuffer(total_band_floats * 2)  # FP16
-        max_sz = max(lvl_sizes)
-        d_nt = DeviceBuffer(n * max_sz * 2)  # FP16
-        d_filt_nt = DeviceBuffer(n * max_sz * 2)  # FP16
         for l in range(levels):
             sz = lvl_sizes[l]
+            a = float(alpha_sched[l])
             for c in range(3):
                 sig_off = level_offsets[l] + c * n * sz
-                _evm_cuda.batched_thwc_to_nt_f16(
-                    d_bands.ptr_at_half(sig_off), d_nt.ptr, n, sz)
-                _evm_cuda.batched_iir_bandpass_f16(
-                    d_nt.ptr, d_filt_nt.ptr, n, sz, r1, r2)
-                dst_off = level_offsets[l] + c * n * sz
-                _evm_cuda.batched_nt_to_thwc_scaled_f16(
-                    d_filt_nt.ptr, d_filtered.ptr_at_half(dst_off), n, sz, alpha_sched[l])
+                _evm_cuda.batched_iir_bandpass_tn_f16(
+                    d_bands.ptr_at_half(sig_off),
+                    d_filtered.ptr_at_half(sig_off),
+                    n, sz, r1, r2, a)
         return d_filtered
     d_filtered = _stage("C) IIR", _sC)
     del d_bands  # bands consumed by IIR; free before Stage D lowers peak VRAM

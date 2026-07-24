@@ -68,10 +68,30 @@ speedup (①, 522x) — the upload is a minor tax and the GPU genuinely does the
 work. For color the output D2H dominates if included (66 ms alone), so ② is the
 honest headline for any real invocation.
 
+### Throughput & real-time capacity
+
+At the realistic *inference* tier (②, input upload included, output kept on the
+GPU), the pipelines sustain:
+
+| Pipeline | Throughput | 1080p @ 30 fps |
+|----------|-----------:|---------------:|
+| Color FP32  | 1.9 Gpx/s | ~30 streams |
+| Motion FP32 | 1.1 Gpx/s | ~18 streams |
+| Motion FP16 | 1.1 Gpx/s | ~17 streams |
+
+The compute-only ceiling (①, data already on the GPU) is far higher — ~160 color
+or ~30 motion streams — while the full decode→magnify→encode path (③) drops to
+~12–15 streams because the output download is PCIe-bound.
+
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
 multi-GPU (P100/A100/H100) comparison in the
-[optimization writeup](docs/blog_speedup.md).
+[optimization writeup](docs/blog_speedup.md); a follow-up on coalesced IIR
+layout and sticky scratch (RTX 3090 motion compute **934 → 377 ms**) in
+[layout & alloc](docs/blog_layout_and_alloc.md); and a third pass on the
+DeviceBuffer free-list pool + channel-outer layout + smem downsample
+(**~407 → ~100 ms** compute on the same 3090 baseline series) in
+[pool & spatial](docs/blog_pool_and_spatial.md).
 
 ## How it works
 
@@ -149,13 +169,17 @@ No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.
 evm_cuda/
 ├── evm/                  # Python baseline (the correctness oracle)
 ├── cuda/                 # CUDA port
-│   ├── kernels/          # 10 .cu files (color, spatial, lpyr, iir, render...)
-│   ├── bindings.cpp      # pybind11 module
-│   ├── evm_cuda/         # Python wrapper (pipelines, DeviceBuffer)
-│   └── DESIGN.md         # kernel-by-kernel mapping + tolerance contract
+│   ├── kernels/          # .cu files (color, spatial, lpyr, iir, render...)
+│   ├── evm_cuda/         # Python package: batched.py, pipelines, benchmark
+│   ├── bindings.cpp      # pybind11 + DeviceMemPool + sticky scratch
+│   └── DESIGN.md         # kernel map, tolerances, production path
 ├── docs/
-│   ├── blog_speedup.md   # full optimization writeup
-│   └── img/              # demo images
+│   ├── blog_speedup.md           # first optimization writeup
+│   ├── blog_layout_and_alloc.md  # TN IIR + sticky scratch
+│   ├── blog_pool_and_spatial.md  # pool + channel-outer + smem down
+│   ├── progressive_gains.md      # step tables (third pass)
+│   ├── bound_analysis.md         # bound/probe evidence log
+│   └── img/                      # demo images
 ├── scripts/              # CLI + profilers
 ├── tests/                # 25 Python + 36 CUDA test functions (83 cases)
 ├── kaggle/               # free-GPU benchmark harness
