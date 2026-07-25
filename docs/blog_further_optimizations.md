@@ -367,8 +367,8 @@ That removes the intermediate `(H, W/2)` global write/read between the two 1D
 passes, the same pattern as OpenCV's `cuda::pyrDown`, with L2 binom5 +
 reflect1 so the numerical contract stays.
 
-Wired into FP32/FP16 `batched_lpyr_build` and `batched_blur_dn_color`. Dense
-`corr_dn_2d` remains probe-only.
+Wired into FP32/FP16 `batched_lpyr_build` and `batched_blur_dn_color`. The
+dense `corr_dn_2d` variant was probe-only and is since removed as dead code.
 
 | Stage | Pre-smem | After smem down |
 |---|---:|---:|
@@ -390,8 +390,8 @@ regressed recon earlier.
 | D1) recon | ~27 | ~41-42 |
 | Compute | ~100 | 127-189 |
 
-Reverted. Separable `up_conv` stays in production. Fused up remains in
-`spatial.cu` as non-wired code only.
+Reverted and removed. Separable `up_conv` stays in production; the fused-up
+variant no longer lives in the tree.
 
 Fusion is not a virtue by itself. Down fusion helped. Up fusion, same family as
 the old dense product, hurt twice. Do not re-attempt up_conv fusion without a
