@@ -15,7 +15,7 @@ motion variations that the eye cannot detect.**
 This project ports the MIT SIGGRAPH 2012 reference implementation from
 MATLAB to raw CUDA C++, achieving **557x compute-only speedup** (273x full
 pipeline including H2D/D2H transfers) over the Python/NumPy baseline on an
-NVIDIA H100, while producing bit-for-bit equivalent output (RMSE < 0.01).
+NVIDIA H100, while matching the Python baseline within end-to-end RMSE < 0.01.
 
 ---
 

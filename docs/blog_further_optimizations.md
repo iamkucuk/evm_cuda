@@ -42,7 +42,7 @@ pixels differ by 1 LSB. Drift is at quantize boundaries, not a layout bug.
 
 | Item | Value |
 |---|---|
-| GPU (production timings) | RTX 3090 24 GB (sm_86), host `osiris` (WSL2) |
+| GPU (production timings) | RTX 3090 24 GB (sm_86, WSL2) |
 | Isolation also on | H100 80 GB for TN vs NT IIR diagnosis |
 | Clip | `data/baby.mp4`, 291 frames, 960x544, 9 Laplacian levels |
 | Harness | `evm_cuda.benchmark`: median after untimed warmup; `cudaDeviceSynchronize` per stage |
