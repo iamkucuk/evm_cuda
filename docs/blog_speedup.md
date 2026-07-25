@@ -416,14 +416,16 @@ than FP32 (0.96× and 0.90× respectively). Full-path totals stay transfer-bound
 
 | GPU | BW | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |-----|-----|-----------|-----------|------------|------------|
-| **P100** (16GB, sm_60) | 732 GB/s | 138 ms | 120 ms | 1,143 ms | 676 ms |
-| **A100** (80GB, sm_80) | 1,935 GB/s | 72 ms | 84 ms | 209 ms | 172 ms |
+| **P100** (16GB, sm_60) | 732 GB/s | **31.6 ms** | **27.1 ms** | OOM (16 GB) | OOM (16 GB) |
+| **RTX 3090** (24GB, sm_86) | ~936 GB/s | **10.1 ms** | **7.8 ms** | **90.4 ms** | **75.1 ms** |
+| **A100** (80GB, sm_80) | 1,935 GB/s | 72 ms† | 84 ms† | 209 ms† | 172 ms† |
 | **H100** (80GB, sm_90) | 3,350 GB/s | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
 
-P100/A100 rows are historical (pre true half-band + dense smem templates).
-H100 row is the **current** production remeasure above. Older mid-pipeline
-3090 arc (~934 → ~100 ms FP32) and current 3090 FP16 density numbers live in
-[`docs/blog_further_optimizations.md`](blog_further_optimizations.md).
+Current production remeasure (true half-band + dense smem): P100 Kaggle
+(`benches/bench_kaggle_p100.json`), 3090 osiris, H100 TRUBA. Color clips are
+`face.mp4`; motion is `baby.mp4`. Motion still peaks above 16 GB even in FP16
+on this path (sticky pyramid scratch + bands), so P100 skips motion; use ≥24 GB
+for full baby motion. †A100 rows are historical (pre true half-band).
 
 ### Measured throughput
 

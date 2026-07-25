@@ -120,10 +120,11 @@ remeasure:
 | 3090 / face | **10.1 ms** | **7.8 ms** | **0.77×** |
 | 3090 / baby | **15.8 ms** | **12.2 ms** | **0.77×** |
 | H100 / face | **4.9 ms** | **4.4 ms** | **0.90×** |
+| P100 / face | **31.6 ms** | **27.1 ms** | **0.86×** |
 
 Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
-Source: `benches/bench_osiris_3090.json`, `benches/bench_truba_h100.json`.
-P100/A100 historical rows remain in `docs/blog_speedup.md`.
+Source: `benches/bench_osiris_3090.json`, `benches/bench_truba_h100.json`,
+`benches/bench_kaggle_p100.json`. Motion OOM on P100 16 GB (both precisions).
 
 ## Precision rationale
 
