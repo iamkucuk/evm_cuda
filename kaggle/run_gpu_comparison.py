@@ -152,6 +152,8 @@ def main():
     print("Build complete.\n", flush=True)
 
     run([sys.executable, "scripts/download_samples.py", "face", "baby"])
+    # Repo root for shared.h264 encode path; cuda/ for _evm_cuda package.
+    sys.path.insert(0, str(Path(".").resolve()))
     sys.path.insert(0, str(Path("cuda").resolve()))
 
     from evm_cuda import benchmark
