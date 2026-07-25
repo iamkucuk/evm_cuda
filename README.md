@@ -92,7 +92,7 @@ history (**~934 → ~100 ms** FP32 before half-band density work) is in
 
 Both stay under the end-to-end RMSE &lt; 0.01 gate vs Python.
 
-FP16 motion peak VRAM is ~12 GB (vs ~23 GB FP32). Detailed stage tables and
+FP16 motion peak VRAM is ~12 GB (vs ~23 GB FP32) but sticky pyramid scratch still needs **≥24 GB** for full baby motion on this path — Kaggle **P100 16 GB** runs color (**31.6 / 27.1 ms** FP32/FP16) and skips motion (OOM). Detailed stage tables and
 methodology: [blog_speedup.md](docs/blog_speedup.md) (multi-GPU history) and
 [blog_further_optimizations.md](docs/blog_further_optimizations.md) (3090 arc).
 
