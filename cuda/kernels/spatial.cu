@@ -642,6 +642,137 @@ __global__ void up_conv_cols_batched_halfacc_kernel(
     out[b * slice_stride_out + y * out_W + xo] = acc;
 }
 
+// Production f16 up_conv: keep __half in smem, float MAC (same fix as corr_dn).
+__global__ void up_conv_rows_batched_f16_floatacc_kernel(
+    const __half* __restrict__ in,
+    __half* __restrict__ out,
+    int in_H, int out_H, int W,
+    const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int x0  = blockIdx.x * SP_BX;
+    const int yo0 = blockIdx.y * SP_BY;
+    const int b   = blockIdx.z;
+    if (b >= B) return;
+
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+
+    float f[5];
+#pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = filt[k];
+
+    constexpr int UY = SP_BY + 2 * SP_HALO + 2;  // 14
+    __shared__ __half tile[UY][SP_BX];
+
+    const __half* sin = in + b * slice_stride_in;
+    const int y_in0 = (yo0 - SP_HALO) / 2 - 1;
+
+    const int tile_elems = UY * SP_BX;
+    const int tid = ty * SP_BX + tx;
+    const int nthreads = SP_BX * SP_BY;
+    for (int i = tid; i < tile_elems; i += nthreads) {
+        const int ly = i / SP_BX;
+        const int lx = i - ly * SP_BX;
+        const int gx = x0 + lx;
+        const int gy = reflect1(y_in0 + ly, in_H);
+        __half v = __float2half(0.0f);
+        if (gx >= 0 && gx < W) {
+            v = sin[gy * W + gx];
+        }
+        tile[ly][lx] = v;
+    }
+    __syncthreads();
+
+    const int x  = x0 + tx;
+    const int yo = yo0 + ty;
+    if (x >= W || yo >= out_H) return;
+
+    const int pad = SP_HALO;
+    const int up_H = 2 * in_H;
+    float acc = 0.0f;
+#pragma unroll
+    for (int k = 0; k < 5; ++k) {
+        int u_idx = yo + (k - pad);
+        int r = reflect1(u_idx, up_H);
+        if ((r & 1) == 0) {
+            int src = r / 2;
+            int ly = src - y_in0;
+            if (ly >= 0 && ly < UY) {
+                acc += f[k] * __half2float(tile[ly][tx]);
+            } else {
+                acc += f[k] * __half2float(sin[src * W + x]);
+            }
+        }
+    }
+    out[b * slice_stride_out + yo * W + x] = __float2half(acc);
+}
+
+__global__ void up_conv_cols_batched_f16_floatacc_kernel(
+    const __half* __restrict__ in,
+    __half* __restrict__ out,
+    int H, int in_W, int out_W,
+    const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int xo0 = blockIdx.x * SP_BX;
+    const int y0  = blockIdx.y * SP_BY;
+    const int b   = blockIdx.z;
+    if (b >= B) return;
+
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+
+    float f[5];
+#pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = filt[k];
+
+    constexpr int UXW = SP_BX / 2 + 2 * SP_HALO + 4;  // 24
+    __shared__ __half tile[SP_BY][UXW];
+
+    const __half* sin = in + b * slice_stride_in;
+    const int x_in0 = (xo0 - SP_HALO) / 2 - 1;
+
+    const int tile_elems = SP_BY * UXW;
+    const int tid = ty * SP_BX + tx;
+    const int nthreads = SP_BX * SP_BY;
+    for (int i = tid; i < tile_elems; i += nthreads) {
+        const int ly = i / UXW;
+        const int lx = i - ly * UXW;
+        const int gy = y0 + ly;
+        const int gx = reflect1(x_in0 + lx, in_W);
+        __half v = __float2half(0.0f);
+        if (gy >= 0 && gy < H) {
+            v = sin[gy * in_W + gx];
+        }
+        tile[ly][lx] = v;
+    }
+    __syncthreads();
+
+    const int xo = xo0 + tx;
+    const int y  = y0 + ty;
+    if (xo >= out_W || y >= H) return;
+
+    const int pad = SP_HALO;
+    const int up_W = 2 * in_W;
+    float acc = 0.0f;
+#pragma unroll
+    for (int k = 0; k < 5; ++k) {
+        int u_idx = xo + (k - pad);
+        int r = reflect1(u_idx, up_W);
+        if ((r & 1) == 0) {
+            int src = r / 2;
+            int lx = src - x_in0;
+            if (lx >= 0 && lx < UXW) {
+                acc += f[k] * __half2float(tile[ty][lx]);
+            } else {
+                acc += f[k] * __half2float(sin[y * in_W + src]);
+            }
+        }
+    }
+    out[b * slice_stride_out + y * out_W + xo] = __float2half(acc);
+}
+
 void launch_up_conv_rows_batched_f16(const __half* in, __half* out,
                                  int in_H, int out_H, int W,
                                  const float* filt, int filt_len,
@@ -649,7 +780,7 @@ void launch_up_conv_rows_batched_f16(const __half* in, __half* out,
                                  cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
     dim3 grid(div_up(W, SP_BX), div_up(out_H, SP_BY), B);
-    up_conv_rows_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
+    up_conv_rows_batched_f16_floatacc_kernel<<<grid, block, 0, stream>>>(
         in, out, in_H, out_H, W, filt, filt_len, stride_in, stride_out, B);
 }
 
@@ -671,7 +802,7 @@ void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
                                  cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
     dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
-    up_conv_cols_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
+    up_conv_cols_batched_f16_floatacc_kernel<<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
 }
 
