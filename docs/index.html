@@ -522,10 +522,23 @@ Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
 </tr>
 </table>
 <p>
-Also remeasured on <b>A100-80GB</b>: motion <b>54.4 / 48.2&nbsp;ms</b> FP32/FP16, color face <b>8.8 / 8.2&nbsp;ms</b> (<code>benches/bench_truba_a100.json</code>).<br>
+Also remeasured on <b>A100-80GB</b>: motion <b>54.4 / 48.2&nbsp;ms</b> FP32/FP16,
+color face <b>8.8 / 8.2&nbsp;ms</b> (<code>benches/bench_truba_a100.json</code>).
+P100 color face <b>31.6 / 27.1&nbsp;ms</b>.
+</p>
+<p>
 Accuracy (same builds): motion FP16 vs CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB);
-color face RMSE <b>0.00071</b> (max 1 LSB). Mid-pipeline 3090 history
-(~934&rarr;~100&nbsp;ms before half-band density) in
+color face RMSE <b>0.00071</b> (max 1 LSB).
+</p>
+<p>
+<b>vs older published numbers:</b> H100 motion compute ~85&rarr;<b>35.8&nbsp;ms</b>
+(~2.4&times;), color ~9&rarr;<b>4.9&nbsp;ms</b> (~1.8&times;); A100 motion
+~209&rarr;<b>54&nbsp;ms</b> (~3.8&times;). Those older figures predate the
+mid-pipeline series (TN IIR, sticky scratch, pool, smem down) <i>and</i> true
+half-band &mdash; the jump is mostly that stack landing on each GPU, not
+&ldquo;FP16 alone.&rdquo; Half-band density is the extra FP16 edge (clearest on
+3090: motion 0.83&times;, color 0.77&times;). 3090 mid-pipeline history
+(~934&rarr;~100&nbsp;ms) in
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md">further optimizations</a>.
 </p>
 
