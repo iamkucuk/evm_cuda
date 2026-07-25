@@ -208,6 +208,8 @@ void launch_band_subtract(const float* a, const float* b, float* dst,
                           int n, cudaStream_t stream);
 void launch_band_add(const float* a, const float* b, float* dst,
                      int n, cudaStream_t stream);
+void launch_band_subtract_f16_to_f16(const __half* a, const __half* b, __half* dst,
+                                    int n, cudaStream_t stream);
 void launch_band_subtract_f16(const __half* a, const __half* b, float* dst,
                               int n, cudaStream_t stream);
 void launch_band_copy_f16_to_f32(const __half* src, float* dst,
@@ -1079,12 +1081,9 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
 
-    // --- batched lpyr_build with FP16 scratch (halves VRAM for build) ------
-    // Same algorithm as batched_lpyr_build, but the 4 scratch buffers are
-    // __half instead of float. Input must be __half, output bands are float.
-    // Spatial kernels read __half, compute in FP32, write __half.
-    // Scatter kernels read __half scratch, convert to float, write float bands.
-    // Scratch: 4 * M * H * W * 2 bytes (was 4 * M * H * W * 4).
+    // --- batched lpyr_build with FP16 scratch + FP16 band output -----------
+    // Input __half planar, scratch __half, output bands __half (true half path).
+    // Spatial: half storage, FP32 compute. Band write: half−half → half.
     m.def("batched_lpyr_build_f16",
         [](uintptr_t d_in, uintptr_t d_out, int n_frames, int H, int W, int levels,
            uintptr_t d_filt, int filt_len) {
@@ -1092,7 +1091,7 @@ PYBIND11_MODULE(_evm_cuda, m) {
             auto sizes = evm::lpyr_level_sizes(H, W, levels);
             const float* filt = reinterpret_cast<const float*>(d_filt);
             const __half* in_base = reinterpret_cast<const __half*>(d_in);
-            float* out_base = reinterpret_cast<float*>(d_out);
+            __half* out_base = reinterpret_cast<__half*>(d_out);
 
             std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
             size_t total = 0;
@@ -1132,9 +1131,9 @@ PYBIND11_MODULE(_evm_cuda, m) {
                     lo, hi2, h, wn, w, filt, filt_len,
                     h * wn, h * w, M, 0);
 
-                float* band_l = out_base + level_offsets[l];
+                __half* band_l = out_base + level_offsets[l];
                 const int n_band = static_cast<int>(level_sizes_vec[l] * M);
-                evm::launch_band_subtract_f16(cur, hi2, band_l, n_band, 0);
+                evm::launch_band_subtract_f16_to_f16(cur, hi2, band_l, n_band, 0);
 
                 cur = lo2;
                 i_cur = i_lo2;
@@ -1151,8 +1150,11 @@ PYBIND11_MODULE(_evm_cuda, m) {
             {
                 int l = levels - 1;
                 const int n_band = static_cast<int>(level_sizes_vec[l] * M);
-                float* band_l = out_base + level_offsets[l];
-                evm::launch_band_copy_f16_to_f32(cur, band_l, n_band, 0);
+                __half* band_l = out_base + level_offsets[l];
+                CUDA_CHECK(cudaMemcpyAsync(
+                    band_l, cur,
+                    static_cast<size_t>(n_band) * sizeof(__half),
+                    cudaMemcpyDeviceToDevice, 0));
             }
         }, py::arg("d_in"), py::arg("d_out"), py::arg("n_frames"),
            py::arg("H"), py::arg("W"), py::arg("levels"),

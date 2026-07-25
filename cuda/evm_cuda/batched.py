@@ -475,11 +475,9 @@ def magnify_motion_lpyr_iir_fp16(
 ) -> np.ndarray:
     """Motion pipeline with FP16 storage for large intermediates.
 
-    NTSC, planar, filtered bands (after convert), and delta use ``__half``.
-    ``lpyr_build_f16`` still writes **float** band storage then converts once
-    to ``__half`` (half scratch inside build, one ``f32_to_f16`` of total bands).
-    Spatial kernels: half storage, FP32 compute. IIR uses the TN path with
-    FP64 accumulators. Not a pure end-to-end half pipeline.
+    NTSC, planar, Laplacian bands, filtered bands, and delta use ``__half``.
+    Spatial: half storage, FP32 compute. IIR: TN + FP64 accumulators.
+    Bands stay half end-to-end (no float band stack + full f32_to_f16).
 
     Peak VRAM is lower than FP32 (~12 GB for baby.mp4 class clips).
     """
@@ -528,12 +526,10 @@ def magnify_motion_lpyr_iir_fp16(
         d_ntsc_planar = DeviceBuffer(planar_floats * 2)
         _evm_cuda.batched_to_planar_3ch_chan_outer_f16(
             d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
-        d_bands_f32 = DeviceBuffer(total_band_floats * 4)
+        d_bands = DeviceBuffer(total_band_floats * 2)  # __half bands
         _evm_cuda.batched_lpyr_build_f16(
-            d_ntsc_planar.ptr, d_bands_f32.ptr, n, h, w, levels,
+            d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
             _d_binom5(), 5)
-        d_bands = DeviceBuffer(total_band_floats * 2)
-        _evm_cuda.f32_to_f16(d_bands_f32.ptr, d_bands.ptr, total_band_floats)
         return d_bands
     d_bands = _stage("B) lpyr_build", _sB)
 
