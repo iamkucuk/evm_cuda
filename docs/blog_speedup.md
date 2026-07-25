@@ -399,7 +399,7 @@ unchanged (color 11,194 ms / motion 44,190 ms).
 | — *speedup* | | **~110×** | **~110×** | **~225×** | **~230×** |
 
 Color clip: `face.mp4`. Motion clip: `baby.mp4`. Source JSON:
-`output/bench_truba_h100.json`.
+`benches/bench_truba_h100.json`.
 
 **① Compute-only** isolates kernel work (data already on GPU).
 

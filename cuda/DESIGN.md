@@ -122,7 +122,7 @@ remeasure:
 | H100 / face | **4.9 ms** | **4.4 ms** | **0.90×** |
 
 Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
-Source: `output/bench_osiris_3090.json`, `output/bench_truba_h100.json`.
+Source: `benches/bench_osiris_3090.json`, `benches/bench_truba_h100.json`.
 P100/A100 historical rows remain in `docs/blog_speedup.md`.
 
 ## Precision rationale
