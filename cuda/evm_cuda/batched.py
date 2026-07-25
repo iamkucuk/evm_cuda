@@ -171,70 +171,61 @@ def magnify_color_gdown_ideal(
     for _ in range(level):
         hl = (hl + 1) // 2
         wl = (wl + 1) // 2
+    N_band = hl * wl * 3
 
-    # State threaded through the stages (device buffers persist across stages).
-    # Stage 0: input H2D upload (the whole clip). Measured as its own transfer
-    # stage so PCIe cost is reported separately from GPU compute.
-    def _s0():
-        return DeviceBuffer.from_array(clip_u8)
-    d_clip = _stage("0) H2D: clip", _s0)
+    # Preallocate outside timed stages so stage medians measure kernels.
+    d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
-    # --- Stage 1: batched color convert (whole clip, 1 kernel launch) ------
+    d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
     def _s1():
-        d_ntsc = DeviceBuffer(n * h * w * 3 * 4)
         _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc.ptr, n, h, w)
-        return d_ntsc
-    d_ntsc = _stage("1) color_cvt", _s1)
+        return None
+    _stage("1) color_cvt", _s1)
+    del d_clip
 
-    # --- Stage 2: planar transpose + batched blur_dn downsample -------------
+    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
+    d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)
     def _s2():
-        d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 4)
         _evm_cuda.batched_to_planar_3ch(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
-        d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)
         _evm_cuda.batched_blur_dn_color(
             d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
             _d_binom5_sum1(), 5)
-        return d_gdown_planar
-    d_gdown_planar = _stage("2) blur_dn", _s2)
+        return None
+    _stage("2) blur_dn", _s2)
+    del d_ntsc_planar
 
-    # --- Stages 2b-4a: fully device-resident color bandpass -----------------
-    # Collapses 4 host round-trips (D2H gdown, 3x H2D sig, 3x D2H filt, H2D
-    # gained filt) + 4 numpy reshapes/transposes into ZERO host transfers.
-    # The per-channel ideal_bandpass is replaced by a single unified cuFFT call
-    # over (N = hl*wl*3, T = n): cuFFT filters each row independently, so the
-    # unified batch is numerically identical to 3 per-channel calls.
-    N_band = hl * wl * 3  # unified batch covers all 3 channels
+    d_gdown_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
+    d_sig = DeviceBuffer(N_band * n * 4)
+    d_filt = DeviceBuffer(N_band * n * 4)
+    d_filt_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
     def _s_bandpass():
-        d_gdown_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
         _evm_cuda.batched_planar_to_interleaved_3ch(
             d_gdown_planar.ptr, d_gdown_thwc.ptr, n, hl, wl)
-        d_sig = DeviceBuffer(N_band * n * 4)
         _evm_cuda.batched_thwc_to_nt(d_gdown_thwc.ptr, d_sig.ptr, n, N_band)
-        d_filt = DeviceBuffer(N_band * n * 4)
         _evm_cuda.batched_ideal_bandpass(
             d_sig.ptr, d_filt.ptr, n, N_band, fl, fh, sampling_rate)
-        d_filt_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
-        _evm_cuda.batched_nt_to_thwc_scaled(d_filt.ptr, d_filt_thwc.ptr, n, N_band, 1.0)
+        _evm_cuda.batched_nt_to_thwc_scaled(
+            d_filt.ptr, d_filt_thwc.ptr, n, N_band, 1.0)
         gain_y = alpha
         gain_iq = alpha * chrom_attenuation
         _evm_cuda.batched_apply_channel_gain(
             d_filt_thwc.ptr, n, hl, wl, gain_y, gain_iq, gain_iq)
-        return d_filt_thwc
-    d_filt = _stage("2b) bandpass (device-resident)", _s_bandpass)
+        return None
+    _stage("2b) bandpass (device-resident)", _s_bandpass)
+    del d_gdown_planar, d_gdown_thwc, d_sig, d_filt
 
-    # --- Stage 4b: fused upsample + add + quantize (kernel only) ------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _s4b():
         _evm_cuda.batched_upsample_add_quantize(
-            d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
+            d_ntsc.ptr, d_filt_thwc.ptr, d_out_u8.ptr,
             n, hl, wl, h, w, 1.0)
         return None
     _stage("4b) render", _s4b)
 
-    # --- Stage 4c: D2H output frames ----------------------------------------
-    def _s4c():
-        return d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3)
-    out = _stage("4c) D2H: output", _s4c)
+    out = _stage(
+        "4c) D2H: output",
+        lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3),
+    )
 
     if out_path:
         _write(out_path, out, fps)
@@ -280,62 +271,62 @@ def magnify_color_gdown_ideal_fp16(
     for _ in range(level):
         hl = (hl + 1) // 2
         wl = (wl + 1) // 2
+    N_band = hl * wl * 3
 
+    # Preallocate outside timed stages (same lesson as motion f16): stage
+    # medians should measure kernels, not DeviceBuffer/pool noise.
     d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
-    # --- Stage 1: fused u8 → YIQ → __half NTSC ------------------------------
+    d_ntsc = DeviceBuffer(ntsc_floats * 2)
     def _s1():
-        d_ntsc = DeviceBuffer(ntsc_floats * 2)
         _evm_cuda.batched_bgr_u8_to_ntsc_f16(d_clip.ptr, d_ntsc.ptr, n, h, w)
-        return d_ntsc
-    d_ntsc = _stage("1) color_cvt", _s1)
+        return None
+    _stage("1) color_cvt", _s1)
+    del d_clip
 
-    # --- Stage 2: FP16 planar + FP16 blur_dn -> FP32 gdown -------------------
+    d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 2)  # __half
+    d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)  # FP32 for FFT
     def _s2():
-        d_ntsc_planar = DeviceBuffer(n * 3 * h * w * 2)  # __half
         _evm_cuda.batched_to_planar_3ch_f16(d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
-        d_gdown_planar = DeviceBuffer(n * 3 * hl * wl * 4)  # FP32 (FFT needs float)
         _evm_cuda.batched_blur_dn_color_f16(
             d_ntsc_planar.ptr, d_gdown_planar.ptr, n * 3, h, w, level,
             _d_binom5_sum1(), 5)
-        return d_gdown_planar
-    d_gdown_planar = _stage("2) blur_dn", _s2)
+        return None
+    _stage("2) blur_dn", _s2)
+    del d_ntsc_planar
 
-    # Stage 2b: D2H + reshape (host round-trip for the per-channel FFT bandpass).
-    # Identical device-resident rewrite as the FP32 pipeline above — the bandpass
-    # itself runs in FP32 regardless of pipeline precision, so the same bindings
-    # apply. Only the NTSC buffer (read by render) is __half here.
-    N_band = hl * wl * 3
+    d_gdown_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
+    d_sig = DeviceBuffer(N_band * n * 4)
+    d_filt = DeviceBuffer(N_band * n * 4)
+    d_filt_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
     def _s_bandpass():
-        d_gdown_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
         _evm_cuda.batched_planar_to_interleaved_3ch(
             d_gdown_planar.ptr, d_gdown_thwc.ptr, n, hl, wl)
-        d_sig = DeviceBuffer(N_band * n * 4)
         _evm_cuda.batched_thwc_to_nt(d_gdown_thwc.ptr, d_sig.ptr, n, N_band)
-        d_filt = DeviceBuffer(N_band * n * 4)
         _evm_cuda.batched_ideal_bandpass(
             d_sig.ptr, d_filt.ptr, n, N_band, fl, fh, sampling_rate)
-        d_filt_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
-        _evm_cuda.batched_nt_to_thwc_scaled(d_filt.ptr, d_filt_thwc.ptr, n, N_band, 1.0)
+        _evm_cuda.batched_nt_to_thwc_scaled(
+            d_filt.ptr, d_filt_thwc.ptr, n, N_band, 1.0)
         gain_y = alpha
         gain_iq = alpha * chrom_attenuation
         _evm_cuda.batched_apply_channel_gain(
             d_filt_thwc.ptr, n, hl, wl, gain_y, gain_iq, gain_iq)
-        return d_filt_thwc
-    d_filt = _stage("2b) bandpass (device-resident)", _s_bandpass)
+        return None
+    _stage("2b) bandpass (device-resident)", _s_bandpass)
+    del d_gdown_planar, d_gdown_thwc, d_sig, d_filt
 
-    # --- Stage 4b: FP16 render (reads __half NTSC + FP32 filt) ---------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _s4b():
         _evm_cuda.batched_upsample_add_quantize_f16(
-            d_ntsc.ptr, d_filt.ptr, d_out_u8.ptr,
+            d_ntsc.ptr, d_filt_thwc.ptr, d_out_u8.ptr,
             n, hl, wl, h, w, 1.0)
         return None
     _stage("4b) render", _s4b)
 
-    # --- Stage 4c: D2H output frames ----------------------------------------
-    out = _stage("4c) D2H: output",
-                 lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3))
+    out = _stage(
+        "4c) D2H: output",
+        lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3),
+    )
 
     if out_path:
         _write(out_path, out, fps)
