@@ -1,4 +1,4 @@
-# Eulerian Video Magnification on CUDA
+# Eulerian Video Magnification (CUDA)
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](#)
 [![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia&logoColor=white)](#)
@@ -7,15 +7,17 @@
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/colab/evm_cuda_benchmark.ipynb)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
-**A CUDA-accelerated implementation of Eulerian Video Magnification (EVM) that
+**[Eulerian Video Magnification](http://people.csail.mit.edu/mrub/vidmag/)** (EVM)
 reveals invisible temporal changes in video — a person's pulse, a baby's
 breathing, the vibration of machinery — by amplifying sub-pixel color and
-motion variations that the eye cannot detect.**
+motion variations that the eye cannot detect. This repository is an open-source
+**CUDA C++** implementation of the MIT SIGGRAPH 2012 method (Wu, Rubinstein,
+Freeman, Durand, Guttag), with pulse and motion demos, benchmarks, and writeups.
 
-This project ports the MIT SIGGRAPH 2012 reference implementation from
-MATLAB to raw CUDA C++, achieving **557x compute-only speedup** (273x full
-pipeline including H2D/D2H transfers) over the Python/NumPy baseline on an
-NVIDIA H100, while matching the Python baseline within end-to-end RMSE < 0.01.
+It ports the MIT reference from MATLAB to raw CUDA C++, achieving **557x
+compute-only speedup** (273x full pipeline including H2D/D2H transfers) over the
+Python/NumPy baseline on an NVIDIA H100, while matching the Python baseline
+within end-to-end RMSE < 0.01.
 
 ---
 
