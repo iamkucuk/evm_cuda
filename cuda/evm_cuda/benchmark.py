@@ -49,8 +49,23 @@ def gpu_name() -> str:
 
 def gpu_free_bytes() -> int:
     """Free GPU memory in bytes (0 if the device/introspection is unavailable)."""
-    # gpu_mem_info raises RuntimeError when no CUDA device is present; that's the
-    # expected "unavailable" case. Anything else is a real error and propagates.
+    # Prefer nvidia-smi free: DeviceMemPool keeps freed blocks reserved, so
+    # cudaMemGetInfo "free" under-reports reusable capacity after a warm run.
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            timeout=5,
+        ).strip().splitlines()[0]
+        return int(float(out) * 1024 * 1024)
+    except Exception:
+        pass
+    # Fallback: cudaMemGetInfo via binding.
     try:
         free_b, _ = _evm_cuda.gpu_mem_info()
         return int(free_b)
@@ -222,11 +237,11 @@ def run(
     free = gpu_free_bytes()
     result = BenchResult(pipeline=pipeline, precision=precision, gpu=gpu_name(),
                          output_path=str(out_path) if out_path else None)
-    # DeviceBuffer is pool-backed: freed blocks stay on the device and
-    # nvidia-smi "free" under-reports reusable capacity after a warm run.
-    # Only hard-skip when free is tiny (true pressure). Otherwise rely on
-    # OOM handlers below.
-    if free and free < 256 * 1024 * 1024:
+    # DeviceBuffer is pool-backed: freed blocks stay reserved and both
+    # cudaMemGetInfo and nvidia-smi can under-report reusable capacity after a
+    # warm run. Only hard-skip when free is tiny *and* below the estimate;
+    # otherwise rely on OOM handlers in the timed path.
+    if free and free < 256 * 1024 * 1024 and free < need:
         result.notes = (f"skipped (insufficient VRAM: need ~{need/1e9:.1f} GB, "
                         f"have {free/1e9:.1f} GB free)")
         return result

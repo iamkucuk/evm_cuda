@@ -144,7 +144,7 @@ must be reported separately to be honest about the real pipeline cost.
 | render | 0.6 ms | compute | See analysis below. |
 | **D2H: output** | **65.6 ms** | **transfer** | **PCIe download of the output clip — 55% of total.** |
 
-**Motion pipeline (baby.mp4, 291 frames, 960x544, 9 levels): 85 ms compute / 162 ms total**
+**Motion pipeline (baby.mp4, 291 frames, 960x544, 9 levels): 35.8 ms compute / 196 ms total (H100 remeasure)**
 
 | Stage | Time | Kind | What limits it |
 |-------|------|------|-----------------|
@@ -342,7 +342,7 @@ before the temporal filter).
 | temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms | 46.0 ms | 41.7 ms |
 | lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms | 14.2 ms | 12.0 ms |
 | render (kernel) | 82.3 ms¹ | 44.7 ms¹ | 8.6 ms | 5.6 ms | 1.5 ms | 0.9 ms |
-| **compute total** | **~205 ms** | **~172 ms** | **1,143 ms** | **676 ms** | **85 ms** | **79 ms** |
+| **compute total** | **~205 ms** | **~172 ms** | **1,143 ms** | **676 ms** | **35.8 ms** | **34.5 ms** |
 
 ¹ A100/P100 render figures are from the pre-transfer-separation profiler
 (which bundled the D2H download into "render"); the H100 render is the
@@ -382,61 +382,35 @@ also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB GPUs
 
 ## Throughput and theoretical limits
 
-### Speedup vs CPU: three scenarios (H100-80GB)
+### Speedup vs CPU: three scenarios (H100-80GB, current production)
 
-We report the speedup at three inclusion levels. They are not arbitrary
-"with and without transfers" cuts — each answers a distinct real-world
-question about where the amplified signal is consumed.
+Re-measured after true half-band motion + dense half smem templates (TRUBA
+H100, job `evm_full_bench`, 1 warmup + median of 7). Python CPU baselines
+unchanged (color 11,194 ms / motion 44,190 ms).
 
 | Scenario | What it measures | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |----------|------------------|-----------:|-----------:|------------:|------------:|
 | **CPU baseline** | Python/NumPy compute | 11,194 ms | 11,194 ms | 44,190 ms | 44,190 ms |
-| **① Compute only** | GPU kernels (no transfers) | 8.6 ms | 8.6 ms | 84.6 ms | 79.4 ms |
-| — *speedup* | | **1,302x** | **1,302x** | **522x** | **557x** |
-| **② Compute + H2D** | + input upload from host | 47.1 ms | 46.5 ms | 134.5 ms | 140.7 ms |
-| — *speedup* | | **238x** | **241x** | **329x** | **314x** |
-| **③ Compute + H2D + D2H** | + output download to host | 118.5 ms | 116.3 ms | 161.7 ms | 182.5 ms |
-| — *speedup* | | **94x** | **96x** | **273x** | **242x** |
+| **① Compute only** | GPU kernels (no transfers) | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
+| — *speedup* | | **~2,290×** | **~2,540×** | **~1,230×** | **~1,280×** |
+| **② Compute + H2D** | + input upload from host | **34.6 ms** | **34.2 ms** | **82.1 ms** | **81.0 ms** |
+| — *speedup* | | **~320×** | **~330×** | **~540×** | **~550×** |
+| **③ Compute + H2D + D2H** | + output download to host | **103.6 ms** | **102.8 ms** | **196.0 ms** | **189.3 ms** |
+| — *speedup* | | **~110×** | **~110×** | **~225×** | **~230×** |
 
-**① Compute-only** isolates the *compute speedup* the kernels deliver. It
-measures how much faster the GPU does the actual magnification math than the
-CPU — pure arithmetic capability, independent of how the data arrives. This
-is the right number when the pipeline is part of a larger device-resident
-graph (data already on the GPU from an upstream kernel).
+Color clip: `face.mp4`. Motion clip: `baby.mp4`. Source JSON:
+`output/bench_truba_h100.json`.
 
-**② Compute + H2D** is the realistic *inference* cost: the data starts on the
-host (a decoded video, a camera frame), so you must pay the input upload before
-the GPU can do anything. Crucially, this tier **deliberately excludes the
-output D2H**. The reason is that in most real uses the amplified signal is
-*consumed on the GPU*, not read back. You do not need the magnified video on
-the host to extract information from it — heart-rate estimation from the
-amplified color signal, motion-feature extraction, or feeding a downstream
-neural network all run as follow-on GPU kernels on the device-resident output.
-The D2H download is only paid if you insist on materializing a viewable video
-on the host, which is a presentation concern, not an analysis one. So ② is the
-number that reflects what an embedded EVM stage in a GPU pipeline actually
-costs.
+**① Compute-only** isolates kernel work (data already on GPU).
 
-**③ Compute + H2D + D2H** is the *full accelerator-offload* cost — the literal
-"decode on CPU, magnify on GPU, write an .mp4 on CPU" standalone path, where the
-result must come back to the host. This is the conservative, worst-case number
-for a self-contained tool.
+**② Compute + H2D** is inference-style cost (upload + compute; output stays on
+device).
 
-The large gap between ① and ③ on color (1,302x → 94x) is the output D2H: it is
-66 ms on its own — more than the entire compute — because the PCIe download of
-the full-resolution uint8 clip is bandwidth-bound. Motion degrades far less
-(522x → 273x): its compute is heavier relative to its single output download,
-and its D2H is smaller (27 ms). For motion the inference speedup (②, 329x) is
-within 1.2x of the compute speedup (①, 522x) — the GPU genuinely does the work
-and the upload is a minor tax. For color the inference speedup (238x) is the
-more honest headline than compute-only, because the input upload is unavoidable
-in any real invocation.
+**③ Full H2D+D2H** is the standalone file-to-array path. On this H100 run, D2H
+alone is ~70–110 ms and dominates wall time.
 
-**On FP16:** compute-only, FP16 motion is the fastest configuration (557x).
-But once transfers are included, FP16 motion's larger D2H (41.8 ms vs FP32's
-27.2 ms) outweighs the compute savings, so FP32 is faster end-to-end. This is a
-transfer-cost artifact, not a kernel regression — the FP16 kernels themselves
-are faster.
+**On FP16 (this remeasure):** motion and color compute are both slightly faster
+than FP32 (0.96× and 0.90× respectively). Full-path totals stay transfer-bound.
 
 ### Multi-GPU comparison (compute-only)
 
@@ -444,11 +418,12 @@ are faster.
 |-----|-----|-----------|-----------|------------|------------|
 | **P100** (16GB, sm_60) | 732 GB/s | 138 ms | 120 ms | 1,143 ms | 676 ms |
 | **A100** (80GB, sm_80) | 1,935 GB/s | 72 ms | 84 ms | 209 ms | 172 ms |
-| **H100** (80GB, sm_90) | 3,350 GB/s | 9 ms | 9 ms | 85 ms | 79 ms |
+| **H100** (80GB, sm_90) | 3,350 GB/s | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
 
-The H100 is the new reference. Its compute-only color is 8x faster than A100
-and 15x faster than P100, reflecting the sm_90 architecture gains plus the
-multiple-elements-per-thread render optimization.
+P100/A100 rows are historical (pre true half-band + dense smem templates).
+H100 row is the **current** production remeasure above. Older mid-pipeline
+3090 arc (~934 → ~100 ms FP32) and current 3090 FP16 density numbers live in
+[`docs/blog_further_optimizations.md`](blog_further_optimizations.md).
 
 ### Measured throughput
 
@@ -468,17 +443,17 @@ conversion overhead.
 
 ### Realtime performance projection (H100, compute-only)
 
-Scaling linearly by pixel count (the bottleneck stages scale with pixels):
+Pixel-scale from the remeasured clips (face color 4.9 ms / 291×592×528;
+motion FP16 34.5 ms / 291×960×544). Bottleneck stages scale with pixels:
 
 | Resolution | Color FP32 | Motion FP16 | Realtime (30 fps)? |
 |-----------|-------|--------|---------------------|
-| 1080p (1920x1080) | 5,156 fps | 586 fps | **170x and 20x headroom** |
-| 4K (3840x2160) | 1,289 fps | 147 fps | **43x and 4.9x headroom** |
+| 1080p (1920x1080) | ~9,000 fps | ~2,100 fps | large headroom |
+| 4K (3840x2160) | ~2,250 fps | ~530 fps | still compute-only headroom |
 
-At 1080p, a single H100 can run the full color pipeline at over 5,000 fps
-(compute-only). These are **GPU compute-only** numbers — the realistic
-throughput including H2D/D2H transfers is ~9-12x lower for color (PCIe-bound)
-and ~2x lower for motion (see the [three-tier speedup table](#speedup-vs-cpu-three-tiers-h100-80gb)).
+These are **GPU compute-only** numbers. Including H2D/D2H, H100 wall time is
+transfer-dominated (~100–200 ms full path), so product FPS is much lower
+without NVDEC/NVENC / device-resident consumers (see the three-tier table).
 
 The end-to-end pipeline (including video decode and encode) is currently
 bottlenecked by the CPU codec, which limits realtime throughput regardless of
@@ -511,7 +486,7 @@ thread does too little independent work to keep the memory pipeline busy.
 
 ## Open optimization surfaces
 
-On the H100 the compute kernel cost is small (9-85 ms); the remaining
+On the H100 the compute kernel cost is small (~5-36 ms on the current path); the remaining
 headroom is split between (a) the transfer cost — the output D2H dominates
 color total time and is a large share of motion — and (b) the still-memory-bound
 render/IIR access patterns at the architectural level.

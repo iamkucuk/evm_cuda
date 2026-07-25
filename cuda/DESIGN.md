@@ -101,20 +101,29 @@ same code as FP32, not a forked algorithm.
 **Motion FP16:** NTSC, planar, bands, filtered bands, and delta are `__half`
 end-to-end (no full float band stack). Stage A is fused `u8→YIQ→half`. Peak
 VRAM for baby.mp4-class clips is ~12 GB (vs ~23 GB FP32). IIR state stays
-FP64. On RTX 3090 (1 warmup + median of 7 timed runs, WSL2): motion compute
-**~90 ms FP32 → ~76 ms FP16** (~0.84×). Accuracy vs CUDA FP32: RMSE **~0.0023**,
-max **5** LSB (still under end-to-end RMSE &lt; 0.01 vs Python).
+FP64. Fresh remeasure (1 warmup + median of 7):
+
+| GPU | Motion FP32 | Motion FP16 | ratio |
+|---|---:|---:|---:|
+| RTX 3090 | **90.4 ms** | **75.1 ms** | **0.83×** |
+| H100 80GB | **35.8 ms** | **34.5 ms** | **0.96×** |
+
+Accuracy vs CUDA FP32 (baby): RMSE **0.00232**, max **5** LSB.
 
 **Color FP16:** NTSC + planar blur scratch are `__half`. Final Gaussian gdown
 converts to FP32 for cuFFT; `filt` stays FP32. First blur level reads the
-caller's planar input (no full-frame D2D copy into sticky scratch). Isolated
-blur/stage2 micros are faster in half on 3090; baby color e2e compute can
-reach **~0.71×** FP32 when spatial work dominates. Face color e2e is short and
-transfer-dominated (~parity; stage noise can flip short ratios).
+caller's planar input (no full-frame D2D copy into sticky scratch). Fresh
+remeasure:
 
-Older multi-GPU notes (A100/P100 render traffic) remain in
-[`docs/blog_speedup.md`](../docs/blog_speedup.md); they predate true half-band
-motion and dense smem templates.
+| GPU / clip | Color FP32 | Color FP16 | ratio |
+|---|---:|---:|---:|
+| 3090 / face | **10.1 ms** | **7.8 ms** | **0.77×** |
+| 3090 / baby | **15.8 ms** | **12.2 ms** | **0.77×** |
+| H100 / face | **4.9 ms** | **4.4 ms** | **0.90×** |
+
+Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
+Source: `output/bench_osiris_3090.json`, `output/bench_truba_h100.json`.
+P100/A100 historical rows remain in `docs/blog_speedup.md`.
 
 ## Precision rationale
 
