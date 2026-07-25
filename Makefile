@@ -2,7 +2,7 @@
 #
 # Quick start:
 #   make build          # compile the _evm_cuda.so extension (needs nvcc)
-#   make test           # all 83 tests (needs GPU for CUDA suite)
+#   make test           # all 92 tests (needs GPU for CUDA suite)
 #   make run-color      # magnify pulse on face.mp4
 #   make profile        # CPU vs FP32 vs FP16 comparison
 #   make help           # list all targets

@@ -1,7 +1,7 @@
 """Batched (device-resident) EVM pipelines.
 
 The numpy-in/numpy-out wrappers in `_evm_cuda` each do cudaMalloc + H2D +
-kernel + D2H + cudaFree per call. The profiler (docs/profile_baseline.txt)
+kernel + D2H + cudaFree per call. Early profiling
 showed >95% of wall time is that overhead.
 
 Design principle: minimize host<->device transfers.

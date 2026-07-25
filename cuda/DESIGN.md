@@ -82,7 +82,6 @@ cuda/
 | Batched lpyr_recon | `bindings.cpp:batched_lpyr_recon` | host loop over levels | sep up + contiguous `band_add` |
 | Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | smem fused down; frame-major (color) or as called |
 | Contiguous band ops | `lpyr.cu:band_subtract/band_add` | `(⌈n/256⌉) / (256,1,1)` | channel-outer affine; no offset table |
-| Dense corr_dn_2d (probe) | `spatial.cu:corr_dn_2d_batched` | probe grid | **diagnostic only** (`probe_corr_dn_2d_batched`) |
 | TN IIR (+scale) | `iir_bandpass.cu:iir_bandpass_tn_kernel` | `(⌈N/256⌉) / (256,1,1)` | motion Stage C; no transpose sandwich |
 | Scaled transpose | `transpose.cu:nt_to_thwc_kernel` (+scale) | `(⌈N/256⌉) / (256,1,1)` | color / legacy layout helpers |
 | Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render |

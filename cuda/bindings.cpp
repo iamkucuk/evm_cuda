@@ -174,25 +174,6 @@ void launch_up_conv_cols_batched(const float* in, float* out,
                                  const float* filt, int filt_len,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream);
-// Fused 2-D (cols+rows / rows+cols) — one launch, no intermediate buffer.
-void launch_corr_dn_2d_batched(const float* in, float* out,
-                               int H, int W, const float* filt, int filt_len,
-                               int stride_in, int stride_out, int B,
-                               cudaStream_t stream);
-void launch_up_conv_2d_batched(const float* in, float* out,
-                               int in_H, int in_W, int out_H, int out_W,
-                               const float* filt, int filt_len,
-                               int stride_in, int stride_out, int B,
-                               cudaStream_t stream);
-void launch_corr_dn_2d_batched_f16(const __half* in, __half* out,
-                               int H, int W, const float* filt, int filt_len,
-                               int stride_in, int stride_out, int B,
-                               cudaStream_t stream);
-void launch_up_conv_2d_batched_f16(const __half* in, __half* out,
-                               int in_H, int in_W, int out_H, int out_W,
-                               const float* filt, int filt_len,
-                               int stride_in, int stride_out, int B,
-                               cudaStream_t stream);
 // OpenCV-style smem fused cols+rows downsample (production).
 void launch_corr_dn_fused_smem_batched(const float* in, float* out,
                                        int H, int W, const float* filt, int filt_len,
@@ -823,7 +804,7 @@ PYBIND11_MODULE(_evm_cuda, m) {
     // Phase 1: device-resident API for batched (whole-clip) execution.
     //
     // The numpy wrappers above each do cudaMalloc + H2D + kernel + D2H +
-    // cudaFree per call. The profiler (docs/profile_baseline.txt) showed
+    // cudaFree per call. Early profiling showed
     // >95% of wall time is that overhead. The DeviceTensor below is a
     // GC-managed device buffer; the batched_* wrappers take device pointers
     // (as ints) and do NO host transfers. The whole clip stays on-device
@@ -1477,17 +1458,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 stride_in, stride_out, B, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("in_W"),
            py::arg("out_W"), py::arg("d_filt"), py::arg("filt_len"),
-           py::arg("stride_in"), py::arg("stride_out"), py::arg("B"));
-    m.def("probe_corr_dn_2d_batched",
-        [](uintptr_t d_in, uintptr_t d_out, int H, int W,
-           uintptr_t d_filt, int filt_len, int stride_in, int stride_out, int B) {
-            evm::launch_corr_dn_2d_batched(
-                reinterpret_cast<const float*>(d_in),
-                reinterpret_cast<float*>(d_out),
-                H, W, reinterpret_cast<const float*>(d_filt), filt_len,
-                stride_in, stride_out, B, 0);
-        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
-           py::arg("d_filt"), py::arg("filt_len"),
            py::arg("stride_in"), py::arg("stride_out"), py::arg("B"));
 
     // Fused planar-delta add + quantize (motion pipeline render). Reads delta

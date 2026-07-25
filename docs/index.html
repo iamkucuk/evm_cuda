@@ -486,7 +486,7 @@ on RTX 3090 &mdash; motion compute ~934&rarr;~100&nbsp;ms (~9&times;) &mdash; in
     <li><b>Batched spatial kernels</b> &mdash; <code>grid.z = M</code> collapses ~35,000 launches into ~50</li>
     <li><b>Templated FP16 storage</b> &mdash; all kernels compile in both FP32 and FP16; compute stays FP32, storage halves</li>
     <li><b>cuFFT plan caching</b> &mdash; eliminates per-call autotuning overhead</li>
-    <li><b>83 tests</b> &mdash; every kernel validated against the Python oracle, including MIT reference comparison</li>
+    <li><b>92 tests</b> &mdash; every kernel validated against the Python oracle, including MIT reference comparison</li>
 </ul>
 <p>
 No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++ with
