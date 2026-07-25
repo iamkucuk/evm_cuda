@@ -47,7 +47,7 @@ Fresh measurements on the **current** production path (true half-band motion,
 dense half smem templates, no full-frame color blur input copy). Harness:
 `evm_cuda.benchmark` — **1 untimed warmup + median of 7 timed runs**,
 `cudaDeviceSynchronize` after every stage. JSON dumps:
-`output/bench_truba_h100.json`, `output/bench_osiris_3090.json`.
+`benches/bench_truba_h100.json`, `benches/bench_osiris_3090.json`.
 
 Python CPU baselines (unchanged from earlier profiling): color **11,194 ms**,
 motion **44,190 ms**.

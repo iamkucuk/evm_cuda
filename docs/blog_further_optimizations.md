@@ -428,7 +428,7 @@ new isolation A/B that beats separable on recon and build.
 
 ### Current production stage table (3090, baby motion)
 
-Fresh process per config; 1 warmup + median of 7 (`output/bench_osiris_3090.json`).
+Fresh process per config; 1 warmup + median of 7 (`benches/bench_osiris_3090.json`).
 
 | Stage | FP32 (ms) | FP16 (ms) | ratio |
 |---|---:|---:|---:|
@@ -445,7 +445,7 @@ Same-day color (fresh process each): face compute **10.1 → 7.8 ms** (0.77×);
 baby color compute **15.8 → 12.2 ms** (0.77×). Accuracy: motion FP16 vs CUDA
 FP32 RMSE **0.00232** / max **5** LSB; color face RMSE **0.00071** / max **1** LSB.
 
-H100 remeasure (same code, `output/bench_truba_h100.json`): motion compute
+H100 remeasure (same code, `benches/bench_truba_h100.json`): motion compute
 **35.8 → 34.5 ms**; color face **4.9 → 4.4 ms**.
 
 A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames on
