@@ -43,14 +43,14 @@ pixels differ by 1 LSB. Drift is at quantize boundaries, not a layout bug.
 | Item | Value |
 |---|---|
 | GPU (production timings) | RTX 3090 24 GB (sm_86), host `osiris` (WSL2) |
-| Isolation also on | H100 80 GB (TRUBA) for TN vs NT IIR diagnosis |
+| Isolation also on | H100 80 GB for TN vs NT IIR diagnosis |
 | Clip | `data/baby.mp4`, 291 frames, 960x544, 9 Laplacian levels |
 | Harness | `evm_cuda.benchmark`: median after untimed warmup; `cudaDeviceSynchronize` per stage |
 | Scope | Mid-pipeline stages A-D2 (NTSC, build, IIR, recon, render) |
 | Correctness | Batched + pipeline CUDA tests green after each keep |
 
-Nsight Compute GPU counters are not available under WSL2, and on TRUBA they
-were often admin-blocked (`ERR_NVGPUCTRPERM`). Saturation claims use
+Nsight Compute GPU counters are not available under WSL2 on the development
+host used for most timings. Saturation claims use
 traffic-accounted isolation probes: same data volume, different access or
 math, wall time and effective GB/s against a friendly streaming baseline
 (~850-860 GB/s flat copy on the 3090, about 90% of ~936 GB/s GDDR6X peak).

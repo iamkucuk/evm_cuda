@@ -216,7 +216,7 @@ def profile_motion_cpu_stages():
 
 # ===========================================================================
 # GPU stage-level profiling is delegated to evm_cuda.benchmark.run() — the same
-# code path the Colab notebook uses — so CPU/Colab/TRUBA can never drift apart
+# code path the Colab notebook uses — so CPU/Colab/local GPU can never drift apart
 # on methodology. The benchmark module owns the warmup/sync/median discipline
 # and now reports H2D/D2H transfers as their own stages.
 # ===========================================================================
