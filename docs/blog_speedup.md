@@ -108,7 +108,7 @@ The implementation has 32 CUDA kernels across 10 source files:
 | `iir_bandpass.cu` | 1 | Recursive r1/r2 temporal filter (FP64 state per location) |
 | `butter_bandpass.cu` | 1 | 1st-order Butterworth temporal filter |
 | `ideal_bandpass.cu` | 3 | cuFFT C2C batched FFT + frequency mask + normalization |
-| `lpyr.cu` | 8 | Pyramid build/recon (single-slice) + scatter/gather (batched) |
+| `lpyr.cu` | 8 | Pyramid build/recon (single-slice) + contiguous band ops |
 | `blur_dn.cu` | 1 | Gaussian blur+downsample (calls corr_dn repeatedly) |
 | `amplify_render.cu` | 7 | Gain, attenuation, add+quantize, fused upsample+add, fused planar+add |
 
@@ -265,12 +265,11 @@ The grid z-dimension indexes the batch slice, so all B slices get
 processed in a single kernel launch. This collapses roughly 35,000
 launches down to about 50 (one per kernel per level), a 700x reduction.
 
-The channel-major band output layout uses irregular per-slice offsets
-(`offset = chan × n_frames + frame`), which prevents simple stride-based
-batching for band writes. Four scatter/gather kernels handle this:
-`scatter_subtract` for band writes during build, `scatter` for the
-coarsest residual, `gather` for coarsest band reads during recon, and
-`gather_add` for combining bands with the residual during recon.
+Band storage is channel-major. Production motion now uses channel-outer
+planar (`m' = c*n + f`) so band write/add is contiguous (`band_subtract` /
+`band_add`) with no offset table. An earlier irregular scatter/gather path
+handled frame-major planar; that was superseded in the further mid-pipeline
+pass (see `blog_further_optimizations.md`).
 
 ### Level 4: Register and thread-level optimizations
 
@@ -517,19 +516,40 @@ headroom is split between (a) the transfer cost — the output D2H dominates
 color total time and is a large share of motion — and (b) the still-memory-bound
 render/IIR access patterns at the architectural level.
 
-**Output D2H / host round-trips.** The color pipeline does four host
+**Output D2H / host round-trips.** ~~The color pipeline does four host
 round-trips (gdown D2H, per-channel sig/filt H2D/D2H, output D2H) totaling
 ~110 ms — 93% of its wall clock. The motion pipeline is cleaner (one input
 H2D, one output D2H). Eliminating the color bandpass host round-trip (running
 cuFFT on-device end-to-end) and keeping the result device-resident would cut
-most of this.
+most of this.~~ **DONE (feature/kernel-optimization-A):** the color bandpass
+is now fully device-resident. Stage 2b's D2H+reshape plus the surrounding
+per-channel H2D/D2H round-trips are replaced by a single unified cuFFT call
+over `(N=hl*wl*3, T=n)` — cuFFT filters each row independently, so the
+unified batch is numerically identical to 3 per-channel calls. The color
+pipeline now has exactly two end-to-end transfers (input H2D, output D2H);
+only the unavoidable output D2H remains as a transfer-side cost.
 
-FP16 `filt` in color render. The color render kernel reads 12 values per
-pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32 because
-it comes from the FFT output. Converting `filt` to FP16 before render would
-halve that traffic. The filt buffer is small (~1 MB for face.mp4), so the
-conversion is sub-millisecond. This would address the 80% of render traffic
-that FP16 NTSC storage doesn't touch.
+**FP16 `filt` in color render.** The color render kernel reads 12 values
+per pixel from `filt` (4 bilinear taps x 3 channels), which stays FP32
+because it comes from the FFT output. Converting `filt` to FP16 before
+render would halve that traffic. The filt buffer is small (~1 MB for
+face.mp4), so the conversion is sub-millisecond. This would address the 80%
+of render traffic that FP16 NTSC storage doesn't touch. *Reverted (final)
+after measurement on two architectures:* on Tesla P100 (sm_60) the FP16-filt
+render regressed from 4.8 ms to 10.8 ms (+125%); on H100 (sm_90) it was
+neutral (0.6 → 0.7 ms — within noise, no measurable benefit). Root cause:
+the 12 per-pixel `__half→float` conversions in the bilinear tap loop are
+scalar and strided, so they cannot vectorize into `__half2` SIMD loads.
+On sm_60, scalar `__half` operations run at ½ FP32 rate (only packed
+`__half2` gets the 2× advantage), so the conversion overhead dominates the
+bandwidth saving on the small (~5 MB) filt buffer. On sm_90, the
+conversions are full-rate native instructions, so they're nearly free — but
+then there's no win either, because the buffer is too small for the
+bandwidth saving to register at 3350 GB/s. The blog's "P100 FP16 = 13%
+faster" prediction held for FP16 *NTSC* storage (large contiguous buffer,
+SIMD-friendly) but did not extrapolate to filt (small buffer, strided
+access). The templated `FILT_T` infrastructure is preserved in the kernel
+(defaults to `float`); the FP16 color pipeline keeps reading FP32 filt.
 
 Texture hardware (Harris texture path). `cudaTextureObject_t` with
 `cudaReadModeElementType` provides hardware-managed L1 texture cache with
@@ -546,11 +566,26 @@ bottleneck.
 
 CUDA streams. All kernels use stream 0. Independent stages (e.g., IIR
 filter across levels/channels) could overlap on multiple streams.
+*Investigated and deferred:* the per-level IIR at the finest pyramid level
+(sz ≈ H·W ≈ 500k threads) already saturates the H100's ~270k resident
+threads, so multi-streaming yields ~0% gain where most of the 46 ms IIR cost
+lives. Only the coarser (smaller) levels have spare SM capacity, and the
+absolute time saved there is small — estimated 1–4% end-to-end motion
+speedup. Not worth the binding/API churn (4 new bindings + 6 signature
+changes + per-stream scratch) for that payoff.
 
-For the IIR stage, the algorithmic seriality can only be addressed by
-replacing the recursive filter with a block-parallel formulation (cyclic
-reduction or scan-based IIR). That changes the numerical characteristics
-and would require re-validation.
+For the IIR stage, an isolation-probe study (2026-07) showed the dominant cost
+was **not** FP64 math or peak HBM saturation but **warp-uncoalesced `(N,T)`
+access plus a redundant transpose sandwich** around a filter whose bands were
+already `(T,N)`. Production now runs coalesced `iir_bandpass_tn` in place
+(no `thwc_to_nt` / `nt_to_thwc` in Stage C). Further mid-pipeline work —
+sticky lpyr scratch, free-list `DeviceMemPool`, channel-outer bands, smem
+fused *downsample* (fused *upsample* regressed and was reverted) — took
+RTX 3090 motion FP32 compute from **~934 ms → ~100 ms** (~9×). Full
+measurement-driven writeup:
+[`docs/blog_further_optimizations.md`](blog_further_optimizations.md).
+Full writeup of that arc:
+[`docs/blog_further_optimizations.md`](blog_further_optimizations.md).
 
 ## Methodology
 
@@ -593,7 +628,7 @@ Measurements were taken on:
 
 [harris]: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 
-83 unit and integration tests validate correctness against the Python
+92 unit and integration tests validate correctness against the Python
 baseline (RMSE < 0.01 for end-to-end pipelines, per-kernel tolerances
 from 10^-6 to 10^-4 depending on the operation). The full test suite and
 profiler scripts are in the [repository][repo].
