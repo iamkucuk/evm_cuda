@@ -3,48 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eulerian Video Magnification on CUDA — 557x Compute Speedup, Raw CUDA C++</title>
-    <meta name="description" content="A CUDA-accelerated implementation of Eulerian Video Magnification that reveals invisible temporal changes in video — pulse, breathing, vibration — by amplifying sub-pixel color and motion variations. 557x compute-only speedup (273x full pipeline) over the Python baseline on an NVIDIA H100, raw CUDA C++, validated against the Python baseline and MIT SIGGRAPH 2012 reference within RMSE < 0.01.">
-    <meta name="keywords" content="Eulerian Video Magnification, CUDA, GPU acceleration, video processing, signal processing, pybind11, real-time magnification, CUDA programming, computer vision, FFT, IIR filter, Laplacian pyramid">
+    <title>Eulerian Video Magnification — CUDA Implementation, Pulse &amp; Motion Demos</title>
+    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, 557× H100 speedup, validated within RMSE &lt; 0.01.">
+    <meta name="keywords" content="Eulerian Video Magnification, EVM, video magnification, pulse magnification, motion magnification, MIT SIGGRAPH, Wu Rubinstein, CUDA, GPU, computer vision, vital signs video">
     <meta name="author" content="Furkan Kucuk">
-    <meta name="robots" content="index, follow">
+    <meta name="robots" content="index, follow, max-image-preview:large">
     <link rel="canonical" href="https://iamkucuk.github.io/eulerian-video-magnification-cuda/">
 
     <!-- Open Graph -->
     <meta property="og:type" content="website">
-    <meta property="og:site_name" content="Eulerian Video Magnification on CUDA">
-    <meta property="og:title" content="Eulerian Video Magnification on CUDA — 557x Compute Speedup">
-    <meta property="og:description" content="Raw CUDA C++ port of MIT's EVM. Reveals invisible pulse and motion in video. 557x compute-only (273x full) speedup on H100, validated within RMSE < 0.01.">
+    <meta property="og:site_name" content="Eulerian Video Magnification (CUDA)">
+    <meta property="og:title" content="Eulerian Video Magnification — open-source CUDA implementation">
+    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, and 557× H100 compute speedup.">
     <meta property="og:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="Pulse magnification demo — blood flow becomes visible">
+    <meta property="og:image:alt" content="Pulse magnification demo — blood flow becomes visible with Eulerian Video Magnification">
     <meta property="og:url" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Eulerian Video Magnification on CUDA — 557x Compute Speedup">
-    <meta name="twitter:description" content="Raw CUDA C++ port of MIT's EVM. Reveals invisible pulse and motion in video. 557x compute-only (273x full) speedup on H100, validated within RMSE < 0.01.">
+    <meta name="twitter:title" content="Eulerian Video Magnification — open-source CUDA implementation">
+    <meta name="twitter:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ with demos and benchmarks.">
     <meta name="twitter:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
-    <meta name="twitter:image:alt" content="Pulse magnification demo — blood flow becomes visible">
+    <meta name="twitter:image:alt" content="Pulse magnification demo — blood flow becomes visible with Eulerian Video Magnification">
 
     <!-- Structured data for Google rich results -->
     <script type="application/ld+json">
     {
         "@context": "https://schema.org",
-        "@type": "TechArticle",
-        "headline": "Eulerian Video Magnification on CUDA",
-        "description": "A CUDA-accelerated implementation of Eulerian Video Magnification that reveals invisible temporal changes in video. 557x compute-only speedup (273x full pipeline) over the Python baseline on an NVIDIA H100.",
-        "author": {
-            "@type": "Person",
-            "name": "Furkan Kucuk",
-            "url": "https://github.com/iamkucuk"
-        },
-        "datePublished": "2026-06-24",
-        "image": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png",
-        "url": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/",
-        "about": ["CUDA", "Eulerian Video Magnification", "GPU programming", "computer vision", "video processing"],
-        "keywords": "CUDA, Eulerian Video Magnification, GPU, video processing, signal processing, pybind11"
+        "@graph": [
+            {
+                "@type": "WebSite",
+                "name": "Eulerian Video Magnification (CUDA)",
+                "url": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/",
+                "description": "Open-source Eulerian Video Magnification: reveal invisible pulse and motion in video with a CUDA implementation of the MIT SIGGRAPH 2012 method."
+            },
+            {
+                "@type": "SoftwareSourceCode",
+                "name": "Eulerian Video Magnification on CUDA",
+                "description": "CUDA C++ implementation of Eulerian Video Magnification (EVM) for color (pulse) and motion magnification. Port of the MIT SIGGRAPH 2012 reference with device-resident pipelines and open demos.",
+                "url": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/",
+                "codeRepository": "https://github.com/iamkucuk/eulerian-video-magnification-cuda",
+                "programmingLanguage": ["CUDA", "C++", "Python"],
+                "runtimePlatform": "NVIDIA GPU",
+                "license": "https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/LICENSE",
+                "author": {
+                    "@type": "Person",
+                    "name": "Furkan Kucuk",
+                    "url": "https://github.com/iamkucuk"
+                },
+                "datePublished": "2026-06-24",
+                "dateModified": "2026-07-25",
+                "image": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png",
+                "about": [
+                    "Eulerian Video Magnification",
+                    "video magnification",
+                    "pulse magnification",
+                    "motion magnification",
+                    "CUDA",
+                    "computer vision"
+                ],
+                "keywords": "Eulerian Video Magnification, EVM, video magnification, pulse, motion, CUDA, SIGGRAPH 2012"
+            },
+            {
+                "@type": "TechArticle",
+                "headline": "Eulerian Video Magnification: CUDA implementation and demos",
+                "description": "What Eulerian Video Magnification is, pulse and motion demos, and a high-performance CUDA port of the MIT SIGGRAPH 2012 method.",
+                "author": {
+                    "@type": "Person",
+                    "name": "Furkan Kucuk",
+                    "url": "https://github.com/iamkucuk"
+                },
+                "datePublished": "2026-06-24",
+                "dateModified": "2026-07-25",
+                "image": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png",
+                "url": "https://iamkucuk.github.io/eulerian-video-magnification-cuda/",
+                "about": ["Eulerian Video Magnification", "video magnification", "CUDA", "computer vision"],
+                "keywords": "Eulerian Video Magnification, EVM, pulse magnification, motion magnification, CUDA"
+            }
+        ]
     }
     </script>
 
@@ -272,7 +310,11 @@
 <!-- ===================== HERO ===================== -->
 <div class="hero">
     <div class="conference">Project Page, 2026</div>
-    <h1>Eulerian Video Magnification on CUDA</h1>
+    <h1>Eulerian Video Magnification</h1>
+    <p style="font-size:1.15em;color:#444;max-width:36em;margin:0.4em auto 0.8em;">
+        Reveal invisible pulse and motion in ordinary video &mdash; open-source
+        <strong>CUDA</strong> implementation of the MIT SIGGRAPH 2012 method
+    </p>
     <div class="authors">Furkan Kucuk</div>
     <div class="affil">Independent Research</div>
 
@@ -287,26 +329,26 @@
     </div>
 </div>
 
-<!-- ===================== ABSTRACT ===================== -->
-<h2 class="section-title">Abstract</h2>
+<!-- ===================== WHAT IS EVM ===================== -->
+<h2 class="section-title">What is Eulerian Video Magnification?</h2>
 <div class="abstract">
 <p>
-Eulerian Video Magnification (EVM) reveals subtle temporal changes in video
-that are invisible to the naked eye &mdash; the pulse of blood under skin, the
-breathing of an infant, the vibration of machinery. Unlike feature-tracking
-approaches, EVM treats each pixel as a time series, applies a temporal bandpass
-filter, amplifies the frequencies of interest, and reconstructs the video with
-those invisible changes made visible.
+<strong>Eulerian Video Magnification</strong> (EVM) is a computer-vision technique
+from MIT (Wu, Rubinstein, Freeman, Durand, Guttag; SIGGRAPH 2012) that makes
+tiny temporal changes in video visible. Classic examples: the pulse of blood
+under skin, the breathing of a sleeping infant, and small mechanical vibrations.
+Unlike Lagrangian methods that track features, EVM treats each pixel as a time
+series, applies a temporal bandpass, amplifies the band of interest, and
+reconstructs the video.
 </p>
 <p>
-This project ports the MIT SIGGRAPH 2012 reference implementation to raw CUDA
-C++, achieving a <b>557&times; compute-only speedup</b> (273&times; including all
-host-device transfers) over the Python/NumPy baseline on an NVIDIA H100, while
-producing output validated against the Python baseline within an RMSE of 0.01. The implementation
-uses no high-level GPU frameworks &mdash; every kernel is hand-written CUDA C++
-with manual memory management, coalesced access patterns, and templated FP16
-storage. The full pipeline runs device-resident with zero per-frame
-host-device transfers.
+This site is a full open-source <strong>CUDA</strong> implementation of that
+pipeline &mdash; color (pulse) magnification with an ideal bandpass and motion
+magnification with a Laplacian pyramid + IIR bandpass &mdash; with demos,
+benchmarks, and writeups. It ports the MIT reference from MATLAB to raw CUDA
+C++ and achieves a <b>557&times; compute-only speedup</b> (273&times; including
+host-device transfers) over a Python/NumPy baseline on an NVIDIA H100, with
+output validated against the Python baseline within RMSE 0.01.
 </p>
 </div>
 
