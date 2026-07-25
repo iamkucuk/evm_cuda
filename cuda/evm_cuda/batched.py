@@ -506,39 +506,39 @@ def magnify_motion_lpyr_iir_fp16(
 
     ntsc_floats = n * h * w * 3
     planar_floats = n * 3 * h * w
-
-    d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
-
-    # --- Stage A: fused u8 → YIQ → __half (no float NTSC buffer) -------------
-    def _sA():
-        d_ntsc = DeviceBuffer(ntsc_floats * 2)
-        _evm_cuda.batched_bgr_u8_to_ntsc_f16(d_clip.ptr, d_ntsc.ptr, n, h, w)
-        return d_ntsc
-    d_ntsc = _stage("A) NTSC", _sA)
-
-    # --- Stage B: FP16 planar + FP16 lpyr_build -----------------------------
     lvl_sizes = [s[0] * s[1] for s in level_sizes]
     total_band_floats = sum(s * (n * 3) for s in lvl_sizes)
-    def _sB():
-        d_ntsc_planar = DeviceBuffer(planar_floats * 2)
-        _evm_cuda.batched_to_planar_3ch_chan_outer_f16(
-            d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
-        d_bands = DeviceBuffer(total_band_floats * 2)  # __half bands
-        _evm_cuda.batched_lpyr_build_f16(
-            d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
-            _d_binom5(), 5)
-        return d_bands
-    d_bands = _stage("B) lpyr_build", _sB)
-
     level_offsets = []
     offset = 0
     for sz in lvl_sizes:
         level_offsets.append(offset)
         offset += sz * n * 3
 
-    # --- Stage C: FP16 temporal IIR on (T,N) (coalesced) ----------------------
+    # Match FP32 packaging: allocate outside timed stages so stage medians
+    # measure kernels, not pool/alloc noise (was hiding the f16 density win).
+    d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
+
+    d_ntsc = DeviceBuffer(ntsc_floats * 2)
+    def _sA():
+        _evm_cuda.batched_bgr_u8_to_ntsc_f16(d_clip.ptr, d_ntsc.ptr, n, h, w)
+        return None
+    _stage("A) NTSC", _sA)
+    del d_clip
+
+    d_ntsc_planar = DeviceBuffer(planar_floats * 2)
+    d_bands = DeviceBuffer(total_band_floats * 2)
+    def _sB():
+        _evm_cuda.batched_to_planar_3ch_chan_outer_f16(
+            d_ntsc.ptr, d_ntsc_planar.ptr, n, h, w)
+        _evm_cuda.batched_lpyr_build_f16(
+            d_ntsc_planar.ptr, d_bands.ptr, n, h, w, levels,
+            _d_binom5(), 5)
+        return None
+    _stage("B) lpyr_build", _sB)
+    del d_ntsc_planar
+
+    d_filtered = DeviceBuffer(total_band_floats * 2)
     def _sC():
-        d_filtered = DeviceBuffer(total_band_floats * 2)  # FP16
         for l in range(levels):
             sz = lvl_sizes[l]
             a = float(alpha_sched[l])
@@ -548,20 +548,18 @@ def magnify_motion_lpyr_iir_fp16(
                     d_bands.ptr_at_half(sig_off),
                     d_filtered.ptr_at_half(sig_off),
                     n, sz, r1, r2, a)
-        return d_filtered
-    d_filtered = _stage("C) IIR", _sC)
-    del d_bands  # bands consumed by IIR; free before Stage D lowers peak VRAM
+        return None
+    _stage("C) IIR", _sC)
+    del d_bands
 
-    # --- Stage D1: FP16 pyramid reconstruction --------------------------------
+    d_delta = DeviceBuffer(n * 3 * h * w * 2)
     def _sD1():
-        d_delta = DeviceBuffer(n * 3 * h * w * 2)  # FP16 planar delta
         _evm_cuda.batched_lpyr_recon_f16(
             d_filtered.ptr, d_delta.ptr, n, h, w, levels, _d_binom5(), 5)
-        return d_delta
-    d_delta = _stage("D1) recon", _sD1)
+        return None
+    _stage("D1) recon", _sD1)
     del d_filtered
 
-    # --- Stage D2: FP16 add + quantize (kernel only) -------------------------
     d_out_u8 = DeviceBuffer(n * h * w * 3)
     def _sD2():
         _evm_cuda.batched_add_planar_quantize_f16(
@@ -570,9 +568,10 @@ def magnify_motion_lpyr_iir_fp16(
         return None
     _stage("D2) render", _sD2)
 
-    # --- Stage D2H: output frames download -----------------------------------
-    out = _stage("D2H) output",
-                 lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3))
+    out = _stage(
+        "D2H) output",
+        lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3),
+    )
 
     if out_path:
         _write(out_path, out, fps)
