@@ -522,6 +522,7 @@ Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
 </tr>
 </table>
 <p>
+Also remeasured on <b>A100-80GB</b>: motion <b>54.4 / 48.2&nbsp;ms</b> FP32/FP16, color face <b>8.8 / 8.2&nbsp;ms</b> (<code>benches/bench_truba_a100.json</code>).<br>
 Accuracy (same builds): motion FP16 vs CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB);
 color face RMSE <b>0.00071</b> (max 1 LSB). Mid-pipeline 3090 history
 (~934&rarr;~100&nbsp;ms before half-band density) in
