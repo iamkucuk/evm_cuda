@@ -265,12 +265,11 @@ The grid z-dimension indexes the batch slice, so all B slices get
 processed in a single kernel launch. This collapses roughly 35,000
 launches down to about 50 (one per kernel per level), a 700x reduction.
 
-The channel-major band output layout uses irregular per-slice offsets
-(`offset = chan × n_frames + frame`), which prevents simple stride-based
-batching for band writes. Four scatter/gather kernels handle this:
-`scatter_subtract` for band writes during build, `scatter` for the
-coarsest residual, `gather` for coarsest band reads during recon, and
-`gather_add` for combining bands with the residual during recon.
+Band storage is channel-major. Production motion now uses channel-outer
+planar (`m' = c*n + f`) so band write/add is contiguous (`band_subtract` /
+`band_add`) with no offset table. An earlier irregular scatter/gather path
+handled frame-major planar; that was superseded in the further mid-pipeline
+pass (see `blog_further_optimizations.md`).
 
 ### Level 4: Register and thread-level optimizations
 
