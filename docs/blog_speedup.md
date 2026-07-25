@@ -335,24 +335,23 @@ compute output (freed after one `f32_to_f16` conversion) and the band
 output from `lpyr_build` (scatter kernels write float, converted to FP16
 before the temporal filter).
 
-| Stage | A100 FP32 | A100 FP16 | P100 FP32 | P100 FP16 | H100 FP32 | H100 FP16 |
+| Stage | A100 FP32† | A100 FP16† | P100 FP32† | P100 FP16† | H100 FP32‡ | H100 FP16‡ |
 |-------|-----------|-----------|-----------|-----------|-----------|-----------|
-| NTSC convert | 1.6 ms | 5.6 ms | 16.6 ms | 28.5 ms | 2.0 ms | 4.2 ms |
-| lpyr_build | 35.3 ms | 37.0 ms | 402.8 ms | 183.4 ms | 20.9 ms | 20.5 ms |
-| temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms | 46.0 ms | 41.7 ms |
-| lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms | 14.2 ms | 12.0 ms |
-| render (kernel) | 82.3 ms¹ | 44.7 ms¹ | 8.6 ms | 5.6 ms | 1.5 ms | 0.9 ms |
+| NTSC convert | 1.6 ms | 5.6 ms | 16.6 ms | 28.5 ms | — | — |
+| lpyr_build | 35.3 ms | 37.0 ms | 402.8 ms | 183.4 ms | — | — |
+| temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms | — | — |
+| lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms | — | — |
+| render (kernel) | 82.3 ms¹ | 44.7 ms¹ | 8.6 ms | 5.6 ms | — | — |
 | **compute total** | **~205 ms** | **~172 ms** | **1,143 ms** | **676 ms** | **35.8 ms** | **34.5 ms** |
 
-¹ A100/P100 render figures are from the pre-transfer-separation profiler
-(which bundled the D2H download into "render"); the H100 render is the
-kernel-only number. Transfer costs are reported separately in the
-[bottleneck analysis](#steady-state-timings-h100-80gb) above.
+† A100/P100 stage breakdown is **historical** (pre true half-band + dense smem
+templates). Current P100 **color** is **31.6 / 27.1 ms** compute
+(`benches/bench_kaggle_p100.json`); current P100 **motion** OOMs on 16 GB.
+‡ H100 compute totals are the **current** remeasure
+(`benches/bench_truba_h100.json`); per-stage H100 detail is in that JSON.
 
-On the P100, the IIR stage also benefits substantially (608 ms to 366
-ms). The P100 (sm_60) processes `__half2` operations at 2x the FP32 rate
-via 64-bit-wide half-precision SIMD, so the sequential IIR loop gets
-genuinely faster compute, not just better bandwidth.
+¹ A100/P100 historical render figures are from the pre-transfer-separation
+profiler (which bundled the D2H download into "render").
 
 **Color FP16** stores NTSC as `__half` (the dominant persistent buffer).
 The Gaussian downsample output goes to FP32 (cuFFT bandpass needs float),
