@@ -108,7 +108,7 @@ The implementation has 32 CUDA kernels across 10 source files:
 | `iir_bandpass.cu` | 1 | Recursive r1/r2 temporal filter (FP64 state per location) |
 | `butter_bandpass.cu` | 1 | 1st-order Butterworth temporal filter |
 | `ideal_bandpass.cu` | 3 | cuFFT C2C batched FFT + frequency mask + normalization |
-| `lpyr.cu` | 8 | Pyramid build/recon (single-slice) + scatter/gather (batched) |
+| `lpyr.cu` | 8 | Pyramid build/recon (single-slice) + contiguous band ops |
 | `blur_dn.cu` | 1 | Gaussian blur+downsample (calls corr_dn repeatedly) |
 | `amplify_render.cu` | 7 | Gain, attenuation, add+quantize, fused upsample+add, fused planar+add |
 
