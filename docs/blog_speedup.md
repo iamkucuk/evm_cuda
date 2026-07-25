@@ -384,9 +384,8 @@ sticky residual after other configs); a clean FP16-only process may fit.
 
 ### Speedup vs CPU: three scenarios (H100-80GB, current production)
 
-Re-measured after true half-band motion + dense half smem templates (TRUBA
-H100, job `evm_full_bench`, 1 warmup + median of 7). Python CPU baselines
-unchanged (color 11,194 ms / motion 44,190 ms).
+Re-measured on **current** production (TRUBA H100, 1 warmup + median of 7).
+Python CPU baselines unchanged (color 11,194 ms / motion 44,190 ms).
 
 | Scenario | What it measures | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |----------|------------------|-----------:|-----------:|------------:|------------:|
@@ -398,21 +397,20 @@ unchanged (color 11,194 ms / motion 44,190 ms).
 | **③ Compute + H2D + D2H** | + output download to host | **103.6 ms** | **102.8 ms** | **196.0 ms** | **189.3 ms** |
 | — *speedup* | | **~110×** | **~110×** | **~225×** | **~230×** |
 
-Color clip: `face.mp4`. Motion clip: `baby.mp4`. Source JSON:
-`benches/bench_truba_h100.json`.
+Color: `face.mp4`. Motion: `baby.mp4`. Source: `benches/bench_truba_h100.json`.
 
-**① Compute-only** isolates kernel work (data already on GPU).
+**① / ② / ③** mean the same as before: compute-only, inference (+H2D), full
+file-to-array (+D2H). On this H100 run D2H alone is ~70–110 ms and dominates
+wall time.
 
-**② Compute + H2D** is inference-style cost (upload + compute; output stays on
-device).
+**vs older H100 doc numbers (~85 / 79 ms motion, ~9 ms color):** current is
+~2.3–2.4× faster on motion and ~1.8–2× on color. That gap is **mostly the
+mid-pipeline series** (TN IIR, sticky scratch, pool, smem downsample) that was
+proven on 3090 and only remeasured on H100 here — **not** “half-band alone
+gave 2× on H100.” FP32 moved almost as much as FP16; half-band / dense smem
+adds a smaller FP16 edge (H100 motion 0.96×, color 0.90×).
 
-**③ Full H2D+D2H** is the standalone file-to-array path. On this H100 run, D2H
-alone is ~70–110 ms and dominates wall time.
-
-**On FP16 (this remeasure):** motion and color compute are both slightly faster
-than FP32 (0.96× and 0.90× respectively). Full-path totals stay transfer-bound.
-
-### Multi-GPU comparison (compute-only)
+### Multi-GPU comparison (compute-only, current production)
 
 | GPU | BW | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |-----|-----|-----------|-----------|------------|------------|
@@ -421,29 +419,33 @@ than FP32 (0.96× and 0.90× respectively). Full-path totals stay transfer-bound
 | **A100** (80GB, sm_80) | 1,935 GB/s | **8.8 ms** | **8.2 ms** | **54.4 ms** | **48.2 ms** |
 | **H100** (80GB, sm_90) | 3,350 GB/s | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
 
-Current production remeasure (true half-band + dense smem; 1 warmup + median of 7):
-P100 Kaggle (`benches/bench_kaggle_p100.json`), 3090 osiris
-(`benches/bench_osiris_3090.json`), A100 TRUBA palamut-cuda
-(`benches/bench_truba_a100.json`), H100 TRUBA kolyoz-cuda
-(`benches/bench_truba_h100.json`). Color = `face.mp4`; motion = `baby.mp4`.
-Standalone motion FP16 peaks ~8–9 GB; *P100 motion OOM was in the multi-config
-harness (pool residual). Prefer ≥24 GB for comfortable whole-clip motion.
+Sources: `benches/bench_kaggle_p100.json`, `bench_osiris_3090.json`,
+`bench_truba_a100.json`, `bench_truba_h100.json` (1 warmup + median of 7).
+Standalone motion FP16 peaks ~8–9 GB; *P100 motion OOM was multi-config pool
+residual. Prefer ≥24 GB for comfortable whole-clip motion.
 
-### Measured throughput
+**vs older multi-GPU rows (same table, pre-remeasure):** A100 motion ~209 →
+**54 ms** (~3.8×), color ~72 → **8.8 ms** (~8×); P100 color ~138 → **31.6 ms**
+(~4.4×). Those old rows predated the mid-pipeline series **and** true half-band;
+again, do not attribute the whole jump to FP16 density alone.
 
-The GPU pipeline processes pixels at the following rates (whole pipeline,
-not just render):
+### Measured throughput (compute-only, current production)
 
-| Pipeline | Resolution | A100 FP32 | A100 FP16 | P100 FP16 |
-|----------|-----------|-----------|-----------|-----------|
-| Color | 528x592 | 1.23 Gpx/s | 1.05 Gpx/s | 0.74 Gpx/s |
-| Motion | 960x544 | 0.73 Gpx/s | 0.89 Gpx/s | 0.39 Gpx/s |
+Pixel rates from remeasured compute and clip geometry (face 291×592×528;
+baby 291×960×544):
 
-Motion is slower per pixel because the Laplacian pyramid does 9 levels of
-decomposition and reconstruction, plus the IIR filter is sequential per
-location. FP16 motion on the A100 is faster per pixel than FP32 because
-the render stage's halved memory traffic more than compensates for the
-conversion overhead.
+| Pipeline | GPU | Compute | Gpx/s (approx) |
+|----------|-----|--------:|---------------:|
+| Color face | H100 FP32 | 4.9 ms | ~18.5 |
+| Color face | A100 FP32 | 8.8 ms | ~10.3 |
+| Color face | 3090 FP32 | 10.1 ms | ~9.0 |
+| Color face | P100 FP32 | 31.6 ms | ~2.9 |
+| Motion baby | H100 FP16 | 34.5 ms | ~4.4 |
+| Motion baby | A100 FP16 | 48.2 ms | ~3.2 |
+| Motion baby | 3090 FP16 | 75.1 ms | ~2.0 |
+
+Motion is slower per pixel (9-level Laplacian + sequential IIR). Full path
+including H2D/D2H is much lower on every GPU because transfers dominate.
 
 ### Realtime performance projection (H100, compute-only)
 

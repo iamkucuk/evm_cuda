@@ -32,6 +32,13 @@ H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
 product latency is a different problem (NVDEC/NVENC, async H2D).
 
+**Cross-GPU note:** Older H100 (~85 ms motion) and A100 (~209 ms motion) doc
+numbers predate this mid-pipeline series. Remeasuring them *after* TN IIR /
+sticky / pool / smem-down (and later true half-band) shows ~2.4× (H100) and
+~3.8× (A100) on motion FP32 — that is the series landing on those GPUs, not
+half-band alone. Half-band / dense smem is the extra FP16 edge (3090 motion
+0.83×; H100 only 0.96× because the path is already tiny and transfer-bound).
+
 Stage tables for each keep are in this post. Pre/post CUDA FP32 A/B on
 baby.mp4 (same params, tree before this series vs production): not
 bit-identical; float max abs 1/255, float RMSE ~1.5e-6, 66 of ~456M uint8
