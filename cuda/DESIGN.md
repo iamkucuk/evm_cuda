@@ -106,6 +106,7 @@ FP64. Fresh remeasure (1 warmup + median of 7):
 | GPU | Motion FP32 | Motion FP16 | ratio |
 |---|---:|---:|---:|
 | RTX 3090 | **90.4 ms** | **75.1 ms** | **0.83×** |
+| A100 80GB | **54.4 ms** | **48.2 ms** | **0.89×** |
 | H100 80GB | **35.8 ms** | **34.5 ms** | **0.96×** |
 
 Accuracy vs CUDA FP32 (baby): RMSE **0.00232**, max **5** LSB.
@@ -117,14 +118,16 @@ remeasure:
 
 | GPU / clip | Color FP32 | Color FP16 | ratio |
 |---|---:|---:|---:|
-| 3090 / face | **10.1 ms** | **7.8 ms** | **0.77×** |
-| 3090 / baby | **15.8 ms** | **12.2 ms** | **0.77×** |
-| H100 / face | **4.9 ms** | **4.4 ms** | **0.90×** |
 | P100 / face | **31.6 ms** | **27.1 ms** | **0.86×** |
+| 3090 / face | **10.1 ms** | **7.8 ms** | **0.77×** |
+| A100 / face | **8.8 ms** | **8.2 ms** | **0.93×** |
+| H100 / face | **4.9 ms** | **4.4 ms** | **0.90×** |
+| 3090 / baby | **15.8 ms** | **12.2 ms** | **0.77×** |
 
 Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
-Source: `benches/bench_osiris_3090.json`, `benches/bench_truba_h100.json`,
-`benches/bench_kaggle_p100.json`. Motion OOM on P100 16 GB (both precisions).
+Source: `benches/bench_osiris_3090.json`, `benches/bench_truba_a100.json`,
+`benches/bench_truba_h100.json`, `benches/bench_kaggle_p100.json`.
+P100 motion OOM in multi-config harness (standalone FP16 peak ~8–9 GB).
 
 ## Precision rationale
 

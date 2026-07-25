@@ -83,6 +83,15 @@ Motion compute FPS (291 frames): FP32 **~3,220**, FP16 **~3,870**. Mid-pipeline
 history (**~934 → ~100 ms** FP32 before half-band density work) is in
 [further optimizations](docs/blog_further_optimizations.md).
 
+### A100-80GB (TRUBA `palamut-cuda`, fresh process per config)
+
+| Pipeline | Compute | Full | FP16/FP32 |
+|----------|--------:|-----:|----------:|
+| Motion FP32 / FP16 (baby) | **54.4 / 48.2 ms** | 252 / 246 ms | **0.89×** |
+| Color FP32 / FP16 (face) | **8.8 / 8.2 ms** | 115 / 113 ms | **0.93×** |
+
+Source: `benches/bench_truba_a100.json`.
+
 ### Accuracy (same builds)
 
 | Compare | RMSE | max abs | max LSB |
@@ -92,7 +101,7 @@ history (**~934 → ~100 ms** FP32 before half-band density work) is in
 
 Both stay under the end-to-end RMSE &lt; 0.01 gate vs Python.
 
-FP16 motion peak VRAM is ~12 GB (vs ~23 GB FP32) but sticky pyramid scratch still needs **≥24 GB** for full baby motion on this path — Kaggle **P100 16 GB** runs color (**31.6 / 27.1 ms** FP32/FP16) and skips motion (OOM). Detailed stage tables and
+Measured motion FP16 peak is about **8–9 GB** alone on baby.mp4 (vs ~23 GB FP32). Kaggle **P100 16 GB** measures color (**31.6 / 27.1 ms** FP32/FP16); motion was OOM in the multi-config harness (pool residual after color/FP32) — isolated FP16 may still fit 16 GB. Prefer ≥24 GB for comfortable whole-clip motion. Detailed stage tables and
 methodology: [blog_speedup.md](docs/blog_speedup.md) (multi-GPU history) and
 [blog_further_optimizations.md](docs/blog_further_optimizations.md) (3090 arc).
 

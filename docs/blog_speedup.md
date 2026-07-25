@@ -375,9 +375,10 @@ delta), so FP16 halves the traffic completely (24 to 12 bytes).
 Precision: RMSE between FP32 and FP16 output is 0.0016 for motion, which
 is 6.2x under the 0.01 end-to-end tolerance. The maximum per-pixel error
 is 3/255 (3 uint8 quantization steps). For color FP16, the uint8 output
-differs from FP32 by at most 2 LSB per channel. The FP16 motion pipeline
-also halves peak VRAM from 23 GB to 12 GB, fitting on 16 GB GPUs
-(tested on Kaggle Tesla P100).
+differs from FP32 by at most 2 LSB per channel. Standalone motion FP16 peaks about **8–9 GB** on baby.mp4 (measured on
+RTX 3090). Rough “half of FP32 (~23 GB) ⇒ ~12 GB” is only a ballpark.
+Whole-clip motion can still OOM on 16 GB if the process is warm (pool/
+sticky residual after other configs); a clean FP16-only process may fit.
 
 ## Throughput and theoretical limits
 
@@ -415,16 +416,18 @@ than FP32 (0.96× and 0.90× respectively). Full-path totals stay transfer-bound
 
 | GPU | BW | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |-----|-----|-----------|-----------|------------|------------|
-| **P100** (16GB, sm_60) | 732 GB/s | **31.6 ms** | **27.1 ms** | OOM (16 GB) | OOM (16 GB) |
+| **P100** (16GB, sm_60) | 732 GB/s | **31.6 ms** | **27.1 ms** | OOM in matrix* | OOM in matrix* |
 | **RTX 3090** (24GB, sm_86) | ~936 GB/s | **10.1 ms** | **7.8 ms** | **90.4 ms** | **75.1 ms** |
-| **A100** (80GB, sm_80) | 1,935 GB/s | 72 ms† | 84 ms† | 209 ms† | 172 ms† |
+| **A100** (80GB, sm_80) | 1,935 GB/s | **8.8 ms** | **8.2 ms** | **54.4 ms** | **48.2 ms** |
 | **H100** (80GB, sm_90) | 3,350 GB/s | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
 
-Current production remeasure (true half-band + dense smem): P100 Kaggle
-(`benches/bench_kaggle_p100.json`), 3090 osiris, H100 TRUBA. Color clips are
-`face.mp4`; motion is `baby.mp4`. Motion still peaks above 16 GB even in FP16
-on this path (sticky pyramid scratch + bands), so P100 skips motion; use ≥24 GB
-for full baby motion. †A100 rows are historical (pre true half-band).
+Current production remeasure (true half-band + dense smem; 1 warmup + median of 7):
+P100 Kaggle (`benches/bench_kaggle_p100.json`), 3090 osiris
+(`benches/bench_osiris_3090.json`), A100 TRUBA palamut-cuda
+(`benches/bench_truba_a100.json`), H100 TRUBA kolyoz-cuda
+(`benches/bench_truba_h100.json`). Color = `face.mp4`; motion = `baby.mp4`.
+Standalone motion FP16 peaks ~8–9 GB; *P100 motion OOM was in the multi-config
+harness (pool residual). Prefer ≥24 GB for comfortable whole-clip motion.
 
 ### Measured throughput
 

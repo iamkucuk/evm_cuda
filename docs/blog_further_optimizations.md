@@ -26,7 +26,7 @@ frames at 960x544, 9 levels, FP32 motion *compute only*):
 | After coalesced TN IIR + sticky lpyr scratch | ~377-407 ms |
 | After DeviceBuffer free-list + smem fused downsample | ~96-104 ms |
 | Total (series) | about 9x mid-pipeline compute |
-| **Current production (remeasured)** | **3090: 90.4 / 75.1 ms; H100: 35.8 / 34.5 ms (FP32/FP16)** |
+| **Current production (remeasured)** | **3090 90.4/75.1; A100 54.4/48.2; H100 35.8/34.5 (FP32/FP16 motion)** |
 
 H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
@@ -424,7 +424,7 @@ new isolation A/B that beats separable on recon and build.
 | DeviceMemPool | ~113-133 | ~7-8x |
 | Layout foundation | ~106-110 | ~8.5x |
 | Smem fused down | ~96-104 | ~9x |
-| True half bands + dense smem (remeasured) | **3090 90.4/75.1; H100 35.8/34.5** | **~10× / ~12× on 3090** |
+| True half bands + dense smem (remeasured) | **3090 90.4/75.1; A100 54.4/48.2; H100 35.8/34.5** | **~10× / ~12× on 3090** |
 
 ### Current production stage table (3090, baby motion)
 
@@ -445,8 +445,9 @@ Same-day color (fresh process each): face compute **10.1 → 7.8 ms** (0.77×);
 baby color compute **15.8 → 12.2 ms** (0.77×). Accuracy: motion FP16 vs CUDA
 FP32 RMSE **0.00232** / max **5** LSB; color face RMSE **0.00071** / max **1** LSB.
 
-H100 remeasure (same code, `benches/bench_truba_h100.json`): motion compute
-**35.8 → 34.5 ms**; color face **4.9 → 4.4 ms**.
+Cross-GPU remeasure (same code): A100 motion **54.4 → 48.2 ms**, color face
+**8.8 → 8.2 ms** (`benches/bench_truba_a100.json`); H100 motion **35.8 → 34.5 ms**,
+color face **4.9 → 4.4 ms** (`benches/bench_truba_h100.json`).
 
 A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames on
 3090 FP32) lands around 190-200 FPS of pure mid-pipeline. VRAM may force tiling
