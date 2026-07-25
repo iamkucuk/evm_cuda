@@ -57,3 +57,28 @@ def test_ntsc_f32_to_bgr_u8_matches_baseline():
     assert got.shape == expected.shape == (64, 48, 3)
     # Up to 1 LSB of rounding difference between CUDA rintf and numpy.
     assert (got.astype(int) - expected.astype(int)).max() <= 1
+
+
+@skip_no_cuda
+def test_batched_bgr_u8_to_ntsc_f16_near_f32():
+    """Fused u8→half NTSC matches float NTSC after promote (half rounding)."""
+    from evm_cuda.batched import DeviceBuffer
+
+    rng = np.random.default_rng(3)
+    T, H, W = 2, 32, 24
+    bgr = rng.integers(0, 256, size=(T, H, W, 3), dtype=np.uint8)
+    d_in = DeviceBuffer.from_array(np.ascontiguousarray(bgr))
+
+    d_f32 = DeviceBuffer(T * H * W * 3 * 4)
+    _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_in.ptr, d_f32.ptr, T, H, W)
+    ref = d_f32.download_f32(T * H * W * 3)
+
+    d_f16 = DeviceBuffer(T * H * W * 3 * 2)
+    _evm_cuda.batched_bgr_u8_to_ntsc_f16(d_in.ptr, d_f16.ptr, T, H, W)
+    d_prom = DeviceBuffer(T * H * W * 3 * 4)
+    _evm_cuda.f16_to_f32(d_f16.ptr, d_prom.ptr, T * H * W * 3)
+    got = d_prom.download_f32(T * H * W * 3)
+
+    err = abs_err(got, ref)
+    assert err < 2e-3, f"fused half NTSC vs float NTSC err={err:.2e}"
+

@@ -255,28 +255,6 @@ __global__ void band_subtract_f16_to_f16_kernel(
     dst[idx] = __float2half(__half2float(a[idx]) - __half2float(b[idx]));
 }
 
-// Legacy: FP16 scratch -> float band (kept only if any caller remains).
-__global__ void band_subtract_f16_kernel(
-    const __half* __restrict__ a,
-    const __half* __restrict__ b,
-    float* __restrict__ dst,
-    int n)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
-    dst[idx] = __half2float(a[idx]) - __half2float(b[idx]);
-}
-
-__global__ void band_copy_f16_to_f32_kernel(
-    const __half* __restrict__ src,
-    float* __restrict__ dst,
-    int n)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
-    dst[idx] = __half2float(src[idx]);
-}
-
 void launch_band_subtract_f16_to_f16(const __half* a, const __half* b, __half* dst,
                                     int n, cudaStream_t stream) {
     if (n <= 0) return;
@@ -285,21 +263,6 @@ void launch_band_subtract_f16_to_f16(const __half* a, const __half* b, __half* d
     band_subtract_f16_to_f16_kernel<<<grid, block, 0, stream>>>(a, b, dst, n);
 }
 
-void launch_band_subtract_f16(const __half* a, const __half* b, float* dst,
-                              int n, cudaStream_t stream) {
-    if (n <= 0) return;
-    dim3 block(256, 1, 1);
-    dim3 grid(div_up(n, 256), 1, 1);
-    band_subtract_f16_kernel<<<grid, block, 0, stream>>>(a, b, dst, n);
-}
-
-void launch_band_copy_f16_to_f32(const __half* src, float* dst,
-                                 int n, cudaStream_t stream) {
-    if (n <= 0) return;
-    dim3 block(256, 1, 1);
-    dim3 grid(div_up(n, 256), 1, 1);
-    band_copy_f16_to_f32_kernel<<<grid, block, 0, stream>>>(src, dst, n);
-}
 
 // FP16 gather/add for recon_f16 (bands and scratch both __half).
 __global__ void band_add_f16_kernel(
