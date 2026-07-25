@@ -948,46 +948,37 @@ PYBIND11_MODULE(_evm_cuda, m) {
             float*       out_p = reinterpret_cast<float*>(d_out);
             const float* filt  = reinterpret_cast<const float*>(d_filt);
 
-            // sticky 2-slot scratch
+            // Two sticky slots for intermediate levels. First level reads the
+            // caller's input (no full-frame D2D copy); last level writes out_p.
             const size_t slot = static_cast<size_t>(M) * H * W;
             float* scratch_base = sticky_f32_slots(slot, 2);
-            float* scratch_a = scratch_base;
-            float* scratch_b = scratch_base + slot;
+            float* s0 = scratch_base;
+            float* s1 = scratch_base + slot;
 
-            // cur := input (M slices, batched D2D copy).
-            CUDA_CHECK(cudaMemcpyAsync(scratch_a, in_p,
-                static_cast<size_t>(M) * H * W * sizeof(float),
-                cudaMemcpyDeviceToDevice, 0));
-
-            float* cur = scratch_a;
-            float* nxt = scratch_b;
+            const float* cur = in_p;
+            float* nxt = s0;
             int ch = H, cw = W;
             for (int l = 0; l < nlevs; ++l) {
                 int wn = (cw + 1) / 2;
                 int hn = (ch + 1) / 2;
-                // OpenCV-style smem fused cols+rows (no intermediate global).
+                const bool last = (l + 1 == nlevs);
+                float* dst = last ? out_p : nxt;
                 evm::launch_corr_dn_fused_smem_batched(
-                    cur, nxt, ch, cw, filt, filt_len,
+                    cur, dst, ch, cw, filt, filt_len,
                     ch * cw, hn * wn, M, 0);
-                float* tmp = cur; cur = nxt; nxt = tmp;
+                if (!last) {
+                    cur = dst;
+                    nxt = (dst == s0) ? s1 : s0;
+                }
                 ch = hn; cw = wn;
             }
-
-            // Copy final result to output.
-            CUDA_CHECK(cudaMemcpyAsync(out_p, cur,
-                static_cast<size_t>(M) * ch * cw * sizeof(float),
-                cudaMemcpyDeviceToDevice, 0));
-
-            // sticky scratch retained
         }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
            py::arg("H"), py::arg("W"), py::arg("nlevs"),
            py::arg("d_filt"), py::arg("filt_len"));
 
     // --- FP16 blur_dn_color: reads __half NTSC planar, writes FP32 gdown -----
-    // The FP16 color pipeline stores NTSC as __half (halving the dominant
-    // persistent buffer). The downsample output stays FP32 because the FFT
-    // bandpass needs float input. Scratch is also __half to match the input.
-    // Same frame-major ping-pong structure as the FP32 variant.
+    // Downsample in half (dense smem via templated corr_dn), convert only the
+    // tiny final gdown to float for cuFFT. No full-frame input D2D copy.
     m.def("batched_blur_dn_color_f16",
         [](uintptr_t d_in, uintptr_t d_out, int M, int H, int W, int nlevs,
            uintptr_t d_filt, int filt_len) {
@@ -996,16 +987,14 @@ PYBIND11_MODULE(_evm_cuda, m) {
             const float* filt  = reinterpret_cast<const float*>(d_filt);
 
             const size_t slot = static_cast<size_t>(M) * H * W;
+            // Two half slots: ping-pong intermediate levels (cannot write out
+            // as half — final stage converts to float out_p).
             __half* scratch_base = sticky_f16_slots(slot, 2);
             __half* scratch_a = scratch_base;
             __half* scratch_b = scratch_base + slot;
 
-            CUDA_CHECK(cudaMemcpyAsync(scratch_a, in_p,
-                static_cast<size_t>(M) * H * W * sizeof(__half),
-                cudaMemcpyDeviceToDevice, 0));
-
-            __half* cur = scratch_a;
-            __half* nxt = scratch_b;
+            const __half* cur = in_p;
+            __half* nxt = scratch_a;
             int ch = H, cw = W;
             for (int l = 0; l < nlevs; ++l) {
                 int wn = (cw + 1) / 2;
@@ -1013,14 +1002,13 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 evm::launch_corr_dn_fused_smem_batched_f16(
                     cur, nxt, ch, cw, filt, filt_len,
                     ch * cw, hn * wn, M, 0);
-                __half* tmp = cur; cur = nxt; nxt = tmp;
+                cur = nxt;
+                nxt = (nxt == scratch_a) ? scratch_b : scratch_a;
                 ch = hn; cw = wn;
             }
 
-            // Convert the final __half result to FP32 for the FFT bandpass.
+            // Final gdown is small (hl*wl*M); convert half → float for FFT.
             evm::launch_f16_to_f32(cur, out_p, static_cast<size_t>(M) * ch * cw, 0);
-
-            // sticky retained
         }, py::arg("d_in"), py::arg("d_out"), py::arg("M"),
            py::arg("H"), py::arg("W"), py::arg("nlevs"),
            py::arg("d_filt"), py::arg("filt_len"));
