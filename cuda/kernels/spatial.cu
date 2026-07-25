@@ -774,9 +774,76 @@ __global__ void corr_dn_fused_smem_batched_kernel(
 
 
 // ===========================================================================
-// EXPERIMENT: half-accumulate fused corr_dn (f16 path only).
-// Shared tile + MACs in __half; FP32 production path untouched.
-// Numerics differ from float-acc; measure vs float-acc f16.
+// Production f16 downsample: keep __half in smem (dense), float MAC.
+// Fixes the templated path which expanded every load into float smem.
+// ===========================================================================
+__global__ void corr_dn_fused_smem_batched_f16_floatacc_kernel(
+    const __half* __restrict__ in,
+    __half* __restrict__ out,
+    int H, int W, const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int xo0 = blockIdx.x * PD_BX;
+    const int yo0 = blockIdx.y * PD_BY;
+    const int b   = blockIdx.z;
+    const int Ho  = (H + 1) / 2;
+    const int Wo  = (W + 1) / 2;
+    if (b >= B) return;
+
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+
+    float f[5];
+#pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = filt[k];
+
+    __shared__ __half tile[PD_Y_IN][PD_X_IN];
+
+    const __half* sin = in + b * slice_stride_in;
+    const int y_base = 2 * yo0 - PD_HALO;
+    const int x_base = 2 * xo0 - PD_HALO;
+
+    const int tile_elems = PD_Y_IN * PD_X_IN;
+    const int tid = ty * PD_BX + tx;
+    const int nthreads = PD_BX * PD_BY;
+    for (int i = tid; i < tile_elems; i += nthreads) {
+        const int ly = i / PD_X_IN;
+        const int lx = i - ly * PD_X_IN;
+        const int gy = reflect1(y_base + ly, H);
+        const int gx = reflect1(x_base + lx, W);
+        tile[ly][lx] = sin[gy * W + gx];
+    }
+    __syncthreads();
+
+    const int xo = xo0 + tx;
+    const int yo = yo0 + ty;
+    if (xo >= Wo || yo >= Ho) return;
+
+    const int tcy = 2 * ty + PD_HALO;
+    const int tcx = 2 * tx + PD_HALO;
+
+    float mid[5];
+#pragma unroll
+    for (int ky = 0; ky < 5; ++ky) {
+        float acc_h = 0.0f;
+        const int ty_src = tcy + (ky - PD_HALO);
+#pragma unroll
+        for (int kx = 0; kx < 5; ++kx) {
+            acc_h += f[kx] * __half2float(tile[ty_src][tcx + (kx - PD_HALO)]);
+        }
+        mid[ky] = acc_h;
+    }
+    float acc = 0.0f;
+#pragma unroll
+    for (int ky = 0; ky < 5; ++ky) {
+        acc += f[ky] * mid[ky];
+    }
+    out[b * slice_stride_out + yo * Wo + xo] = __float2half(acc);
+}
+
+// ===========================================================================
+// EXPERIMENT: scalar half-accumulate (NOT the 2x Ampere half datapath).
+// Kept for A/B; packed __half2 is the real half-math experiment.
 // ===========================================================================
 __global__ void corr_dn_fused_smem_batched_halfacc_kernel(
     const __half* __restrict__ in,
@@ -842,6 +909,87 @@ __global__ void corr_dn_fused_smem_batched_halfacc_kernel(
     out[b * slice_stride_out + yo * Wo + xo] = acc;
 }
 
+// ===========================================================================
+// EXPERIMENT: packed __half2 downsample — true 2x half datapath on Ampere.
+// Each thread owns two consecutive output columns and uses __hfma2.
+// Block is (PD_BX/2, PD_BY) so the output tile width stays PD_BX.
+// ===========================================================================
+__global__ void corr_dn_fused_smem_batched_half2_kernel(
+    const __half* __restrict__ in,
+    __half* __restrict__ out,
+    int H, int W, const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    constexpr int TX = PD_BX / 2;  // 16: each thread writes 2 outputs
+    const int xo0 = blockIdx.x * PD_BX;
+    const int yo0 = blockIdx.y * PD_BY;
+    const int b   = blockIdx.z;
+    const int Ho  = (H + 1) / 2;
+    const int Wo  = (W + 1) / 2;
+    if (b >= B) return;
+
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+
+    __half f[5];
+#pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = __float2half(filt[k]);
+
+    __shared__ __half tile[PD_Y_IN][PD_X_IN];
+
+    const __half* sin = in + b * slice_stride_in;
+    const int y_base = 2 * yo0 - PD_HALO;
+    const int x_base = 2 * xo0 - PD_HALO;
+
+    const int tile_elems = PD_Y_IN * PD_X_IN;
+    const int tid = ty * TX + tx;
+    const int nthreads = TX * PD_BY;
+    for (int i = tid; i < tile_elems; i += nthreads) {
+        const int ly = i / PD_X_IN;
+        const int lx = i - ly * PD_X_IN;
+        const int gy = reflect1(y_base + ly, H);
+        const int gx = reflect1(x_base + lx, W);
+        tile[ly][lx] = sin[gy * W + gx];
+    }
+    __syncthreads();
+
+    const int xo = xo0 + 2 * tx;  // left of the output pair
+    const int yo = yo0 + ty;
+    if (xo >= Wo || yo >= Ho) return;
+
+    const int tcy = 2 * ty + PD_HALO;
+    // centers at input cols 2*xo and 2*(xo+1) -> tile x = 2*(2*tx)+HALO, +2
+    const int tcx0 = 2 * (2 * tx) + PD_HALO;
+
+    // mid holds horizontal results for (out_x, out_x+1) as packed half2
+    __half2 mid[5];
+#pragma unroll
+    for (int ky = 0; ky < 5; ++ky) {
+        __half2 acc_h = __float2half2_rn(0.0f);
+        const int ty_src = tcy + (ky - PD_HALO);
+#pragma unroll
+        for (int kx = 0; kx < 5; ++kx) {
+            // center0 tap: tcx0 + (kx-2); center1 tap: tcx0+2 + (kx-2) = tcx0 + kx
+            const __half2 samp = __halves2half2(
+                tile[ty_src][tcx0 + (kx - PD_HALO)],
+                tile[ty_src][tcx0 + kx]);
+            const __half2 fk = __halves2half2(f[kx], f[kx]);
+            acc_h = __hfma2(fk, samp, acc_h);
+        }
+        mid[ky] = acc_h;
+    }
+    __half2 acc = __float2half2_rn(0.0f);
+#pragma unroll
+    for (int ky = 0; ky < 5; ++ky) {
+        const __half2 fk = __halves2half2(f[ky], f[ky]);
+        acc = __hfma2(fk, mid[ky], acc);
+    }
+
+    __half* row = out + b * slice_stride_out + yo * Wo + xo;
+    row[0] = __low2half(acc);
+    if (xo + 1 < Wo) row[1] = __high2half(acc);
+}
+
 void launch_corr_dn_fused_smem_batched(const float* in, float* out,
                                        int H, int W, const float* filt, int filt_len,
                                        int stride_in, int stride_out, int B,
@@ -862,8 +1010,8 @@ void launch_corr_dn_fused_smem_batched_f16(const __half* in, __half* out,
     const int Wo = (W + 1) / 2;
     dim3 block(PD_BX, PD_BY, 1);
     dim3 grid(div_up(Wo, PD_BX), div_up(Ho, PD_BY), B);
-    // Production: float accumulate (cvt_in/out). Half-acc: *_f16_halfacc.
-    corr_dn_fused_smem_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
+    // Production: half smem + float MAC (no float tile expand).
+    corr_dn_fused_smem_batched_f16_floatacc_kernel<<<grid, block, 0, stream>>>(
         in, out, H, W, filt, filt_len, stride_in, stride_out, B);
 }
 
@@ -876,6 +1024,18 @@ void launch_corr_dn_fused_smem_batched_f16_halfacc(const __half* in, __half* out
     dim3 block(PD_BX, PD_BY, 1);
     dim3 grid(div_up(Wo, PD_BX), div_up(Ho, PD_BY), B);
     corr_dn_fused_smem_batched_halfacc_kernel<<<grid, block, 0, stream>>>(
+        in, out, H, W, filt, filt_len, stride_in, stride_out, B);
+}
+
+void launch_corr_dn_fused_smem_batched_f16_half2(const __half* in, __half* out,
+                                       int H, int W, const float* filt, int filt_len,
+                                       int stride_in, int stride_out, int B,
+                                       cudaStream_t stream) {
+    const int Ho = (H + 1) / 2;
+    const int Wo = (W + 1) / 2;
+    dim3 block(PD_BX / 2, PD_BY, 1);  // each thread writes 2 outputs
+    dim3 grid(div_up(Wo, PD_BX), div_up(Ho, PD_BY), B);
+    corr_dn_fused_smem_batched_half2_kernel<<<grid, block, 0, stream>>>(
         in, out, H, W, filt, filt_len, stride_in, stride_out, B);
 }
 
