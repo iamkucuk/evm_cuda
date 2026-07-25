@@ -86,30 +86,14 @@ __global__ void add_and_quantize_kernel(
     bgr_out[px + 2] = static_cast<unsigned char>(rintf(r * 255.0f));
 }
 
-// Fused add + NTSC->BGR quantize reading delta from PLANAR layout.
+// Fused add + NTSC->BGR quantize reading delta from PLANAR channel-outer layout.
 //
-// The motion pipeline's lpyr_recon outputs delta in planar (n*3, H, W) layout
-// (frame-major, then channel). The existing add_and_quantize expects interleaved
-// (n, H, W, 3) delta — requiring a separate planar_to_interleaved_3ch transpose
-// pass first. This variant reads the 3 delta channels directly from planar
-// layout, folding the transpose inline and eliminating the intermediate buffer
-// + one full-res kernel pass.
-//
-// Fused add + NTSC->BGR quantize reading delta from PLANAR layout.
-//
-// The motion pipeline's lpyr_recon outputs delta in planar (n*3, H, W) layout
-// (frame-major, then channel). The existing add_and_quantize expects interleaved
-// (n, H, W, 3) delta, requiring a separate planar_to_interleaved_3ch transpose
-// pass first. This variant reads the 3 delta channels directly from planar
-// layout, folding the transpose inline and eliminating the intermediate buffer
-// + one full-res kernel pass.
-//
-// Planar delta layout: delta[(f*3 + c) * H * W + y * W + x] for frame f, chan c.
+// Motion recon writes delta as (3*n, H, W) channel-outer: m' = c*n + f
+// (plane base = (c*n + f)*H*W). Interleaved add_and_quantize would need a
+// planar_to_interleaved pass first; this kernel folds that read inline.
 //
 // Grid: (ceil(W/(32*ELEMS)), ceil(H/32), n)  Block: (32, 32, 1)
-// Each thread processes ELEMS adjacent pixels along x (multiple elements per
-// thread). This amortizes the per-pixel overhead and gives the
-// compiler independent memory operations to pipeline for latency hiding.
+// Each thread processes ELEMS adjacent pixels along x (latency hiding).
 constexpr int ADD_PLANAR_ELEMS = 4;
 
 template <typename NTSC_T>
@@ -126,10 +110,11 @@ __global__ void add_planar_quantize_kernel(
 
     const int spatial_base = y * W + x0;
     const int px_base = (f * H * W + spatial_base) * 3;
-    const NTSC_T* dplane = delta_planar + static_cast<size_t>(f) * 3 * H * W;
-    const NTSC_T* dy_plane = dplane;
-    const NTSC_T* di_plane = dplane + H * W;
-    const NTSC_T* dq_plane = dplane + 2 * H * W;
+    // delta_planar is channel-outer: m' = c*n + f (matches motion recon).
+    const int plane = H * W;
+    const NTSC_T* dy_plane = delta_planar + static_cast<size_t>(0 * n + f) * plane;
+    const NTSC_T* di_plane = delta_planar + static_cast<size_t>(1 * n + f) * plane;
+    const NTSC_T* dq_plane = delta_planar + static_cast<size_t>(2 * n + f) * plane;
 
     #pragma unroll
     for (int e = 0; e < ADD_PLANAR_ELEMS; ++e) {
@@ -178,6 +163,34 @@ void launch_apply_channel_gain(float* sig, int H, int W,
     dim3 block(32, 32, 1);
     dim3 grid(div_up(W, 32), div_up(H, 32), 1);
     apply_channel_gain_kernel<<<grid, block, 0, stream>>>(sig, H, W, g0, g1, g2);
+}
+
+// Batched variant: n frames at once via grid.z. Per-thread math is identical
+// to the single-frame kernel; each frame is an independent (H,W,3) plane.
+// Used by the device-resident color bandpass to fold `filt * gain` into a
+// single launch instead of a Python loop or host-side numpy multiply.
+// Grid: (ceil(W/32), ceil(H/32), n)  Block: (32, 32, 1)
+__global__ void apply_channel_gain_batched_kernel(
+    float* __restrict__ sig, int n, int H, int W,
+    float g0, float g1, float g2)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int f = blockIdx.z;
+    if (x >= W || y >= H || f >= n) return;
+    const int px = (static_cast<size_t>(f) * H * W + y * W + x) * 3;
+    sig[px + 0] *= g0;
+    sig[px + 1] *= g1;
+    sig[px + 2] *= g2;
+}
+
+void launch_apply_channel_gain_batched(float* sig, int n, int H, int W,
+                                       float g0, float g1, float g2,
+                                       cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(W, 32), div_up(H, 32), n);
+    apply_channel_gain_batched_kernel<<<grid, block, 0, stream>>>(
+        sig, n, H, W, g0, g1, g2);
 }
 
 void launch_attenuate_chrom(float* delta, int H, int W, float chrom_att,

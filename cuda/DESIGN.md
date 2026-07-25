@@ -15,6 +15,9 @@ reference for the numerical contract.
 | GPU | Portable: `sm_60 sm_70 sm_80 sm_89 sm_90` | One `.so` covers P100 through H100 |
 | Precision | FP32 hot path + FP64 IIR accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
 
+Further mid-pipeline writeup:
+[`docs/blog_further_optimizations.md`](../docs/blog_further_optimizations.md).
+
 ## Repository layout
 
 ```
@@ -31,7 +34,7 @@ cuda/
 │   ├── iir_bandpass.cu    # per-pixel FP64-state r1/r2 recursion
 │   ├── butter_bandpass.cu # 1st-order Butter via scipy coeffs (host)
 │   ├── ideal_bandpass.cu  # cuFFT C2C batched + mask kernel + 1/T normalize
-│   ├── lpyr.cu            # build/recon (single-slice) + scatter/gather (batched)
+│   ├── lpyr.cu            # build/recon (single-slice) + contiguous band ops
 │   ├── blur_dn.cu         # blur_dn (single-slice; batched variant is in bindings.cpp)
 │   └── amplify_render.cu  # add+quantize, fused upsample+add, fused planar+add
 ├── bindings.cpp           # pybind11 module: per-kernel + batched_* wrappers,
@@ -70,19 +73,21 @@ cuda/
 
 | Operation | CUDA kernel | Grid / Block | Notes |
 |---|---|---|---|
-| Batched corr_dn/up_conv | `spatial.cu:*_batched_kernel` | `(⌈W/32⌉,⌈Ho/32⌉,B) / (32,32,1)` | B=M slices via grid.z; identical per-thread math |
-| Batched lpyr_build | `bindings.cpp:batched_lpyr_build` | host loop over levels | scatter_subtract for channel-major band writes |
-| Batched lpyr_recon | `bindings.cpp:batched_lpyr_recon` | host loop over levels | gather/gather_add for channel-major band reads |
-| Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | frame-major output, no scatter needed |
-| Scatter/gather | `lpyr.cu:scatter_subtract/gather/gather_add/scatter` | `(⌈n/256⌉,B) / (256,1,1)` | bridges frame-major scratch ↔ channel-major bands |
-| Scaled transpose | `transpose.cu:nt_to_thwc_kernel` (+scale param) | `(⌈N/256⌉) / (256,1,1)` | folds alpha amplification into transpose |
-| Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel<NTSC_T>` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render; templated on NTSC type (float/__half); filt stays float* (FFT output) |
-| Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel<NTSC_T>` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion pipeline render; templated on NTSC type |
-| cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N); eliminates per-call plan creation |
-| Multiple elements/thread | render + transpose kernels | 4 px/thread via `#pragma unroll` | pipelines independent reads for latency hiding (22% render) |
-| FP16 storage (both pipelines) | All batched kernels templated on In/Out type | `cvt_in`/`cvt_out` in evm_common.cuh | __half storage, FP32 compute, FP64 IIR accumulator unchanged |
-| FP16 blur_dn_color | `bindings.cpp:batched_blur_dn_color_f16` | host loop over nlevs | reads __half NTSC planar, downsamples in FP16 scratch, converts to FP32 for FFT |
-| FP16 conversion | `fp16_cvt.cu:f32_to_f16 / f16_to_f32` | `(⌈n/256⌉) / (256,1,1)` | one-time conversion at NTSC creation boundary |
+| Smem fused corr_dn (down) | `spatial.cu:corr_dn_fused_smem_batched` | `(⌈Wo/32⌉,⌈Ho/8⌉,B) / (32,8,1)` | Production build/blur; cols→rows in smem |
+| Separable up_conv | `spatial.cu:up_conv_{rows,cols}_batched` | `(⌈W/32⌉,⌈H/8⌉,B) / (32,8,1)` | Production recon/build up; fused up **not** wired |
+| Batched lpyr_build | `bindings.cpp:batched_lpyr_build` | host loop over levels | smem fused down + sep up + **contiguous** `band_subtract` |
+| Batched lpyr_recon | `bindings.cpp:batched_lpyr_recon` | host loop over levels | sep up + contiguous `band_add` |
+| Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | smem fused down; frame-major (color) or as called |
+| Contiguous band ops | `lpyr.cu:band_subtract/band_add` | `(⌈n/256⌉) / (256,1,1)` | channel-outer affine; no offset table |
+| TN IIR (+scale) | `iir_bandpass.cu:iir_bandpass_tn_kernel` | `(⌈N/256⌉) / (256,1,1)` | motion Stage C; no transpose sandwich |
+| Scaled transpose | `transpose.cu:nt_to_thwc_kernel` (+scale) | `(⌈N/256⌉) / (256,1,1)` | color / legacy layout helpers |
+| Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render |
+| Fused planar+add+quant | `amplify_render.cu:add_planar_quantize_kernel` | `(⌈W/32⌉,⌈H/32⌉,n) / (32,32,1)` | motion render; **channel-outer** delta |
+| Planar 3ch (frame / chan-outer) | `transpose.cu:to_planar_3ch*` | `(⌈n*HW/256⌉) / (256,1,1)` | color: frame-major; motion: `*_chan_outer` |
+| DeviceMemPool | `bindings.cpp:DeviceMemPool` | n/a | free-list by size for pipeline DeviceBuffers |
+| Sticky lpyr scratch | `bindings.cpp:sticky_f*_slots` | n/a | grow-only scratch for build/recon/blur |
+| cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N) |
+| FP16 conversion | `fp16_cvt.cu:f32_to_f16 / f16_to_f32` | `(⌈n/256⌉) / (256,1,1)` | motion f16: build still writes float bands then convert |
 
 ## FP16 storage rationale
 
@@ -154,20 +159,24 @@ round-trip. Verified against numpy's behaviour in `tests/cuda/test_spatial.py`
 indirectly (the per-band `<1e-5` assertions fail immediately if reflection
 is off-by-one).
 
-## Layout choice: (T,H,W,C) ↔ (N,T)
+## Layout choice: motion bands vs color FFT
 
-The video arrives as `(T,H,W,C)` row-major (T-stride = `H*W*C`). The
-temporal filters want each spatial location's length-T series contiguous, so
-we transpose to `(N,T)` with `N = H*W*C` before the filter kernel, and back
-after. (`transpose.cu`).
+**Motion (production IIR):** Laplacian bands are stored **channel-outer**
+`(level, channel, frame, spatial)` so each `(level, channel)` block is
+contiguous **`(T, N)`**. Stage C runs `batched_iir_bandpass_tn` **in place**
+(addr `t*N+n`) with alpha folded into the write scale — **no**
+`thwc_to_nt` / `nt_to_thwc` sandwich.
 
-Alternative considered: leave `(T,H,W,C)` and let the IIR kernel do strided
-T-access. Rejected — strided reads along T are uncoalesced and the
-bandwidth hit dwarfs the transpose cost.
+Spatial scratch during build/recon is also channel-outer after
+`batched_to_planar_3ch_chan_outer` (`m' = c*n + f`), so band writes are
+contiguous (`band_subtract` / `band_add`), not irregular scatter.
 
-For cuFFT, the `(N,T)` layout maps directly onto `cufftPlanMany` with
-`istride=1, idist=T` — exactly the fastest cuFFT configuration for batched
-1-D transforms.
+**Color (cuFFT ideal bandpass):** still uses `(N,T)` via
+`thwc_to_nt` / plan-many with `istride=1, idist=T` — fastest batched 1-D
+cuFFT layout. That path is separate from motion Stage C.
+
+Alternative rejected for motion IIR: keep frame-major bands and walk
+strided `n*T+t` — uncoalesced; measured ~12× worse than TN on probes.
 
 ## Pipeline composition
 
@@ -188,15 +197,20 @@ What's on-device vs on-host (batched.py):
 |---|---|---|
 | Frame read, drop-last-10, fps | Host | I/O-bound, OpenCV VideoCapture |
 | NTSC convert | Device (batched) | Per-pixel matvec, all frames at once |
-| Pyramid build/recon, blur_dn | Device (batched spatial kernels) | grid.z = M slices per launch |
-| Temporal filter | Device | On-device transpose + IIR, alpha folded into transpose |
+| Pyramid build/recon, blur_dn | Device (batched spatial) | smem fused down + sep up; sticky scratch |
+| Temporal filter (motion) | Device | TN IIR in place on channel-outer bands; alpha as scale |
+| Temporal filter (color) | Device | planar + cuFFT ideal on `(N,T)` |
 | Figure-6 schedule | Host | Small `n_levels`-length float array |
-| Fused render (upsample/planar + add + quant) | Device | Eliminates intermediate buffers |
-| Video encode | Host | PyAV (libx264, H.264 yuv420p +faststart) |
+| Fused render | Device | planar add+quant (motion) / upsample+add+quant (color) |
+| Video encode | Host | PyAV (libx264) |
 
-The only remaining host round-trip in the color pipeline is Stage 2b
-(downsampled clip D2H + reshape for the per-channel ideal_bandpass). The
-motion pipeline is fully device-resident through Stages A–D.
+The color bandpass (Stage 2b) is fully device-resident: the previous host
+round-trip (downsampled clip D2H + reshape for the per-channel
+ideal_bandpass) is replaced by a single unified cuFFT call over
+`(N=hl*wl*3, T=n)` plus device-resident transpose/gain kernels. Both
+pipelines now run device-resident through all intermediate stages; the only
+remaining host round-trips are the input clip H2D at entry and the uint8
+output D2H at exit.
 
 ## Known divergences from MATLAB (intentional)
 

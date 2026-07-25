@@ -222,8 +222,11 @@ def run(
     free = gpu_free_bytes()
     result = BenchResult(pipeline=pipeline, precision=precision, gpu=gpu_name(),
                          output_path=str(out_path) if out_path else None)
-    # 1.15x safety margin on the (rough) estimate.
-    if free and need * 1.15 > free:
+    # DeviceBuffer is pool-backed: freed blocks stay on the device and
+    # nvidia-smi "free" under-reports reusable capacity after a warm run.
+    # Only hard-skip when free is tiny (true pressure). Otherwise rely on
+    # OOM handlers below.
+    if free and free < 256 * 1024 * 1024:
         result.notes = (f"skipped (insufficient VRAM: need ~{need/1e9:.1f} GB, "
                         f"have {free/1e9:.1f} GB free)")
         return result

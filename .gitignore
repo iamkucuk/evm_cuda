@@ -33,3 +33,10 @@ kaggle/results*/
 
 # Generated profiling artifacts
 comparison_results.json
+
+# Local dumps / one-off media (not product assets)
+docs/video/heartbeat_comparison.mp4
+docs/video/promo_15s.mp4
+kaggle/baseline_kernel/
+kaggle/tests_kernel/
+*.npy
