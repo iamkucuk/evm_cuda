@@ -335,3 +335,68 @@ def test_batched_upsample_add_quantize_f16_matches_fp32():
     # matrix multiply can flip the final rintf by 1).
     diff = np.abs(out.astype(np.int16) - ref.astype(np.int16))
     assert diff.max() <= 2, f"FP16 vs FP32 output differs by {diff.max()} (max allowed: 2)"
+
+
+# ---------------------------------------------------------------------------
+# True half-band lpyr_build_f16 (no float band materialization)
+# ---------------------------------------------------------------------------
+
+@skip_no_cuda
+@pytest.mark.parametrize("h,w", [(64, 64), (45, 33)])
+def test_batched_lpyr_build_f16_half_bands_near_fp32(h, w):
+    """batched_lpyr_build_f16 writes __half bands (not float + cast).
+
+    Contract:
+    - d_out is half storage (nbytes = n_halves * 2)
+    - After f16→f32 promote, matches FP32 batched_lpyr_build within loose tol
+    """
+    rng = np.random.default_rng(11)
+    n_frames = 3
+    levels = 1 + max_pyr_ht((h, w), 5)
+    M = n_frames * 3
+
+    imgs_f32 = rng.random((M, h, w)).astype(np.float32)
+    level_sizes = []
+    ch, cw = h, w
+    level_hw = []
+    for _ in range(levels):
+        level_sizes.append(ch * cw)
+        level_hw.append((ch, cw))
+        ch = (ch + 1) // 2
+        cw = (cw + 1) // 2
+    total = sum(s * M for s in level_sizes)
+
+    # FP32 reference build
+    d_in_f32 = DeviceBuffer.from_array(imgs_f32)
+    d_ref = DeviceBuffer(total * 4)
+    _evm_cuda.batched_lpyr_build(
+        d_in_f32.ptr, d_ref.ptr, n_frames, h, w, levels, _d_binom5(), 5)
+    ref = d_ref.download_f32(total)
+
+    # Half-in, half-out build (true half bands)
+    imgs_f16 = np.ascontiguousarray(imgs_f32.astype(np.float16))
+    d_in_f16 = DeviceBuffer.from_array(imgs_f16)
+    d_out_h = DeviceBuffer(total * 2)  # __half bands
+    _evm_cuda.batched_lpyr_build_f16(
+        d_in_f16.ptr, d_out_h.ptr, n_frames, h, w, levels, _d_binom5(), 5)
+
+    # Promote half bands to float for comparison
+    d_out_f32 = DeviceBuffer(total * 4)
+    _evm_cuda.f16_to_f32(d_out_h.ptr, d_out_f32.ptr, total)
+    got = d_out_f32.download_f32(total)
+
+    # Half storage + float compute: looser than pure float corr_dn
+    err = abs_err(got, ref)
+    assert err < 5e-3, f"half-band build vs fp32 build err={err:.2e}"
+
+    # Spot-check a few levels/slices
+    level_offset = 0
+    for l in range(levels):
+        sz = level_sizes[l]
+        lh, lw = level_hw[l]
+        for m in (0, M - 1):
+            a = got[level_offset + m * sz : level_offset + (m + 1) * sz].reshape(lh, lw)
+            b = ref[level_offset + m * sz : level_offset + (m + 1) * sz].reshape(lh, lw)
+            e = abs_err(a, b)
+            assert e < 5e-3, f"level {l} slice {m}: err={e:.2e}"
+        level_offset += sz * M
