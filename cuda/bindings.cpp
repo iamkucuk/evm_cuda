@@ -189,6 +189,10 @@ void launch_corr_dn_fused_smem_batched_f16_halfacc(const __half* in, __half* out
                                        int H, int W, const float* filt, int filt_len,
                                        int stride_in, int stride_out, int B,
                                        cudaStream_t stream);
+void launch_corr_dn_fused_smem_batched_f16_half2(const __half* in, __half* out,
+                                       int H, int W, const float* filt, int filt_len,
+                                       int stride_in, int stride_out, int B,
+                                       cudaStream_t stream);
 // FP16 storage variants (compute stays FP32).
 void launch_corr_dn_rows_batched_f16(const __half* in, __half* out,
                                  int H, int W, const float* filt, int filt_len,
@@ -1258,6 +1262,118 @@ PYBIND11_MODULE(_evm_cuda, m) {
         }, py::arg("d_in"), py::arg("d_out"), py::arg("n_frames"),
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
+
+    // EXPERIMENT: packed __half2 downsample + float-acc up (isolate half2 MAC).
+    m.def("batched_lpyr_build_f16_half2",
+        [](uintptr_t d_in, uintptr_t d_out, int n_frames, int H, int W, int levels,
+           uintptr_t d_filt, int filt_len) {
+            int M = n_frames * 3;
+            auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const __half* in_base = reinterpret_cast<const __half*>(d_in);
+            __half* out_base = reinterpret_cast<__half*>(d_out);
+
+            std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
+            size_t total = 0;
+            for (int l = 0; l < levels; ++l) {
+                level_sizes_vec[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_offsets[l] = total;
+                total += level_sizes_vec[l] * M;
+            }
+
+            const size_t slot = static_cast<size_t>(M) * H * W;
+            __half* scratch_base = sticky_f16_slots(slot, 4);
+            __half* slots[4] = {
+                scratch_base + 0 * slot,
+                scratch_base + 1 * slot,
+                scratch_base + 2 * slot,
+                scratch_base + 3 * slot,
+            };
+            const __half* cur = in_base;
+            int i_cur = -1;
+            int i_lo = 0, i_lo2 = 1, i_hi2 = 2;
+
+            for (int l = 0; l < levels - 1; ++l) {
+                const int h = sizes[l].first, w = sizes[l].second;
+                const int hn = (h + 1) / 2;
+                const int wn = (w + 1) / 2;
+                __half* lo2 = slots[i_lo2];
+                __half* hi2 = slots[i_hi2];
+                __half* lo  = slots[i_lo];
+
+                evm::launch_corr_dn_fused_smem_batched_f16_half2(
+                    cur, lo2, h, w, filt, filt_len,
+                    h * w, hn * wn, M, 0);
+                // up stays float-acc so half2 effect is isolated to downsample.
+                evm::launch_up_conv_rows_batched_f16(
+                    lo2, lo, hn, h, wn, filt, filt_len,
+                    hn * wn, h * wn, M, 0);
+                evm::launch_up_conv_cols_batched_f16(
+                    lo, hi2, h, wn, w, filt, filt_len,
+                    h * wn, h * w, M, 0);
+
+                __half* band_l = out_base + level_offsets[l];
+                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
+                evm::launch_band_subtract_f16_to_f16(cur, hi2, band_l, n_band, 0);
+
+                cur = lo2;
+                i_cur = i_lo2;
+                int free_idx = 0;
+                int free_slots[3];
+                for (int s = 0; s < 4; ++s) {
+                    if (s != i_cur) free_slots[free_idx++] = s;
+                }
+                i_lo  = free_slots[0];
+                i_lo2 = free_slots[1];
+                i_hi2 = free_slots[2];
+            }
+
+            {
+                int l = levels - 1;
+                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
+                __half* band_l = out_base + level_offsets[l];
+                CUDA_CHECK(cudaMemcpyAsync(
+                    band_l, cur,
+                    static_cast<size_t>(n_band) * sizeof(__half),
+                    cudaMemcpyDeviceToDevice, 0));
+            }
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("n_frames"),
+           py::arg("H"), py::arg("W"), py::arg("levels"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
+    // Single-level fused corr_dn microbench (f32 / f16-floatacc / f16-scalar / f16-half2).
+    m.def("micro_corr_dn_fused",
+        [](uintptr_t d_in, uintptr_t d_out, int H, int W, int B,
+           uintptr_t d_filt, int filt_len, const std::string& mode) {
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const int Ho = (H + 1) / 2;
+            const int Wo = (W + 1) / 2;
+            if (mode == "f32") {
+                evm::launch_corr_dn_fused_smem_batched(
+                    reinterpret_cast<const float*>(d_in),
+                    reinterpret_cast<float*>(d_out),
+                    H, W, filt, filt_len, H * W, Ho * Wo, B, 0);
+            } else if (mode == "f16") {
+                evm::launch_corr_dn_fused_smem_batched_f16(
+                    reinterpret_cast<const __half*>(d_in),
+                    reinterpret_cast<__half*>(d_out),
+                    H, W, filt, filt_len, H * W, Ho * Wo, B, 0);
+            } else if (mode == "f16_halfacc") {
+                evm::launch_corr_dn_fused_smem_batched_f16_halfacc(
+                    reinterpret_cast<const __half*>(d_in),
+                    reinterpret_cast<__half*>(d_out),
+                    H, W, filt, filt_len, H * W, Ho * Wo, B, 0);
+            } else if (mode == "f16_half2") {
+                evm::launch_corr_dn_fused_smem_batched_f16_half2(
+                    reinterpret_cast<const __half*>(d_in),
+                    reinterpret_cast<__half*>(d_out),
+                    H, W, filt, filt_len, H * W, Ho * Wo, B, 0);
+            } else {
+                throw std::runtime_error(
+                    "micro_corr_dn_fused mode must be f32|f16|f16_halfacc|f16_half2");
+            }
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("H"), py::arg("W"),
+           py::arg("B"), py::arg("d_filt"), py::arg("filt_len"), py::arg("mode"));
 
     // --- batched lpyr_recon: multi-level band input -> M planar slices -----
     // Mirror of batched_lpyr_build for the motion pipeline's Stage D. Walks
