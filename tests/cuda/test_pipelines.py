@@ -223,9 +223,8 @@ def test_batched_motion_fp16_matches_python_baby(tmp_path):
 def test_batched_motion_fp16_close_to_fp32_baby(tmp_path):
     """FP16 motion storage vs FP32 motion CUDA on baby.mp4.
 
-    DESIGN notes FP16/FP32 motion RMSE ~0.0016 and max per-pixel error around
-    a few uint8 steps. Bound to 5 LSB (measured peak on 3090); RMSE still
-    under the end-to-end 0.01 gate.
+    Half storage + float-acc spatial: up to 5 LSB vs CUDA FP32; RMSE
+    under the end-to-end 0.01 gate vs Python.
     """
     fp32 = cu_batched.magnify_motion_lpyr_iir(
         str(DATA / "baby.mp4"), str(tmp_path / "fp32.mp4"),
