@@ -529,6 +529,119 @@ void launch_corr_dn_cols_batched_f16(const __half* in, __half* out,
         in, out, H, W, filt, filt_len, stride_in, stride_out, B);
 }
 
+
+// EXPERIMENT: half-accumulate separable up_conv (f16 launchers only).
+__global__ void up_conv_rows_batched_halfacc_kernel(
+    const __half* __restrict__ in,
+    __half* __restrict__ out,
+    int in_H, int out_H, int W, const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int x  = blockIdx.x * SP_BX + threadIdx.x;
+    const int yo0 = blockIdx.y * SP_BY;
+    const int b  = blockIdx.z;
+    if (b >= B) return;
+    const int tx = threadIdx.x, ty = threadIdx.y;
+
+    __half f[5];
+#pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = __float2half(filt[k]);
+
+    // Input rows needed: for output yo in [yo0, yo0+BY), upsampled index yo,
+    // even reflected samples only. Load a generous float-height tile of source rows.
+    constexpr int UY = SP_BY + 2 * SP_HALO + 4;
+    __shared__ __half tile[UY][SP_BX];
+
+    const __half* sin = in + b * slice_stride_in;
+    // Map roughly: source y ~ yo/2
+    const int y_src0 = (yo0 - SP_HALO) / 2 - 1;
+
+    for (int i = ty * SP_BX + tx; i < UY * SP_BX; i += SP_BX * SP_BY) {
+        const int ly = i / SP_BX;
+        const int lx = i - ly * SP_BX;
+        const int gx = blockIdx.x * SP_BX + lx;
+        const int gy = reflect1(y_src0 + ly, in_H);
+        __half v = __float2half(0.0f);
+        if (gx >= 0 && gx < W) v = sin[gy * W + gx];
+        tile[ly][lx] = v;
+    }
+    __syncthreads();
+
+    const int yo = yo0 + ty;
+    if (x >= W || yo >= out_H) return;
+
+    const int pad = SP_HALO;
+    const int up_H = 2 * in_H;
+    __half acc = __float2half(0.0f);
+#pragma unroll
+    for (int k = 0; k < 5; ++k) {
+        const int ry = reflect1(yo + (k - pad), up_H);
+        if (ry & 1) continue;
+        const int sy = ry / 2;
+        const int ly = sy - y_src0;
+        if (ly >= 0 && ly < UY) {
+            acc = __hadd(acc, __hmul(f[k], tile[ly][tx]));
+        } else {
+            acc = __hadd(acc, __hmul(f[k], sin[sy * W + x]));
+        }
+    }
+    out[b * slice_stride_out + yo * W + x] = acc;
+}
+
+__global__ void up_conv_cols_batched_halfacc_kernel(
+    const __half* __restrict__ in,
+    __half* __restrict__ out,
+    int H, int in_W, int out_W, const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int xo0 = blockIdx.x * SP_BX;
+    const int y  = blockIdx.y * SP_BY + threadIdx.y;
+    const int b  = blockIdx.z;
+    if (b >= B) return;
+    const int tx = threadIdx.x, ty = threadIdx.y;
+
+    __half f[5];
+#pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = __float2half(filt[k]);
+
+    constexpr int UX = SP_BX + 2 * SP_HALO + 4;
+    __shared__ __half tile[SP_BY][UX];
+
+    const __half* sin = in + b * slice_stride_in;
+    const int x_src0 = (xo0 - SP_HALO) / 2 - 1;
+
+    for (int i = ty * SP_BX + tx; i < SP_BY * UX; i += SP_BX * SP_BY) {
+        const int ly = i / UX;
+        const int lx = i - ly * UX;
+        const int gy = blockIdx.y * SP_BY + ly;
+        const int gx = reflect1(x_src0 + lx, in_W);
+        __half v = __float2half(0.0f);
+        if (gy >= 0 && gy < H) v = sin[gy * in_W + gx];
+        tile[ly][lx] = v;
+    }
+    __syncthreads();
+
+    const int xo = xo0 + tx;
+    if (xo >= out_W || y >= H) return;
+
+    const int pad = SP_HALO;
+    const int up_W = 2 * in_W;
+    __half acc = __float2half(0.0f);
+#pragma unroll
+    for (int k = 0; k < 5; ++k) {
+        const int rx = reflect1(xo + (k - pad), up_W);
+        if (rx & 1) continue;
+        const int sx = rx / 2;
+        const int lx = sx - x_src0;
+        if (lx >= 0 && lx < UX) {
+            acc = __hadd(acc, __hmul(f[k], tile[ty][lx]));
+        } else {
+            acc = __hadd(acc, __hmul(f[k], sin[y * in_W + sx]));
+        }
+    }
+    out[b * slice_stride_out + y * out_W + xo] = acc;
+}
+
 void launch_up_conv_rows_batched_f16(const __half* in, __half* out,
                                  int in_H, int out_H, int W,
                                  const float* filt, int filt_len,
@@ -540,6 +653,17 @@ void launch_up_conv_rows_batched_f16(const __half* in, __half* out,
         in, out, in_H, out_H, W, filt, filt_len, stride_in, stride_out, B);
 }
 
+void launch_up_conv_rows_batched_f16_halfacc(const __half* in, __half* out,
+                                 int in_H, int out_H, int W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream) {
+    dim3 block(SP_BX, SP_BY, 1);
+    dim3 grid(div_up(W, SP_BX), div_up(out_H, SP_BY), B);
+    up_conv_rows_batched_halfacc_kernel<<<grid, block, 0, stream>>>(
+        in, out, in_H, out_H, W, filt, filt_len, stride_in, stride_out, B);
+}
+
 void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
                                  int H, int in_W, int out_W,
                                  const float* filt, int filt_len,
@@ -548,6 +672,17 @@ void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
     dim3 block(SP_BX, SP_BY, 1);
     dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
     up_conv_cols_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
+        in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
+}
+
+void launch_up_conv_cols_batched_f16_halfacc(const __half* in, __half* out,
+                                 int H, int in_W, int out_W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream) {
+    dim3 block(SP_BX, SP_BY, 1);
+    dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
+    up_conv_cols_batched_halfacc_kernel<<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
 }
 
@@ -637,6 +772,76 @@ __global__ void corr_dn_fused_smem_batched_kernel(
     out[b * slice_stride_out + yo * Wo + xo] = cvt_out<Out>(acc);
 }
 
+
+// ===========================================================================
+// EXPERIMENT: half-accumulate fused corr_dn (f16 path only).
+// Shared tile + MACs in __half; FP32 production path untouched.
+// Numerics differ from float-acc; measure vs float-acc f16.
+// ===========================================================================
+__global__ void corr_dn_fused_smem_batched_halfacc_kernel(
+    const __half* __restrict__ in,
+    __half* __restrict__ out,
+    int H, int W, const float* filt, int filt_len,
+    int slice_stride_in, int slice_stride_out, int B)
+{
+    const int xo0 = blockIdx.x * PD_BX;
+    const int yo0 = blockIdx.y * PD_BY;
+    const int b   = blockIdx.z;
+    const int Ho  = (H + 1) / 2;
+    const int Wo  = (W + 1) / 2;
+    if (b >= B) return;
+
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+
+    __half f[5];
+#pragma unroll
+    for (int k = 0; k < 5; ++k) f[k] = __float2half(filt[k]);
+
+    __shared__ __half tile[PD_Y_IN][PD_X_IN];
+
+    const __half* sin = in + b * slice_stride_in;
+    const int y_base = 2 * yo0 - PD_HALO;
+    const int x_base = 2 * xo0 - PD_HALO;
+
+    const int tile_elems = PD_Y_IN * PD_X_IN;
+    const int tid = ty * PD_BX + tx;
+    const int nthreads = PD_BX * PD_BY;
+    for (int i = tid; i < tile_elems; i += nthreads) {
+        const int ly = i / PD_X_IN;
+        const int lx = i - ly * PD_X_IN;
+        const int gy = reflect1(y_base + ly, H);
+        const int gx = reflect1(x_base + lx, W);
+        tile[ly][lx] = sin[gy * W + gx];
+    }
+    __syncthreads();
+
+    const int xo = xo0 + tx;
+    const int yo = yo0 + ty;
+    if (xo >= Wo || yo >= Ho) return;
+
+    const int tcy = 2 * ty + PD_HALO;
+    const int tcx = 2 * tx + PD_HALO;
+
+    __half mid[5];
+#pragma unroll
+    for (int ky = 0; ky < 5; ++ky) {
+        __half acc_h = __float2half(0.0f);
+        const int ty_src = tcy + (ky - PD_HALO);
+#pragma unroll
+        for (int kx = 0; kx < 5; ++kx) {
+            acc_h = __hadd(acc_h, __hmul(f[kx], tile[ty_src][tcx + (kx - PD_HALO)]));
+        }
+        mid[ky] = acc_h;
+    }
+    __half acc = __float2half(0.0f);
+#pragma unroll
+    for (int ky = 0; ky < 5; ++ky) {
+        acc = __hadd(acc, __hmul(f[ky], mid[ky]));
+    }
+    out[b * slice_stride_out + yo * Wo + xo] = acc;
+}
+
 void launch_corr_dn_fused_smem_batched(const float* in, float* out,
                                        int H, int W, const float* filt, int filt_len,
                                        int stride_in, int stride_out, int B,
@@ -658,6 +863,18 @@ void launch_corr_dn_fused_smem_batched_f16(const __half* in, __half* out,
     dim3 block(PD_BX, PD_BY, 1);
     dim3 grid(div_up(Wo, PD_BX), div_up(Ho, PD_BY), B);
     corr_dn_fused_smem_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
+        in, out, H, W, filt, filt_len, stride_in, stride_out, B);
+}
+
+void launch_corr_dn_fused_smem_batched_f16_halfacc(const __half* in, __half* out,
+                                       int H, int W, const float* filt, int filt_len,
+                                       int stride_in, int stride_out, int B,
+                                       cudaStream_t stream) {
+    const int Ho = (H + 1) / 2;
+    const int Wo = (W + 1) / 2;
+    dim3 block(PD_BX, PD_BY, 1);
+    dim3 grid(div_up(Wo, PD_BX), div_up(Ho, PD_BY), B);
+    corr_dn_fused_smem_batched_halfacc_kernel<<<grid, block, 0, stream>>>(
         in, out, H, W, filt, filt_len, stride_in, stride_out, B);
 }
 

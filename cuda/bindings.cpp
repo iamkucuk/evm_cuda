@@ -45,6 +45,8 @@ namespace evm {
 // --- launcher decls (defined in each kernels/*.cu) -------------------------
 void launch_bgr_u8_to_ntsc_f32(const unsigned char* bgr, float* yiq,
                                 int H, int W, cudaStream_t stream);
+void launch_bgr_u8_to_ntsc_f16(const unsigned char* bgr, __half* yiq,
+                                int H, int W, cudaStream_t stream);
 void launch_ntsc_f32_to_bgr_u8(const float* yiq, unsigned char* bgr,
                                 int H, int W, cudaStream_t stream);
 void launch_corr_dn_rows(const float* in, float* out, int H, int W,
@@ -183,6 +185,10 @@ void launch_corr_dn_fused_smem_batched_f16(const __half* in, __half* out,
                                        int H, int W, const float* filt, int filt_len,
                                        int stride_in, int stride_out, int B,
                                        cudaStream_t stream);
+void launch_corr_dn_fused_smem_batched_f16_halfacc(const __half* in, __half* out,
+                                       int H, int W, const float* filt, int filt_len,
+                                       int stride_in, int stride_out, int B,
+                                       cudaStream_t stream);
 // FP16 storage variants (compute stays FP32).
 void launch_corr_dn_rows_batched_f16(const __half* in, __half* out,
                                  int H, int W, const float* filt, int filt_len,
@@ -197,7 +203,17 @@ void launch_up_conv_rows_batched_f16(const __half* in, __half* out,
                                  const float* filt, int filt_len,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream);
+void launch_up_conv_rows_batched_f16_halfacc(const __half* in, __half* out,
+                                 int in_H, int out_H, int W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
 void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
+                                 int H, int in_W, int out_W,
+                                 const float* filt, int filt_len,
+                                 int stride_in, int stride_out, int B,
+                                 cudaStream_t stream);
+void launch_up_conv_cols_batched_f16_halfacc(const __half* in, __half* out,
                                  int H, int in_W, int out_W,
                                  const float* filt, int filt_len,
                                  int stride_in, int stride_out, int B,
@@ -210,10 +226,6 @@ void launch_band_add(const float* a, const float* b, float* dst,
                      int n, cudaStream_t stream);
 void launch_band_subtract_f16_to_f16(const __half* a, const __half* b, __half* dst,
                                     int n, cudaStream_t stream);
-void launch_band_subtract_f16(const __half* a, const __half* b, float* dst,
-                              int n, cudaStream_t stream);
-void launch_band_copy_f16_to_f32(const __half* src, float* dst,
-                                 int n, cudaStream_t stream);
 void launch_band_add_f16(const __half* a, const __half* b, __half* dst,
                          int n, cudaStream_t stream);
 // FP16 transpose + planar.
@@ -877,6 +889,15 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 H * T, W, 0);
         }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("H"), py::arg("W"));
 
+    // Fused u8→YIQ→__half (float matmul in registers). Avoids float NTSC + f32_to_f16.
+    m.def("batched_bgr_u8_to_ntsc_f16",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int H, int W) {
+            evm::launch_bgr_u8_to_ntsc_f16(
+                reinterpret_cast<unsigned char*>(d_in),
+                reinterpret_cast<__half*>(d_out),
+                H * T, W, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("H"), py::arg("W"));
+
     // --- whole-clip planar layout transpose: (n,H,W,3) -> (n*3,H,W) --------
     // Bit-exact layout transform that lets the color pipeline operate on
     // contiguous per-frame-channel slices via pointer offsets.
@@ -1160,6 +1181,84 @@ PYBIND11_MODULE(_evm_cuda, m) {
            py::arg("H"), py::arg("W"), py::arg("levels"),
            py::arg("d_filt"), py::arg("filt_len"));
 
+    // --- batched lpyr_build with FP16 scratch + FP16 band output -----------
+    // EXPERIMENT: half-acc spatial + half bands (not production default).
+    m.def("batched_lpyr_build_f16_halfacc",
+        [](uintptr_t d_in, uintptr_t d_out, int n_frames, int H, int W, int levels,
+           uintptr_t d_filt, int filt_len) {
+            int M = n_frames * 3;
+            auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const __half* in_base = reinterpret_cast<const __half*>(d_in);
+            __half* out_base = reinterpret_cast<__half*>(d_out);
+
+            std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
+            size_t total = 0;
+            for (int l = 0; l < levels; ++l) {
+                level_sizes_vec[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_offsets[l] = total;
+                total += level_sizes_vec[l] * M;
+            }
+
+            const size_t slot = static_cast<size_t>(M) * H * W;
+            __half* scratch_base = sticky_f16_slots(slot, 4);
+            __half* slots[4] = {
+                scratch_base + 0 * slot,
+                scratch_base + 1 * slot,
+                scratch_base + 2 * slot,
+                scratch_base + 3 * slot,
+            };
+            const __half* cur = in_base;
+            int i_cur = -1;
+            int i_lo = 0, i_lo2 = 1, i_hi2 = 2;
+
+            for (int l = 0; l < levels - 1; ++l) {
+                const int h = sizes[l].first, w = sizes[l].second;
+                const int hn = (h + 1) / 2;
+                const int wn = (w + 1) / 2;
+                __half* lo2 = slots[i_lo2];
+                __half* hi2 = slots[i_hi2];
+                __half* lo  = slots[i_lo];
+
+                evm::launch_corr_dn_fused_smem_batched_f16_halfacc(
+                    cur, lo2, h, w, filt, filt_len,
+                    h * w, hn * wn, M, 0);
+                evm::launch_up_conv_rows_batched_f16_halfacc(
+                    lo2, lo, hn, h, wn, filt, filt_len,
+                    hn * wn, h * wn, M, 0);
+                evm::launch_up_conv_cols_batched_f16_halfacc(
+                    lo, hi2, h, wn, w, filt, filt_len,
+                    h * wn, h * w, M, 0);
+
+                __half* band_l = out_base + level_offsets[l];
+                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
+                evm::launch_band_subtract_f16_to_f16(cur, hi2, band_l, n_band, 0);
+
+                cur = lo2;
+                i_cur = i_lo2;
+                int free_idx = 0;
+                int free_slots[3];
+                for (int s = 0; s < 4; ++s) {
+                    if (s != i_cur) free_slots[free_idx++] = s;
+                }
+                i_lo  = free_slots[0];
+                i_lo2 = free_slots[1];
+                i_hi2 = free_slots[2];
+            }
+
+            {
+                int l = levels - 1;
+                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
+                __half* band_l = out_base + level_offsets[l];
+                CUDA_CHECK(cudaMemcpyAsync(
+                    band_l, cur,
+                    static_cast<size_t>(n_band) * sizeof(__half),
+                    cudaMemcpyDeviceToDevice, 0));
+            }
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("n_frames"),
+           py::arg("H"), py::arg("W"), py::arg("levels"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
     // --- batched lpyr_recon: multi-level band input -> M planar slices -----
     // Mirror of batched_lpyr_build for the motion pipeline's Stage D. Walks
     // coarsest→finest, batching all M slices per spatial kernel launch. Band
@@ -1264,6 +1363,62 @@ PYBIND11_MODULE(_evm_cuda, m) {
                     scratch_cur, scratch_res, ph, h, pw, filt, filt_len,
                     ph * pw, h * pw, M, 0);
                 evm::launch_up_conv_cols_batched_f16(
+                    scratch_res, dst, h, pw, w, filt, filt_len,
+                    h * pw, h * w, M, 0);
+                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
+                evm::launch_band_add_f16(
+                    bands_base + level_offsets[l], dst, dst, n_band, 0);
+            }
+
+            if (levels == 1) {
+                const int h = sizes[0].first, w = sizes[0].second;
+                CUDA_CHECK(cudaMemcpyAsync(out_base, scratch_cur,
+                    static_cast<size_t>(M) * h * w * sizeof(__half),
+                    cudaMemcpyDeviceToDevice, 0));
+            }
+        }, py::arg("d_bands"), py::arg("d_out"), py::arg("n_frames"),
+           py::arg("H"), py::arg("W"), py::arg("levels"),
+           py::arg("d_filt"), py::arg("filt_len"));
+
+    m.def("batched_lpyr_recon_f16_halfacc",
+        [](uintptr_t d_bands, uintptr_t d_out, int n_frames, int H, int W, int levels,
+           uintptr_t d_filt, int filt_len) {
+            int M = n_frames * 3;
+            auto sizes = evm::lpyr_level_sizes(H, W, levels);
+            const float* filt = reinterpret_cast<const float*>(d_filt);
+            const __half* bands_base = reinterpret_cast<const __half*>(d_bands);
+            __half* out_base = reinterpret_cast<__half*>(d_out);
+
+            std::vector<size_t> level_offsets(levels), level_sizes_vec(levels);
+            size_t total = 0;
+            for (int l = 0; l < levels; ++l) {
+                level_sizes_vec[l] = static_cast<size_t>(sizes[l].first) * sizes[l].second;
+                level_offsets[l] = total;
+                total += level_sizes_vec[l] * M;
+            }
+
+            const size_t slot = static_cast<size_t>(M) * H * W;
+            __half* scratch_base = sticky_f16_slots(slot, 2);
+            __half* scratch_cur = scratch_base;
+            __half* scratch_res = scratch_base + slot;
+
+            {
+                int l = levels - 1;
+                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
+                CUDA_CHECK(cudaMemcpyAsync(
+                    scratch_cur, bands_base + level_offsets[l],
+                    static_cast<size_t>(n_band) * sizeof(__half),
+                    cudaMemcpyDeviceToDevice, 0));
+            }
+            for (int l = levels - 2; l >= 0; --l) {
+                const int h = sizes[l].first, w = sizes[l].second;
+                const int ph = sizes[l + 1].first, pw = sizes[l + 1].second;
+                __half* dst = (l == 0) ? out_base : scratch_cur;
+
+                evm::launch_up_conv_rows_batched_f16_halfacc(
+                    scratch_cur, scratch_res, ph, h, pw, filt, filt_len,
+                    ph * pw, h * pw, M, 0);
+                evm::launch_up_conv_cols_batched_f16_halfacc(
                     scratch_res, dst, h, pw, w, filt, filt_len,
                     h * pw, h * w, M, 0);
                 const int n_band = static_cast<int>(level_sizes_vec[l] * M);

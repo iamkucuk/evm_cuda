@@ -283,12 +283,10 @@ def magnify_color_gdown_ideal_fp16(
 
     d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
-    # --- Stage 1: NTSC convert (FP32 compute) -> FP16 storage ---------------
+    # --- Stage 1: fused u8 → YIQ → __half NTSC ------------------------------
     def _s1():
-        d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
-        d_ntsc = DeviceBuffer(ntsc_floats * 2)  # __half, persists to Stage 4
-        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc_f32.ptr, n, h, w)
-        _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc.ptr, ntsc_floats)
+        d_ntsc = DeviceBuffer(ntsc_floats * 2)
+        _evm_cuda.batched_bgr_u8_to_ntsc_f16(d_clip.ptr, d_ntsc.ptr, n, h, w)
         return d_ntsc
     d_ntsc = _stage("1) color_cvt", _s1)
 
@@ -476,8 +474,8 @@ def magnify_motion_lpyr_iir_fp16(
     """Motion pipeline with FP16 storage for large intermediates.
 
     NTSC, planar, Laplacian bands, filtered bands, and delta use ``__half``.
-    Spatial: half storage, FP32 compute. IIR: TN + FP64 accumulators.
-    Bands stay half end-to-end (no float band stack + full f32_to_f16).
+    Spatial: half storage, FP32 compute (unless half-acc experiment). IIR: TN + FP64.
+    Bands half end-to-end; Stage A is fused u8→half NTSC.
 
     Peak VRAM is lower than FP32 (~12 GB for baby.mp4 class clips).
     """
@@ -510,12 +508,10 @@ def magnify_motion_lpyr_iir_fp16(
 
     d_clip = _stage("0) H2D: clip", lambda: DeviceBuffer.from_array(clip_u8))
 
-    # --- Stage A: NTSC convert (FP32 compute), one f32->f16 conversion ------
+    # --- Stage A: fused u8 → YIQ → __half (no float NTSC buffer) -------------
     def _sA():
-        d_ntsc_f32 = DeviceBuffer(ntsc_floats * 4)
-        d_ntsc = DeviceBuffer(ntsc_floats * 2)  # FP16 storage, persists to Stage D
-        _evm_cuda.batched_bgr_u8_to_ntsc_f32(d_clip.ptr, d_ntsc_f32.ptr, n, h, w)
-        _evm_cuda.f32_to_f16(d_ntsc_f32.ptr, d_ntsc.ptr, ntsc_floats)
+        d_ntsc = DeviceBuffer(ntsc_floats * 2)
+        _evm_cuda.batched_bgr_u8_to_ntsc_f16(d_clip.ptr, d_ntsc.ptr, n, h, w)
         return d_ntsc
     d_ntsc = _stage("A) NTSC", _sA)
 

@@ -83,6 +83,36 @@ void launch_bgr_u8_to_ntsc_f32(const unsigned char* bgr, float* yiq,
     bgr_u8_to_ntsc_f32_kernel<<<grid, block, 0, stream>>>(bgr, yiq, H, W);
 }
 
+// Batched clip: treat as (T*H, W). Float YIQ in registers, store __half.
+__global__ void bgr_u8_to_ntsc_f16_kernel(
+    const unsigned char* __restrict__ bgr,
+    __half* __restrict__ yiq,
+    int H, int W)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= W || y >= H) return;
+
+    const int px = (y * W + x) * 3;
+    const float b = bgr[px + 0] * (1.0f / 255.0f);
+    const float g = bgr[px + 1] * (1.0f / 255.0f);
+    const float r = bgr[px + 2] * (1.0f / 255.0f);
+
+    const float Y = kRgbToYiq[0][0] * r + kRgbToYiq[0][1] * g + kRgbToYiq[0][2] * b;
+    const float I = kRgbToYiq[1][0] * r + kRgbToYiq[1][1] * g + kRgbToYiq[1][2] * b;
+    const float Q = kRgbToYiq[2][0] * r + kRgbToYiq[2][1] * g + kRgbToYiq[2][2] * b;
+    yiq[px + 0] = __float2half(Y);
+    yiq[px + 1] = __float2half(I);
+    yiq[px + 2] = __float2half(Q);
+}
+
+void launch_bgr_u8_to_ntsc_f16(const unsigned char* bgr, __half* yiq,
+                                int H, int W, cudaStream_t stream) {
+    dim3 block(32, 32, 1);
+    dim3 grid(div_up(W, 32), div_up(H, 32), 1);
+    bgr_u8_to_ntsc_f16_kernel<<<grid, block, 0, stream>>>(bgr, yiq, H, W);
+}
+
 void launch_ntsc_f32_to_bgr_u8(const float* yiq, unsigned char* bgr,
                                 int H, int W, cudaStream_t stream) {
     dim3 block(32, 32, 1);
