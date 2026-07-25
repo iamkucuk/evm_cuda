@@ -584,8 +584,8 @@ fused *downsample* (fused *upsample* regressed and was reverted) — took
 RTX 3090 motion FP32 compute from **~934 ms → ~100 ms** (~9×). Full
 measurement-driven writeup:
 [`docs/blog_further_optimizations.md`](blog_further_optimizations.md).
-Step tables: [`docs/progressive_gains.md`](progressive_gains.md).
-Evidence log: [`docs/bound_analysis.md`](bound_analysis.md).
+Full writeup of that arc:
+[`docs/blog_further_optimizations.md`](blog_further_optimizations.md).
 
 ## Methodology
 

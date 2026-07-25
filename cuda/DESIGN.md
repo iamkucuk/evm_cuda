@@ -15,11 +15,8 @@ reference for the numerical contract.
 | GPU | Portable: `sm_60 sm_70 sm_80 sm_89 sm_90` | One `.so` covers P100 through H100 |
 | Precision | FP32 hot path + FP64 IIR accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
 
-Performance bound analysis and further mid-pipeline writeup:
-[`docs/bound_analysis.md`](../docs/bound_analysis.md),
-[`docs/blog_further_optimizations.md`](../docs/blog_further_optimizations.md),
-[`docs/progressive_gains.md`](../docs/progressive_gains.md),
-[`docs/pre_post_cuda_ab.md`](../docs/pre_post_cuda_ab.md).
+Further mid-pipeline writeup:
+[`docs/blog_further_optimizations.md`](../docs/blog_further_optimizations.md).
 
 ## Repository layout
 
