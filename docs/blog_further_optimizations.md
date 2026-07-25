@@ -26,7 +26,7 @@ frames at 960x544, 9 levels, FP32 motion *compute only*):
 | After coalesced TN IIR + sticky lpyr scratch | ~377-407 ms |
 | After DeviceBuffer free-list + smem fused downsample | ~96-104 ms |
 | Total (series) | about 9x mid-pipeline compute |
-| **Current production (true half-band + dense smem templates)** | **FP32 ~90 ms / FP16 ~76 ms** |
+| **Current production (remeasured)** | **3090: 90.4 / 75.1 ms; H100: 35.8 / 34.5 ms (FP32/FP16)** |
 
 H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
@@ -424,30 +424,33 @@ new isolation A/B that beats separable on recon and build.
 | DeviceMemPool | ~113-133 | ~7-8x |
 | Layout foundation | ~106-110 | ~8.5x |
 | Smem fused down | ~96-104 | ~9x |
-| True half bands + dense smem templates (current) | **FP32 ~90 / FP16 ~76** | **~10x / ~12x** |
+| True half bands + dense smem (remeasured) | **3090 90.4/75.1; H100 35.8/34.5** | **~10× / ~12× on 3090** |
 
 ### Current production stage table (3090, baby motion)
 
-Harness: 1 warmup + median of 7 timed runs; `cudaDeviceSynchronize` per stage.
+Fresh process per config; 1 warmup + median of 7 (`output/bench_osiris_3090.json`).
 
 | Stage | FP32 (ms) | FP16 (ms) | ratio |
 |---|---:|---:|---:|
-| A) NTSC | 2.5 | 1.7 | 0.68 |
-| B) lpyr_build | 33.5 | 27.1 | 0.81 |
-| C) IIR | 25.3 | 23.4 | 0.92 |
-| D1) recon | 24.7 | 21.1 | 0.85 |
-| D2) render | 4.3 | 2.5 | 0.57 |
-| **Compute** | **90.4** | **75.7** | **0.84** |
-| H2D+D2H | ~106 | ~102 | ~1.0 |
-| **TOTAL** | **196** | **178** | **0.91** |
+| A) NTSC | 2.9 | 1.7 | 0.59 |
+| B) lpyr_build | 32.5 | 26.8 | 0.82 |
+| C) IIR | 24.7 | 23.4 | 0.95 |
+| D1) recon | 25.3 | 20.8 | 0.82 |
+| D2) render | 5.0 | 2.4 | 0.48 |
+| **Compute** | **90.4** | **75.1** | **0.83** |
+| H2D+D2H | 113.1 | 104.4 | 0.92 |
+| **TOTAL** | **203.5** | **179.5** | **0.88** |
 
-Motion FP16 vs CUDA FP32: RMSE **0.0023**, max **5** LSB. Color baby compute
-can reach **~0.71×** FP32 after the blur input-copy removal; face color e2e is
-short and transfer-dominated (do not read sub-ms stage flips as regressions).
+Same-day color (fresh process each): face compute **10.1 → 7.8 ms** (0.77×);
+baby color compute **15.8 → 12.2 ms** (0.77×). Accuracy: motion FP16 vs CUDA
+FP32 RMSE **0.00232** / max **5** LSB; color face RMSE **0.00071** / max **1** LSB.
 
-A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames)
-lands around 190-200 FPS of pure mid-pipeline FP32. VRAM may force tiling on
-full-res long clips; whole-clip resident 4K motion exceeds 24 GB without tiling.
+H100 remeasure (same code, `output/bench_truba_h100.json`): motion compute
+**35.8 → 34.5 ms**; color face **4.9 → 4.4 ms**.
+
+A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames on
+3090 FP32) lands around 190-200 FPS of pure mid-pipeline. VRAM may force tiling
+on full-res long clips; whole-clip resident 4K motion exceeds 24 GB without tiling.
 
 ---
 
