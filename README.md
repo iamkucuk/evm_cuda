@@ -85,14 +85,30 @@ The compute-only ceiling (①, data already on the GPU) is far higher — ~160 c
 or ~30 motion streams — while the full decode→magnify→encode path (③) drops to
 ~12–15 streams because the output download is PCIe-bound.
 
-FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
+FP16 motion fits in ~12 GB VRAM (down from ~23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
 multi-GPU (P100/A100/H100) comparison in the
-[optimization writeup](docs/blog_speedup.md). Further mid-pipeline work
-(TN IIR, sticky scratch, free-list pool, smem downsample) on an RTX 3090 —
-motion compute **~934 → ~100 ms** (~9×) — in
-[further optimizations](docs/blog_further_optimizations.md)
-.
+[optimization writeup](docs/blog_speedup.md).
+
+### RTX 3090 (consumer, measured after mid-pipeline + true half storage)
+
+Same harness: 1 warmup + median of 7 timed runs, `cudaDeviceSynchronize` per
+stage. Clip: `data/baby.mp4` (291 frames, 960×544). Host is WSL2.
+
+| Pipeline | Compute only | + H2D + D2H (full) | Compute FPS |
+|----------|-------------:|-------------------:|------------:|
+| Motion FP32 | **90.4 ms** | 196.0 ms | ~3,220 |
+| Motion FP16 | **75.7 ms** (**0.84×** FP32) | 178.0 ms | ~3,850 |
+| Color FP32 (`face.mp4`) | ~13–17 ms | ~73–81 ms | (transfer-dominated) |
+| Color FP16 (`baby.mp4` spatial load) | **~0.71×** FP32 compute | transfer still dominates | — |
+
+Motion FP16 is the same templated spatial kernels as FP32 (`In`/`Out` =
+`__half`), with dense half shared memory and float MAC. Accuracy vs CUDA FP32
+on baby motion: RMSE **0.0023**, max **5** uint8 LSB (still under the end-to-end
+RMSE &lt; 0.01 gate vs Python). Mid-pipeline arc that took 3090 motion from
+**~934 → ~100 ms** (~9×) is in
+[further optimizations](docs/blog_further_optimizations.md); the true half-band
++ density work above sits on top of that baseline (~90 ms FP32 / ~76 ms FP16).
 
 ## How it works
 

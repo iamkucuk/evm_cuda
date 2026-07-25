@@ -17,15 +17,16 @@ change that stayed. The EVM math did not change: same Laplacian levels, same
 r1/r2 IIR, same Figure-6 alpha. What changed is how memory is addressed, how
 buffers live across calls, and which half of the pyramid is worth fusing.
 
-Headline numbers (RTX 3090, `data/baby.mp4`, 291 frames at 960x544, 9 levels,
-FP32 motion *compute only*):
+Headline numbers for the mid-pipeline series (RTX 3090, `data/baby.mp4`, 291
+frames at 960x544, 9 levels, FP32 motion *compute only*):
 
 | Arc | Compute |
 |---|---:|
 | Before this series | ~934 ms |
 | After coalesced TN IIR + sticky lpyr scratch | ~377-407 ms |
 | After DeviceBuffer free-list + smem fused downsample | ~96-104 ms |
-| Total | about 9x mid-pipeline compute |
+| Total (series) | about 9x mid-pipeline compute |
+| **Current production (true half-band + dense smem templates)** | **FP32 ~90 ms / FP16 ~76 ms** |
 
 H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
@@ -405,10 +406,12 @@ new isolation A/B that beats separable on recon and build.
 |---|---|
 | Stage buffers | Free-list `DeviceMemPool` (no hot-path `cudaFree`) |
 | lpyr scratch | Sticky grow-only |
-| Temporal IIR | Coalesced `(T,N)` + alpha scale |
+| Temporal IIR | Coalesced `(T,N)` + alpha scale; FP64 state |
 | Planar / bands | Channel-outer; contiguous band write/add |
 | Downsample | Smem fused cols then rows |
 | Upsample | Separable rows then cols (fused tried and failed) |
+| FP16 spatial | Same templates as FP32 (`__shared__ In tile`); half bands end-to-end |
+| Color blur | First level reads caller input (no full-frame D2D into sticky) |
 | File I/O | Still transfer/encode dominated |
 
 ### Cumulative compute (3090 baby)
@@ -421,10 +424,30 @@ new isolation A/B that beats separable on recon and build.
 | DeviceMemPool | ~113-133 | ~7-8x |
 | Layout foundation | ~106-110 | ~8.5x |
 | Smem fused down | ~96-104 | ~9x |
+| True half bands + dense smem templates (current) | **FP32 ~90 / FP16 ~76** | **~10x / ~12x** |
 
-A rough 4K compute-only FPS estimate (pixel-scale from ~100 ms / 291 frames)
-lands around 170-190 FPS of pure mid-pipeline. VRAM may force tiling on
-full-res long clips.
+### Current production stage table (3090, baby motion)
+
+Harness: 1 warmup + median of 7 timed runs; `cudaDeviceSynchronize` per stage.
+
+| Stage | FP32 (ms) | FP16 (ms) | ratio |
+|---|---:|---:|---:|
+| A) NTSC | 2.5 | 1.7 | 0.68 |
+| B) lpyr_build | 33.5 | 27.1 | 0.81 |
+| C) IIR | 25.3 | 23.4 | 0.92 |
+| D1) recon | 24.7 | 21.1 | 0.85 |
+| D2) render | 4.3 | 2.5 | 0.57 |
+| **Compute** | **90.4** | **75.7** | **0.84** |
+| H2D+D2H | ~106 | ~102 | ~1.0 |
+| **TOTAL** | **196** | **178** | **0.91** |
+
+Motion FP16 vs CUDA FP32: RMSE **0.0023**, max **5** LSB. Color baby compute
+can reach **~0.71×** FP32 after the blur input-copy removal; face color e2e is
+short and transfer-dominated (do not read sub-ms stage flips as regressions).
+
+A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames)
+lands around 190-200 FPS of pure mid-pipeline FP32. VRAM may force tiling on
+full-res long clips; whole-clip resident 4K motion exceeds 24 GB without tiling.
 
 ---
 
@@ -461,6 +484,8 @@ malloc/freeing stage buffers every stage.
 | Channel-outer / contiguous band | Done (foundation; little wall win) |
 | Smem fused downsample | Done (small win) |
 | Smem / dense fused upsample | Ruled out (regression, twice) |
+| True half-band motion + dense smem templates | Done (production; ~0.84× FP32 on 3090) |
+| Packed `__half2` / scalar half-acc spatial | Experiment-only; not production |
 | Stage C multi-series IIR / CUDA Graphs | Open: kernel can sit near BW; stage is still ~9x3 launches |
 | PCIe + encode | Open: product path, not mid-pipeline |
 | Scan / blocked IIR | Still low ROI while TN IIR matches copy on clean runs |
@@ -475,8 +500,9 @@ calls threw multi-GB scratch away. Coalesced TN IIR and sticky scratch cut that
 to about 0.4 s. A free-list pool then collapsed the remaining fake stage walls
 to real kernel times (about another 4x). Channel-outer layout cleaned the band
 bridge without buying much wall time. Smem fused downsample shaved a few more
-milliseconds. Fused upsample regressed again, so production keeps separable up
-and sits near 100 ms mid-pipeline compute for baby.mp4 (about 9x from the start
-of this series). File-to-file is now dominated by transfer and encode.
+milliseconds. Fused upsample regressed again, so production keeps separable up.
+True half-band storage with dense half smem (same templates as FP32) then lands
+near **90 ms FP32 / 76 ms FP16** mid-pipeline compute for baby.mp4 (~10-12x from
+the start of this series). File-to-file is still dominated by transfer and encode.
 
 [repo]: https://github.com/iamkucuk/eulerian-video-magnification-cuda
