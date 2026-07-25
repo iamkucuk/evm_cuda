@@ -385,7 +385,7 @@ def test_batched_lpyr_build_f16_half_bands_near_fp32(h, w):
     _evm_cuda.f16_to_f32(d_out_h.ptr, d_out_f32.ptr, total)
     got = d_out_f32.download_f32(total)
 
-    # Float-acc half-band contract (production f16 path).
+    # Production f16: half storage, float accumulate.
     err = abs_err(got, ref)
     assert err < 5e-3, f"half-band build vs fp32 build err={err:.2e}"
 

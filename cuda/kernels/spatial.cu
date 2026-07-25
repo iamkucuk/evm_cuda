@@ -862,6 +862,7 @@ void launch_corr_dn_fused_smem_batched_f16(const __half* in, __half* out,
     const int Wo = (W + 1) / 2;
     dim3 block(PD_BX, PD_BY, 1);
     dim3 grid(div_up(Wo, PD_BX), div_up(Ho, PD_BY), B);
+    // Production: float accumulate (cvt_in/out). Half-acc: *_f16_halfacc.
     corr_dn_fused_smem_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
         in, out, H, W, filt, filt_len, stride_in, stride_out, B);
 }

@@ -474,8 +474,9 @@ def magnify_motion_lpyr_iir_fp16(
     """Motion pipeline with FP16 storage for large intermediates.
 
     NTSC, planar, Laplacian bands, filtered bands, and delta use ``__half``.
-    Spatial: half storage, FP32 compute (unless half-acc experiment). IIR: TN + FP64.
-    Bands half end-to-end; Stage A is fused u8→half NTSC.
+    Spatial: half storage, float accumulate (cvt_in/out). IIR: TN + FP64 state.
+    Bands half end-to-end; Stage A fused u8→half NTSC.
+    Optional half-math spatial: batched_lpyr_*_f16_halfacc (slower, less accurate).
 
     Peak VRAM is lower than FP32 (~12 GB for baby.mp4 class clips).
     """
