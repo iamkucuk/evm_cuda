@@ -31,8 +31,10 @@ H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
 product latency is a different problem (NVDEC/NVENC, async H2D).
 
-Raw step tables live in [`progressive_gains.md`](progressive_gains.md). The
-bound/probe log is in [`bound_analysis.md`](bound_analysis.md).
+Raw step tables live in [`progressive_gains.md`](progressive_gains.md).
+The bound/probe log is in [`bound_analysis.md`](bound_analysis.md). Pre/post
+CUDA FP32 A/B on baby (not bit-identical; 66 pixels at 1 LSB):
+[`pre_post_cuda_ab.md`](pre_post_cuda_ab.md).
 
 ---
 

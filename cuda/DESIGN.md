@@ -18,7 +18,8 @@ reference for the numerical contract.
 Performance bound analysis and further mid-pipeline writeup:
 [`docs/bound_analysis.md`](../docs/bound_analysis.md),
 [`docs/blog_further_optimizations.md`](../docs/blog_further_optimizations.md),
-[`docs/progressive_gains.md`](../docs/progressive_gains.md).
+[`docs/progressive_gains.md`](../docs/progressive_gains.md),
+[`docs/pre_post_cuda_ab.md`](../docs/pre_post_cuda_ab.md).
 
 ## Repository layout
 

@@ -90,7 +90,7 @@ multi-GPU (P100/A100/H100) comparison in the
 (TN IIR, sticky scratch, free-list pool, smem downsample) on an RTX 3090 —
 motion compute **~934 → ~100 ms** (~9×) — in
 [further optimizations](docs/blog_further_optimizations.md)
-([step tables](docs/progressive_gains.md)).
+([step tables](docs/progressive_gains.md); [CUDA A/B](docs/pre_post_cuda_ab.md)).
 
 ## How it works
 
@@ -176,6 +176,7 @@ evm_cuda/
 │   ├── blog_speedup.md                 # first optimization writeup
 │   ├── blog_further_optimizations.md   # layout, pool, smem (unified)
 │   ├── progressive_gains.md            # step tables for further-opt post
+│   ├── pre_post_cuda_ab.md             # pre/post CUDA pixel A/B on baby
 │   ├── bound_analysis.md               # bound/probe evidence log
 │   └── img/                            # demo images
 ├── scripts/              # CLI + profilers
