@@ -146,6 +146,49 @@ void launch_to_planar_3ch_f16(const __half* src, __half* dst, int n, int H, int 
     to_planar_3ch_kernel<__half><<<grid, block, 0, stream>>>(src, dst, n, H, W);
 }
 
+// (n,H,W,3) interleaved -> (3*n,H,W) channel-outer planar:
+//   dst layout m' = c * n + f  (channel major, then frame).
+// Makes lpyr band writes affine (no irregular scatter offsets):
+//   band[l, m', px] with m' = c*n+f matches Stage C (T,N) per channel.
+template <typename T>
+__global__ void to_planar_3ch_chan_outer_kernel(
+    const T* __restrict__ src,
+    T* __restrict__ dst,
+    int n, int H, int W)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = n * H * W;
+    if (idx >= total) return;
+    const int x = idx % W;
+    const int yw = idx / W;
+    const int y = yw % H;
+    const int f = yw / H;
+    const T* s = src + (yw * W + x) * 3;
+    const int pix = y * W + x;
+    const int plane = H * W;
+    // channel c plane starts at (c * n + f) * plane
+    dst[(0 * n + f) * plane + pix] = s[0];
+    dst[(1 * n + f) * plane + pix] = s[1];
+    dst[(2 * n + f) * plane + pix] = s[2];
+}
+
+void launch_to_planar_3ch_chan_outer(const float* src, float* dst,
+                                     int n, int H, int W, cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(n * H * W, block);
+    to_planar_3ch_chan_outer_kernel<float><<<grid, block, 0, stream>>>(
+        src, dst, n, H, W);
+}
+
+void launch_to_planar_3ch_chan_outer_f16(const __half* src, __half* dst,
+                                         int n, int H, int W,
+                                         cudaStream_t stream) {
+    int block = 256;
+    int grid = div_up(n * H * W, block);
+    to_planar_3ch_chan_outer_kernel<__half><<<grid, block, 0, stream>>>(
+        src, dst, n, H, W);
+}
+
 // (n*3,H,W) planar  ->  (n,H,W,3) interleaved (inverse of to_planar_3ch).
 // Bit-exact layout transform — no FP, no tolerance implications.
 __global__ void planar_to_interleaved_3ch_kernel(

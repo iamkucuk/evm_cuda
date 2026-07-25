@@ -108,16 +108,17 @@ void lpyr_build_device(
     float* scratch_a, float* scratch_b, float* scratch_c,  // device scratch
     cudaStream_t stream)
 {
-    // We need a working buffer chain. scratch_a holds current image (size of
-    // current level), scratch_b holds lo (downsampled in x), scratch_c holds
-    // lo2 (downsampled in x then y). At each level we also need a buffer to
-    // hold hi (= upsample of lo2 in y) and hi2 (= upsample of hi in x) at the
-    // CURRENT image size; we reuse band[l] as that scratch and overwrite it
-    // with (img - hi2) at the end.
+    // Three max-sized scratch slots. Roles rotate by index each level so the
+    // lo2 buffer becomes the next cur without a D2D "descend" copy.
+    // hi reuses the lo slot; hi2 is written directly into band_ptrs[l] then
+    // overwritten by band = cur - hi2 (same as before).
     //
-    // Copy img -> scratch_a (current).
-    CUDA_CHECK(cudaMemcpyAsync(scratch_a, img, H * W * sizeof(float),
-                               cudaMemcpyDeviceToDevice, stream));
+    // Initial cur aliases `img` (read-only) — no D2D of the full image.
+    float* slots[3] = {scratch_a, scratch_b, scratch_c};
+    const float* cur = img;
+    int i_lo = 0, i_lo2 = 1;  // free slots relative to cur (img not in slots)
+    // After the first descend, cur lives in slots[i_cur].
+    int i_cur = -1;
 
     for (int l = 0; l < levels; ++l) {
         const auto [h, w] = sizes[l];
@@ -126,34 +127,35 @@ void lpyr_build_device(
 
         if (l == levels - 1) {
             // Coarsest level: residual lowpass = the current image.
-            CUDA_CHECK(cudaMemcpyAsync(band_ptrs[l], scratch_a,
+            CUDA_CHECK(cudaMemcpyAsync(band_ptrs[l], cur,
                                        h * w * sizeof(float),
                                        cudaMemcpyDeviceToDevice, stream));
             break;
         }
 
-        // lo  = corr_dn(scratch_a, axis=1) -> (h, wn)
-        launch_corr_dn_cols(scratch_a, scratch_b, h, w, filt, filt_len, stream);
-        // lo2 = corr_dn(lo,     axis=0) -> (hn, wn)
-        launch_corr_dn_rows(scratch_b, scratch_c, h, wn, filt, filt_len, stream);
+        float* lo  = slots[i_lo];
+        float* lo2 = slots[i_lo2];
 
-        // hi  = up_conv(lo2, axis=0, out_size=h) -> (h, wn)
-        launch_up_conv_rows(scratch_c, scratch_b, hn, h, wn,
-                            filt, filt_len, stream);
-        // hi2 = up_conv(hi,  axis=1, out_size=w) -> (h, w)
-        launch_up_conv_cols(scratch_b, band_ptrs[l], h, wn, w,
-                            filt, filt_len, stream);
+        // lo  = corr_dn(cur, axis=1) -> (h, wn)
+        launch_corr_dn_cols(cur, lo, h, w, filt, filt_len, stream);
+        // lo2 = corr_dn(lo,  axis=0) -> (hn, wn)
+        launch_corr_dn_rows(lo, lo2, h, wn, filt, filt_len, stream);
 
-        // band[l] = scratch_a - hi2  (per element)
-        subtract_inplace_kernel<<<div_up(h*w, 256), 256, 0, stream>>>(
-            scratch_a, band_ptrs[l], h * w);
+        // hi  = up_conv(lo2, axis=0, out_size=h) -> (h, wn); reuses lo
+        launch_up_conv_rows(lo2, lo, hn, h, wn, filt, filt_len, stream);
+        // hi2 = up_conv(hi,  axis=1, out_size=w) -> (h, w) into band[l]
+        launch_up_conv_cols(lo, band_ptrs[l], h, wn, w, filt, filt_len, stream);
 
-        // Descend: scratch_a := lo2 (next current image).
-        // We need scratch_c's contents to survive into the next iteration as
-        // scratch_a. Ping-pong by swapping the two device pointers via a copy.
-        CUDA_CHECK(cudaMemcpyAsync(scratch_a, scratch_c,
-                                   hn * wn * sizeof(float),
-                                   cudaMemcpyDeviceToDevice, stream));
+        // band[l] = cur - hi2  (in-place on band_ptrs[l])
+        subtract_inplace_kernel<<<div_up(h * w, 256), 256, 0, stream>>>(
+            cur, band_ptrs[l], h * w);
+
+        // Descend: cur := lo2 by pointer rotate (no D2D).
+        cur = lo2;
+        i_cur = i_lo2;
+        // Free slots = the two indices that are not i_cur.
+        i_lo  = (i_cur + 1) % 3;
+        i_lo2 = (i_cur + 2) % 3;
     }
 }
 
@@ -197,206 +199,105 @@ void lpyr_recon_device(
 }
 
 // ===========================================================================
-// Scatter/gather kernels for the channel-major band layout.
-//
-// The band buffer is laid out (level, channel, frame, spatial) so that Stage C's
-// temporal filter sees contiguous (T, N) blocks. This makes per-slice offsets
-// irregular: slice_off(m) = (m%3)*n_frames + m/3. These kernels bridge the
-// frame-major scratch buffers (regular strides) and the channel-major band
-// storage (scattered) via a pre-computed offset table.
-//
-// Grid: (ceil(n_per_slice/256), B). blockIdx.y = slice index m.
+// Contiguous band write/read (channel-outer affine layout).
+// When planar and bands share m' = c*n+f, scatter/gather collapse to dense
+// subtract/copy/add over M * n_per_slice floats — no offset table, no H2D.
 // ===========================================================================
 
-// Scatter-subtract: dst[offsets[m] + px] = a[m*stride + px] - b[m*stride + px].
-// Used to write band[l] = current - hi2 into channel-major band storage.
-__global__ void scatter_subtract_kernel(
-    const float* __restrict__ a,       // frame-major (B, n_per_slice)
-    const float* __restrict__ b,       // frame-major (B, n_per_slice)
-    float* __restrict__ dst,           // scattered (channel-major)
-    const int* __restrict__ offsets,   // [B] offset in floats per slice
-    int n_per_slice, int B)
+__global__ void band_subtract_kernel(
+    const float* __restrict__ a,
+    const float* __restrict__ b,
+    float* __restrict__ dst,
+    int n)
 {
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    int ai = m * n_per_slice + px;
-    dst[offsets[m] + px] = a[ai] - b[ai];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    dst[idx] = a[idx] - b[idx];
 }
 
-// Scatter-copy: dst[offsets[m] + px] = src[m*stride + px].
-// Used for the coarsest band (residual lowpass).
-__global__ void scatter_kernel(
-    const float* __restrict__ src,     // frame-major (B, n_per_slice)
-    float* __restrict__ dst,           // scattered (channel-major)
-    const int* __restrict__ offsets,   // [B] offset in floats per slice
-    int n_per_slice, int B)
+__global__ void band_add_kernel(
+    const float* __restrict__ a,
+    const float* __restrict__ b,
+    float* __restrict__ dst,
+    int n)
 {
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    dst[offsets[m] + px] = src[m * n_per_slice + px];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    dst[idx] = a[idx] + b[idx];
 }
 
-// Gather-add: dst[m*stride + px] = src[offsets[m] + px] + b[m*stride + px].
-// Used in recon: out = band[l] (scattered) + res (frame-major).
-__global__ void gather_add_kernel(
-    const float* __restrict__ src,     // scattered band data (channel-major)
-    const float* __restrict__ b,       // frame-major res (B, n_per_slice)
-    float* __restrict__ dst,           // frame-major output (B, n_per_slice)
-    const int* __restrict__ offsets,   // [B] offset in floats per slice
-    int n_per_slice, int B)
-{
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    int di = m * n_per_slice + px;
-    dst[di] = src[offsets[m] + px] + b[di];
-}
-
-// Gather: dst[m*stride + px] = src[offsets[m] + px].
-// Used in recon to read the coarsest band (scattered) into frame-major scratch.
-__global__ void gather_kernel(
-    const float* __restrict__ src,     // scattered band data (channel-major)
-    float* __restrict__ dst,           // frame-major (B, n_per_slice)
-    const int* __restrict__ offsets,   // [B] offset in floats per slice
-    int n_per_slice, int B)
-{
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    dst[m * n_per_slice + px] = src[offsets[m] + px];
-}
-
-void launch_scatter_subtract(const float* a, const float* b, float* dst,
-                             const int* offsets, int n_per_slice, int B,
-                             cudaStream_t stream) {
+void launch_band_subtract(const float* a, const float* b, float* dst,
+                          int n, cudaStream_t stream) {
+    if (n <= 0) return;
     dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    scatter_subtract_kernel<<<grid, block, 0, stream>>>(
-        a, b, dst, offsets, n_per_slice, B);
+    dim3 grid(div_up(n, 256), 1, 1);
+    band_subtract_kernel<<<grid, block, 0, stream>>>(a, b, dst, n);
 }
 
-void launch_scatter(const float* src, float* dst,
-                    const int* offsets, int n_per_slice, int B,
-                    cudaStream_t stream) {
+void launch_band_add(const float* a, const float* b, float* dst,
+                     int n, cudaStream_t stream) {
+    if (n <= 0) return;
     dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    scatter_kernel<<<grid, block, 0, stream>>>(
-        src, dst, offsets, n_per_slice, B);
+    dim3 grid(div_up(n, 256), 1, 1);
+    band_add_kernel<<<grid, block, 0, stream>>>(a, b, dst, n);
 }
 
-void launch_gather_add(const float* src, const float* b, float* dst,
-                       const int* offsets, int n_per_slice, int B,
-                       cudaStream_t stream) {
-    dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    gather_add_kernel<<<grid, block, 0, stream>>>(
-        src, b, dst, offsets, n_per_slice, B);
-}
-
-void launch_gather(const float* src, float* dst,
-                   const int* offsets, int n_per_slice, int B,
-                   cudaStream_t stream) {
-    dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    gather_kernel<<<grid, block, 0, stream>>>(
-        src, dst, offsets, n_per_slice, B);
-}
-
-// ===========================================================================
-// FP16 variants: read __half scratch, convert to float, write float bands.
-// Used when lpyr_build's scratch buffers are stored as __half to save VRAM.
-// ===========================================================================
-
-__global__ void scatter_subtract_f16_kernel(
+// FP16 scratch -> float band subtract (build f16 path).
+__global__ void band_subtract_f16_kernel(
     const __half* __restrict__ a,
     const __half* __restrict__ b,
     float* __restrict__ dst,
-    const int* __restrict__ offsets,
-    int n_per_slice, int B)
+    int n)
 {
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    int ai = m * n_per_slice + px;
-    dst[offsets[m] + px] = __half2float(a[ai]) - __half2float(b[ai]);
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    dst[idx] = __half2float(a[idx]) - __half2float(b[idx]);
 }
 
-__global__ void scatter_f16_kernel(
+__global__ void band_copy_f16_to_f32_kernel(
     const __half* __restrict__ src,
     float* __restrict__ dst,
-    const int* __restrict__ offsets,
-    int n_per_slice, int B)
+    int n)
 {
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    dst[offsets[m] + px] = __half2float(src[m * n_per_slice + px]);
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    dst[idx] = __half2float(src[idx]);
 }
 
-void launch_scatter_subtract_f16(const __half* a, const __half* b, float* dst,
-                                 const int* offsets, int n_per_slice, int B,
-                                 cudaStream_t stream) {
+void launch_band_subtract_f16(const __half* a, const __half* b, float* dst,
+                              int n, cudaStream_t stream) {
+    if (n <= 0) return;
     dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    scatter_subtract_f16_kernel<<<grid, block, 0, stream>>>(
-        a, b, dst, offsets, n_per_slice, B);
+    dim3 grid(div_up(n, 256), 1, 1);
+    band_subtract_f16_kernel<<<grid, block, 0, stream>>>(a, b, dst, n);
 }
 
-void launch_scatter_f16(const __half* src, float* dst,
-                    const int* offsets, int n_per_slice, int B,
-                    cudaStream_t stream) {
+void launch_band_copy_f16_to_f32(const __half* src, float* dst,
+                                 int n, cudaStream_t stream) {
+    if (n <= 0) return;
     dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    scatter_f16_kernel<<<grid, block, 0, stream>>>(
-        src, dst, offsets, n_per_slice, B);
+    dim3 grid(div_up(n, 256), 1, 1);
+    band_copy_f16_to_f32_kernel<<<grid, block, 0, stream>>>(src, dst, n);
 }
 
-// FP16 gather: read FP16 bands (scattered), write __half scratch.
-__global__ void gather_f16_kernel(
-    const __half* __restrict__ src,
-    __half* __restrict__ dst,
-    const int* __restrict__ offsets,
-    int n_per_slice, int B)
-{
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    dst[m * n_per_slice + px] = src[offsets[m] + px];
-}
-
-// FP16 gather_add: read __half bands (scattered) + __half res, write __half dst.
-__global__ void gather_add_f16_kernel(
-    const __half* __restrict__ src,
+// FP16 gather/add for recon_f16 (bands and scratch both __half).
+__global__ void band_add_f16_kernel(
+    const __half* __restrict__ a,
     const __half* __restrict__ b,
     __half* __restrict__ dst,
-    const int* __restrict__ offsets,
-    int n_per_slice, int B)
+    int n)
 {
-    const int px = blockIdx.x * blockDim.x + threadIdx.x;
-    const int m = blockIdx.y;
-    if (px >= n_per_slice || m >= B) return;
-    int di = m * n_per_slice + px;
-    dst[di] = __float2half(__half2float(src[offsets[m] + px]) + __half2float(b[di]));
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    dst[idx] = __float2half(__half2float(a[idx]) + __half2float(b[idx]));
 }
 
-void launch_gather_f16(const __half* src, __half* dst,
-                       const int* offsets, int n_per_slice, int B,
-                       cudaStream_t stream) {
+void launch_band_add_f16(const __half* a, const __half* b, __half* dst,
+                         int n, cudaStream_t stream) {
+    if (n <= 0) return;
     dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    gather_f16_kernel<<<grid, block, 0, stream>>>(
-        src, dst, offsets, n_per_slice, B);
-}
-
-void launch_gather_add_f16(const __half* src, const __half* b, __half* dst,
-                           const int* offsets, int n_per_slice, int B,
-                           cudaStream_t stream) {
-    dim3 block(256, 1, 1);
-    dim3 grid(div_up(n_per_slice, 256), B, 1);
-    gather_add_f16_kernel<<<grid, block, 0, stream>>>(
-        src, b, dst, offsets, n_per_slice, B);
+    dim3 grid(div_up(n, 256), 1, 1);
+    band_add_f16_kernel<<<grid, block, 0, stream>>>(a, b, dst, n);
 }
 
 }  // namespace evm

@@ -182,3 +182,60 @@ def test_batched_color_matches_python_face(tmp_path):
     )
     assert py.shape == batched.shape
     assert _rmse(py, batched) < TOL["end_to_end_rmse"]
+
+
+# --- FP16 motion (batched) --------------------------------------------------
+# Storage is half; compute stays FP32 in spatial kernels and FP64 in IIR.
+# Must match the Python FP32 oracle within the same end-to-end RMSE budget.
+
+
+@skip_no_cuda
+def test_batched_motion_fp16_matches_python_synth(tmp_path):
+    """Batched FP16 motion pipeline vs Python FP32 baseline on a flat synth clip."""
+    src = tmp_path / "flat.mp4"
+    _write_synth(src, _flat_clip())
+    py = evm.magnify_motion_lpyr_iir(
+        str(src), str(tmp_path / "py.mp4"),
+        alpha=10, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
+    cu16 = cu_batched.magnify_motion_lpyr_iir_fp16(
+        str(src), str(tmp_path / "cu16.mp4"),
+        alpha=10, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
+    assert py.shape == cu16.shape
+    assert _rmse(py, cu16) < TOL["end_to_end_rmse"]
+
+
+@skip_no_cuda
+@pytest.mark.skipif(not _have("baby.mp4"), reason="baby.mp4 not in data/")
+def test_batched_motion_fp16_matches_python_baby(tmp_path):
+    """Batched FP16 motion pipeline vs Python FP32 baseline on baby.mp4."""
+    py = evm.magnify_motion_lpyr_iir(
+        str(DATA / "baby.mp4"), str(tmp_path / "py.mp4"),
+        alpha=20, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
+    cu16 = cu_batched.magnify_motion_lpyr_iir_fp16(
+        str(DATA / "baby.mp4"), str(tmp_path / "cu16.mp4"),
+        alpha=20, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
+    assert py.shape == cu16.shape
+    assert _rmse(py, cu16) < TOL["end_to_end_rmse"]
+
+
+@skip_no_cuda
+@pytest.mark.skipif(not _have("baby.mp4"), reason="baby.mp4 not in data/")
+def test_batched_motion_fp16_close_to_fp32_baby(tmp_path):
+    """FP16 motion storage vs FP32 motion CUDA on baby.mp4.
+
+    DESIGN notes FP16/FP32 motion RMSE ~0.0016 and max per-pixel error around
+    a few uint8 steps. Bound to 5 LSB (measured peak on 3090); RMSE still
+    under the end-to-end 0.01 gate.
+    """
+    fp32 = cu_batched.magnify_motion_lpyr_iir(
+        str(DATA / "baby.mp4"), str(tmp_path / "fp32.mp4"),
+        alpha=20, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
+    fp16 = cu_batched.magnify_motion_lpyr_iir_fp16(
+        str(DATA / "baby.mp4"), str(tmp_path / "fp16.mp4"),
+        alpha=20, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
+    assert fp32.shape == fp16.shape
+    a = np.clip(np.rint(fp32 * 255.0), 0, 255).astype(np.int16)
+    b = np.clip(np.rint(fp16 * 255.0), 0, 255).astype(np.int16)
+    diff = np.abs(a - b)
+    assert int(diff.max()) <= 5, f"FP16 vs FP32 max LSB {diff.max()} > 5"
+    assert _rmse(fp32, fp16) < TOL["end_to_end_rmse"]

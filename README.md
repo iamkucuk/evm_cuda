@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](#)
 [![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia&logoColor=white)](#)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
-[![Tests](https://img.shields.io/badge/tests-83%20passed-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-92%20passed-brightgreen)](#)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/colab/evm_cuda_benchmark.ipynb)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
@@ -15,7 +15,7 @@ motion variations that the eye cannot detect.**
 This project ports the MIT SIGGRAPH 2012 reference implementation from
 MATLAB to raw CUDA C++, achieving **557x compute-only speedup** (273x full
 pipeline including H2D/D2H transfers) over the Python/NumPy baseline on an
-NVIDIA H100, while producing bit-for-bit equivalent output (RMSE < 0.01).
+NVIDIA H100, while matching the Python baseline within end-to-end RMSE < 0.01.
 
 ---
 
@@ -68,10 +68,29 @@ speedup (①, 522x) — the upload is a minor tax and the GPU genuinely does the
 work. For color the output D2H dominates if included (66 ms alone), so ② is the
 honest headline for any real invocation.
 
+### Throughput & real-time capacity
+
+At the realistic *inference* tier (②, input upload included, output kept on the
+GPU), the pipelines sustain:
+
+| Pipeline | Throughput | 1080p @ 30 fps |
+|----------|-----------:|---------------:|
+| Color FP32  | 1.9 Gpx/s | ~30 streams |
+| Motion FP32 | 1.1 Gpx/s | ~18 streams |
+| Motion FP16 | 1.1 Gpx/s | ~17 streams |
+
+The compute-only ceiling (①, data already on the GPU) is far higher — ~160 color
+or ~30 motion streams — while the full decode→magnify→encode path (③) drops to
+~12–15 streams because the output download is PCIe-bound.
+
 FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
 the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
 multi-GPU (P100/A100/H100) comparison in the
-[optimization writeup](docs/blog_speedup.md).
+[optimization writeup](docs/blog_speedup.md). Further mid-pipeline work
+(TN IIR, sticky scratch, free-list pool, smem downsample) on an RTX 3090 —
+motion compute **~934 → ~100 ms** (~9×) — in
+[further optimizations](docs/blog_further_optimizations.md)
+.
 
 ## How it works
 
@@ -109,7 +128,7 @@ make run-color         # pulse magnification on face.mp4
 make run-motion        # motion magnification on baby.mp4
 
 # Test
-make test              # 83 tests (25 Python baseline + 58 CUDA parametrized)
+make test              # 92 tests (32 Python baseline + 60 CUDA parametrized)
 
 # Profile
 make profile           # CPU vs FP32 vs FP16 comparison
@@ -140,7 +159,7 @@ No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.
   via `cvt_in`/`cvt_out` helpers; compute stays FP32, storage halves
 - **Multiple-elements-per-thread** — render and transpose kernels process
   4 pixels per thread to pipeline independent memory reads (22% speedup)
-- **83 tests** (61 functions, parametrized to 83 cases) validating every kernel
+- **92 tests** (67 functions, parametrized to 92 cases) validating every kernel
   end-to-end RMSE checks and MIT reference output comparison
 
 ## Project structure
@@ -149,15 +168,17 @@ No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.
 evm_cuda/
 ├── evm/                  # Python baseline (the correctness oracle)
 ├── cuda/                 # CUDA port
-│   ├── kernels/          # 10 .cu files (color, spatial, lpyr, iir, render...)
-│   ├── bindings.cpp      # pybind11 module
-│   ├── evm_cuda/         # Python wrapper (pipelines, DeviceBuffer)
-│   └── DESIGN.md         # kernel-by-kernel mapping + tolerance contract
+│   ├── kernels/          # .cu files (color, spatial, lpyr, iir, render...)
+│   ├── evm_cuda/         # Python package: batched.py, pipelines, benchmark
+│   ├── bindings.cpp      # pybind11 + DeviceMemPool + sticky scratch
+│   └── DESIGN.md         # kernel map, tolerances, production path
 ├── docs/
-│   ├── blog_speedup.md   # full optimization writeup
-│   └── img/              # demo images
+│   ├── blog_speedup.md                 # first optimization writeup
+│   ├── blog_further_optimizations.md   # layout, pool, smem (unified)
+│   ├── img/                            # demo images
+│   └── video/                          # Pages demo clips
 ├── scripts/              # CLI + profilers
-├── tests/                # 25 Python + 36 CUDA test functions (83 cases)
+├── tests/                # 32 Python + 60 CUDA cases (92 collected)
 ├── kaggle/               # free-GPU benchmark harness
 └── Makefile              # build, test, run, profile targets
 ```

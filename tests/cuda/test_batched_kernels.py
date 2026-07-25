@@ -38,28 +38,24 @@ if have_cuda:
 def test_batched_lpyr_build_matches_single_slice(h, w):
     """batched_lpyr_build (M=n*3 slices at once) == per-slice lpyr_build.
 
-    The binding always uses M = n_frames * 3 (3 channels per frame).
-    Input: (n*3, H, W) planar float32. Output: channel-major band layout
-    (level, chan, n_frames, spatial) with slice_off = chan * n_frames + frame.
+    Input planar is channel-outer: m = c*n_frames + f.
+    Band layout is the same order (affine scatter, slice_off = m).
     """
     rng = np.random.default_rng(42)
-    n_frames = 3  # small batch for fast testing
+    n_frames = 3
     levels = 1 + max_pyr_ht((h, w), 5)
     M = n_frames * 3
 
-    # Input: (M, H, W) — n_frames frames × 3 channels, planar.
+    # Channel-outer packing: m = c*n + f
     imgs = rng.random((M, h, w)).astype(np.float32)
 
-    # --- Reference: per-slice lpyr_build (slice m = frame m//3, chan m%3) ---
     ref_bands = []  # ref_bands[m][level]
     for m in range(M):
         bands_list, _ = _evm_cuda.lpyr_build(
             np.ascontiguousarray(imgs[m]), levels, BINOM5_CUDA)
         ref_bands.append([np.ascontiguousarray(b, dtype=np.float32) for b in bands_list])
 
-    # --- Batched: all M slices at once ---
     d_in = DeviceBuffer.from_array(imgs)
-    # Compute output layout (must match batched_lpyr_build in bindings.cpp).
     level_sizes = []
     ch, cw = h, w
     level_hw = []
@@ -74,18 +70,14 @@ def test_batched_lpyr_build_matches_single_slice(h, w):
     _evm_cuda.batched_lpyr_build(
         d_in.ptr, d_out.ptr, n_frames, h, w, levels, _d_binom5(), 5)
 
-    # Download and compare. Channel-major layout: for slice m (frame=m//3, chan=m%3),
-    # offset within level l = level_offset + (chan*n_frames + frame) * level_size.
+    # Affine channel-outer: offset within level l = level_offset + m * sz
     out = d_out.download_f32(total_floats).copy()
     level_offset = 0
     for l in range(levels):
         sz = level_sizes[l]
         lh, lw = level_hw[l]
         for m in range(M):
-            frame = m // 3
-            chan = m % 3
-            slice_off = chan * n_frames + frame
-            band_start = level_offset + slice_off * sz
+            band_start = level_offset + m * sz
             batched_band = out[band_start : band_start + sz].reshape(lh, lw)
             ref_band = ref_bands[m][l]
             assert abs_err(batched_band, ref_band) < TOL["corr_dn"], \
@@ -128,11 +120,9 @@ def test_batched_lpyr_recon_matches_single_slice(h, w):
     for l in range(levels):
         sz = level_sizes[l]
         for m in range(M):
-            frame = m // 3
-            chan = m % 3
-            slice_off = chan * n_frames + frame
-            band_flat[level_offset + slice_off * sz :
-                      level_offset + (slice_off + 1) * sz] = ref_bands[m][l].ravel()
+            # channel-outer affine: slice_off = m
+            band_flat[level_offset + m * sz :
+                      level_offset + (m + 1) * sz] = ref_bands[m][l].ravel()
         level_offset += sz * M
 
     d_bands = DeviceBuffer.from_array(np.ascontiguousarray(band_flat))
@@ -197,15 +187,15 @@ def test_batched_add_planar_quantize_matches_add_and_quantize():
 
     # NTSC frames (n, H, W, 3) interleaved.
     ntsc = rng.random((n, h, w, 3)).astype(np.float32)
-    # Delta in planar layout (n*3, H, W).
+    # Delta in channel-outer planar layout: m' = c*n + f.
     delta_planar = rng.random((n * 3, h, w)).astype(np.float32)
     chrom_att = 0.1
 
-    # Reference: transpose planar -> interleaved, then add_and_quantize per-frame.
+    # Reference: unpack channel-outer planar -> interleaved, then add_and_quantize.
     delta_interleaved = np.empty((n, h, w, 3), dtype=np.float32)
     for f in range(n):
         for c in range(3):
-            delta_interleaved[f, :, :, c] = delta_planar[f * 3 + c]
+            delta_interleaved[f, :, :, c] = delta_planar[c * n + f]
 
     ref_out = np.empty((n, h, w, 3), dtype=np.uint8)
     for f in range(n):
