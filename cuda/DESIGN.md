@@ -37,7 +37,7 @@ cuda/
 │   ├── iir_bandpass.cu    # per-pixel FP64-state r1/r2 recursion
 │   ├── butter_bandpass.cu # 1st-order Butter via scipy coeffs (host)
 │   ├── ideal_bandpass.cu  # cuFFT C2C batched + mask kernel + 1/T normalize
-│   ├── lpyr.cu            # build/recon (single-slice) + scatter/gather (batched)
+│   ├── lpyr.cu            # build/recon (single-slice) + contiguous band ops
 │   ├── blur_dn.cu         # blur_dn (single-slice; batched variant is in bindings.cpp)
 │   └── amplify_render.cu  # add+quantize, fused upsample+add, fused planar+add
 ├── bindings.cpp           # pybind11 module: per-kernel + batched_* wrappers,

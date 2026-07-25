@@ -47,7 +47,7 @@ download: ## Download MIT sample videos + reference outputs
 	python $(SCRIPTS)/download_samples.py face baby --with-references
 
 # --- Tests ------------------------------------------------------------------
-test: ## All tests: Python baseline + CUDA kernels (83 cases)
+test: ## All tests: Python baseline + CUDA kernels (92 cases)
 	python -m pytest tests/ tests/cuda/ -q
 
 test-baseline: ## Python baseline only (no GPU required, ~40s)

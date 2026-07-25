@@ -556,10 +556,10 @@ void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
 // PRODUCTION downsample path for batched_lpyr_build / batched_blur_dn_color.
 //
 // Production order is still cols then rows (matches matlabPyrTools). Unlike
-// dense 5×5 global corr_dn_2d (reverted / probe-only), this cooperatively loads
-// a 2D input tile once, then applies horizontal 5-tap then vertical 5-tap from
-// smem. Removes the intermediate (H, W/2) global write/read between the two
-// passes.
+// the earlier dense 5x5 global corr_dn_2d (probe-only, later removed), this
+// cooperatively loads a 2D input tile once, then applies horizontal 5-tap then
+// vertical 5-tap from smem. Removes the intermediate (H, W/2) global write/read
+// between the two passes.
 // ===========================================================================
 
 // Output tile (BX, BY); input tile covers 2× in each axis + ±HALO.
