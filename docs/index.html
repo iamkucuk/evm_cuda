@@ -516,7 +516,9 @@ the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
 multi-GPU (P100/A100/H100) comparison in the
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>.
 Further mid-pipeline work (TN IIR, sticky scratch, free-list pool, smem down)
-on RTX 3090 &mdash; motion compute ~934&rarr;~100&nbsp;ms (~9&times;) &mdash; in
+took RTX 3090 motion compute from ~934&rarr;~100&nbsp;ms (~9&times;); current
+production after true half-band + dense smem templates is about
+<b>90&nbsp;ms FP32 / 76&nbsp;ms FP16</b> compute (baby.mp4, 0.84&times;) &mdash; see
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md">further optimizations</a>.
 </p>
 
@@ -525,7 +527,7 @@ on RTX 3090 &mdash; motion compute ~934&rarr;~100&nbsp;ms (~9&times;) &mdash; in
 <ul class="features">
     <li><b>Device-resident pipeline</b> &mdash; entire clip staged to GPU once; 50+ kernel launches with zero per-frame transfers</li>
     <li><b>Batched spatial kernels</b> &mdash; <code>grid.z = M</code> collapses ~35,000 launches into ~50</li>
-    <li><b>Templated FP16 storage</b> &mdash; all kernels compile in both FP32 and FP16; compute stays FP32, storage halves</li>
+    <li><b>Templated FP16 storage</b> &mdash; same spatial kernels for FP32/FP16; dense half smem + float MAC</li>
     <li><b>cuFFT plan caching</b> &mdash; eliminates per-call autotuning overhead</li>
     <li><b>92 tests</b> &mdash; every kernel validated against the Python oracle, including MIT reference comparison</li>
 </ul>
