@@ -125,8 +125,8 @@ remeasure:
 | 3090 / baby | **15.8 ms** | **12.2 ms** | **0.77×** |
 
 Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
-Source: `benches/bench_osiris_3090.json`, `benches/bench_truba_a100.json`,
-`benches/bench_truba_h100.json`, `benches/bench_kaggle_p100.json`.
+Source: `benches/bench_rtx3090.json`, `benches/bench_a100.json`,
+`benches/bench_h100.json`, `benches/bench_p100.json`.
 P100 motion OOM in multi-config harness (standalone FP16 peak ~8–9 GB).
 
 ## Precision rationale

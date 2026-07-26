@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GPU profiler: color+motion × FP32+FP16 on Kaggle (P100 or T4).
 
-Uses the same ``evm_cuda.benchmark.run`` harness as local/osiris/H100:
+Uses the same ``evm_cuda.benchmark.run`` harness as local/H100:
 1 untimed warmup + median of ``N_ITER`` timed runs, sync per stage.
 
 Push:
@@ -30,7 +30,7 @@ N_ITER = 7
 # CPU baselines used in README / blog_speedup (Python/NumPy).
 CPU_REF_MS = {"color": 11194.0, "motion": 44190.0}
 
-# Match remeasure scripts on osiris/TRUBA.
+# Match remeasure scripts across hosts.
 COLOR = dict(
     alpha=50.0,
     level=4,
