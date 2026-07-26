@@ -1,0 +1,144 @@
+{
+  "gpu": "Tesla P100-PCIE-16GB",
+  "arch": "6.0",
+  "vram": "16384 MiB",
+  "branch": "feature/true-fp16-motion",
+  "n_iter": 7,
+  "cpu_ref_ms": {
+    "color": 11194.0,
+    "motion": 44190.0
+  },
+  "params": {
+    "color": {
+      "alpha": 50.0,
+      "level": 4,
+      "fl": 0.8333333333333334,
+      "fh": 1.0,
+      "chrom_attenuation": 1.0,
+      "sampling_rate": 30.0
+    },
+    "motion": {
+      "alpha": 20.0,
+      "lambda_c": 16.0,
+      "r1": 0.4,
+      "r2": 0.05,
+      "chrom_attenuation": 0.1
+    }
+  },
+  "results": [
+    {
+      "pipeline": "color",
+      "precision": "fp32",
+      "compute_ms": 31.617314999948576,
+      "transfer_ms": 188.10275600014847,
+      "total_ms": 219.72007100009705,
+      "gpu": "Tesla P100-PCIE-16GB",
+      "notes": "",
+      "stages": [
+        {
+          "name": "0) H2D: clip",
+          "median_ms": 87.979725000082,
+          "min_ms": 87.54727300004106,
+          "max_ms": 90.34169799997471
+        },
+        {
+          "name": "1) color_cvt",
+          "median_ms": 6.154972999979691,
+          "min_ms": 6.150666999928944,
+          "max_ms": 6.765447999896423
+        },
+        {
+          "name": "2) blur_dn",
+          "median_ms": 18.8320700000304,
+          "min_ms": 18.82724099993993,
+          "max_ms": 20.367187000033482
+        },
+        {
+          "name": "2b) bandpass (device-resident)",
+          "median_ms": 1.448277000008602,
+          "min_ms": 1.430173000017021,
+          "max_ms": 1.489343999992343
+        },
+        {
+          "name": "4b) render",
+          "median_ms": 5.181994999929884,
+          "min_ms": 5.180524000024889,
+          "max_ms": 5.413877000023604
+        },
+        {
+          "name": "4c) D2H: output",
+          "median_ms": 100.12303100006648,
+          "min_ms": 99.60845399996288,
+          "max_ms": 102.1506130000489
+        }
+      ]
+    },
+    {
+      "pipeline": "color",
+      "precision": "fp16",
+      "compute_ms": 27.130319999969288,
+      "transfer_ms": 189.49754800019036,
+      "total_ms": 216.62786800015965,
+      "gpu": "Tesla P100-PCIE-16GB",
+      "notes": "",
+      "stages": [
+        {
+          "name": "0) H2D: clip",
+          "median_ms": 88.70157300009396,
+          "min_ms": 88.18896100001439,
+          "max_ms": 90.08529400000498
+        },
+        {
+          "name": "1) color_cvt",
+          "median_ms": 3.2543570000598265,
+          "min_ms": 3.245158999902742,
+          "max_ms": 3.5000459999992017
+        },
+        {
+          "name": "2) blur_dn",
+          "median_ms": 17.66710799995508,
+          "min_ms": 17.66132300008394,
+          "max_ms": 19.75379599991811
+        },
+        {
+          "name": "2b) bandpass (device-resident)",
+          "median_ms": 1.446976000011091,
+          "min_ms": 1.4273509999611633,
+          "max_ms": 1.5155770000774282
+        },
+        {
+          "name": "4b) render",
+          "median_ms": 4.761878999943292,
+          "min_ms": 4.758646000027511,
+          "max_ms": 5.020923999950355
+        },
+        {
+          "name": "4c) D2H: output",
+          "median_ms": 100.7959750000964,
+          "min_ms": 99.46876200001498,
+          "max_ms": 102.60777999997117
+        }
+      ]
+    },
+    {
+      "pipeline": "motion",
+      "precision": "fp32",
+      "compute_ms": 0,
+      "transfer_ms": 0,
+      "total_ms": 0.0,
+      "gpu": "Tesla P100-PCIE-16GB",
+      "notes": "skipped (out of memory)",
+      "stages": []
+    },
+    {
+      "pipeline": "motion",
+      "precision": "fp16",
+      "compute_ms": 0,
+      "transfer_ms": 0,
+      "total_ms": 0.0,
+      "gpu": "Tesla P100-PCIE-16GB",
+      "notes": "skipped (out of memory)",
+      "stages": []
+    }
+  ]
+}

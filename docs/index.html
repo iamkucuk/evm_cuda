@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Eulerian Video Magnification — CUDA Implementation, Pulse &amp; Motion Demos</title>
-    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, 557× H100 speedup, validated within RMSE &lt; 0.01.">
+    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, ~3,200+ FPS motion compute on RTX 3090, validated within RMSE &lt; 0.01.">
     <meta name="keywords" content="Eulerian Video Magnification, EVM, video magnification, pulse magnification, motion magnification, MIT SIGGRAPH, Wu Rubinstein, CUDA, GPU, computer vision, vital signs video">
     <meta name="author" content="Furkan Kucuk">
     <meta name="robots" content="index, follow, max-image-preview:large">
@@ -14,7 +14,7 @@
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Eulerian Video Magnification (CUDA)">
     <meta property="og:title" content="Eulerian Video Magnification — open-source CUDA implementation">
-    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, and 557× H100 compute speedup.">
+    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, with ~3,200+ FPS motion compute on RTX 3090.">
     <meta property="og:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -346,9 +346,9 @@ This site is a full open-source <strong>CUDA</strong> implementation of that
 pipeline &mdash; color (pulse) magnification with an ideal bandpass and motion
 magnification with a Laplacian pyramid + IIR bandpass &mdash; with demos,
 benchmarks, and writeups. It ports the MIT reference from MATLAB to raw CUDA
-C++ and achieves a <b>557&times; compute-only speedup</b> (273&times; including
-host-device transfers) over a Python/NumPy baseline on an NVIDIA H100, with
-output validated against the Python baseline within RMSE 0.01.
+C++ and delivers <b>~3,200+ FPS of motion compute on a consumer RTX 3090</b>
+(~90&nbsp;ms for baby.mp4; FP16 ~75&nbsp;ms), with output validated against the
+Python baseline within RMSE 0.01. Datacenter numbers (A100/H100) are below.
 </p>
 </div>
 
@@ -423,100 +423,110 @@ for the kernel-by-kernel mapping.
 <!-- ===================== RESULTS ===================== -->
 <h2 class="section-title">Performance</h2>
 <p>
-Measured on an NVIDIA H100-80GB (sm_90) vs the Python/NumPy CPU baseline.
-Each stage &mdash; including every H2D/D2H transfer &mdash; is timed separately with
-<code>cudaDeviceSynchronize</code>, median of 5 runs after one warmup. The
-speedup is reported at three inclusion levels because they answer different
-questions about where the amplified signal is consumed:
+Current production path. Primary numbers: <b>RTX 3090</b> (most common consumer
+GPU for this workload). Harness: <code>evm_cuda.benchmark</code> &mdash;
+1 warmup + median of 7 timed runs, <code>cudaDeviceSynchronize</code> per stage.
+Sources: <code>benches/bench_rtx3090.json</code>,
+<code>benches/bench_a100.json</code>,
+<code>benches/bench_h100.json</code>,
+<code>benches/bench_p100.json</code>.
 </p>
+<p>
+Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
+</p>
+
+<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">RTX 3090 24GB (primary)</h3>
 <table>
 <tr>
     <th>Pipeline</th>
-    <th>Python CPU</th>
-    <th>&#9312; Compute only</th>
-    <th>&#9313; + H2D (inference)</th>
-    <th>&#9314; + H2D + D2H (full)</th>
+    <th>&#9312; Compute</th>
+    <th>&#9313; + H2D</th>
+    <th>&#9314; + H2D + D2H</th>
+    <th>Compute FPS</th>
+    <th>&#9312; vs CPU</th>
 </tr>
 <tr>
-    <td>Color FP32</td>
-    <td>11,194 ms</td>
-    <td>9 ms (<b>1,302&times;</b>)</td>
-    <td>47 ms (238&times;)</td>
-    <td>119 ms (94&times;)</td>
+    <td>Motion FP32 (baby)</td>
+    <td><b>90.4&nbsp;ms</b></td>
+    <td>128.0&nbsp;ms</td>
+    <td>203.5&nbsp;ms</td>
+    <td><b>~3,220</b></td>
+    <td><b>~490&times;</b></td>
 </tr>
 <tr>
-    <td>Motion FP32</td>
-    <td>44,190 ms</td>
-    <td>85 ms (<b>522&times;</b>)</td>
-    <td>135 ms (<b>329&times;</b>)</td>
-    <td>162 ms (<b>273&times;</b>)</td>
+    <td>Motion FP16 (baby)</td>
+    <td><b>75.1&nbsp;ms</b> (0.83&times;)</td>
+    <td>107.1&nbsp;ms</td>
+    <td>179.5&nbsp;ms</td>
+    <td><b>~3,870</b></td>
+    <td><b>~590&times;</b></td>
 </tr>
 <tr>
-    <td>Motion FP16</td>
-    <td>44,190 ms</td>
-    <td>79 ms (<b>557&times;</b>)</td>
-    <td>141 ms (314&times;)</td>
-    <td>183 ms (242&times;)</td>
+    <td>Color FP32 (face)</td>
+    <td><b>10.1&nbsp;ms</b></td>
+    <td>29.5&nbsp;ms</td>
+    <td>73.2&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~1,110&times;</b></td>
+</tr>
+<tr>
+    <td>Color FP16 (face)</td>
+    <td><b>7.8&nbsp;ms</b> (0.77&times;)</td>
+    <td>26.9&nbsp;ms</td>
+    <td>71.1&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~1,440&times;</b></td>
+</tr>
+<tr>
+    <td>Color FP32 (baby)</td>
+    <td><b>15.8&nbsp;ms</b></td>
+    <td>48.6&nbsp;ms</td>
+    <td>121.0&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~710&times;</b></td>
+</tr>
+<tr>
+    <td>Color FP16 (baby)</td>
+    <td><b>12.2&nbsp;ms</b> (0.77&times;)</td>
+    <td>45.0&nbsp;ms</td>
+    <td>117.9&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~920&times;</b></td>
 </tr>
 </table>
 <ul class="features">
-    <li><b>&#9312; Compute only</b> &mdash; the kernel speedup, pure compute capability
-        (data already on the GPU, e.g. part of a larger device-resident graph).</li>
-    <li><b>&#9313; + H2D</b> &mdash; realistic <i>inference</i> cost: the data starts on the
-        host, so you pay the input upload. The output D2H is <b>deliberately excluded</b>:
-        in most real uses the amplified signal is <i>consumed on the GPU</i>
-        (heart-rate estimation, motion-feature extraction, a downstream neural net),
-        so you don&rsquo;t need it on the host.</li>
-    <li><b>&#9314; + H2D + D2H</b> &mdash; full standalone &ldquo;decode &rarr; magnify &rarr; encode&rdquo;
-        offload, when you must materialize a viewable video on the host.</li>
+    <li><b>&#9312; Compute only</b> &mdash; kernels only (data already on GPU).</li>
+    <li><b>&#9313; + H2D</b> &mdash; inference-style: input upload + compute; output stays on device.</li>
+    <li><b>&#9314; + H2D + D2H</b> &mdash; full file-to-array path (PCIe both ways).</li>
 </ul>
-<p>
-For motion the inference speedup (&#9313;, 329&times;) is within 1.2&times; of the
-compute speedup (&#9312;, 522&times;) &mdash; the upload is a minor tax and the GPU
-genuinely does the work. For color the output D2H dominates if included (66 ms
-alone), so &#9313; is the honest headline for any real invocation.
-</p>
 
-<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Throughput &amp; real-time capacity</h3>
-<p>
-At the realistic <i>inference</i> tier (&#9313;, input upload included, output kept
-on the GPU), the pipelines sustain:
-</p>
+<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Other GPUs (compute only)</h3>
 <table>
 <tr>
-    <th>Pipeline</th>
-    <th>Throughput</th>
-    <th>Concurrent 1080p @ 30 fps streams</th>
+    <th>GPU</th>
+    <th>Motion FP32 / FP16</th>
+    <th>Color face FP32 / FP16</th>
 </tr>
 <tr>
-    <td>Color FP32</td>
-    <td>1.9 Gpx/s</td>
-    <td>~30</td>
+    <td><b>A100</b> 80GB</td>
+    <td><b>54.4 / 48.2&nbsp;ms</b> (0.89&times;)</td>
+    <td><b>8.8 / 8.2&nbsp;ms</b> (0.93&times;)</td>
 </tr>
 <tr>
-    <td>Motion FP32</td>
-    <td>1.1 Gpx/s</td>
-    <td>~18</td>
+    <td><b>H100</b> 80GB</td>
+    <td><b>35.8 / 34.5&nbsp;ms</b> (0.96&times;)</td>
+    <td><b>4.9 / 4.4&nbsp;ms</b> (0.90&times;)</td>
 </tr>
 <tr>
-    <td>Motion FP16</td>
-    <td>1.1 Gpx/s</td>
-    <td>~17</td>
+    <td><b>P100</b> 16GB</td>
+    <td>&mdash;</td>
+    <td><b>31.6 / 27.1&nbsp;ms</b> (0.86&times;)</td>
 </tr>
 </table>
 <p>
-The compute-only ceiling (&#9312;, data already on the GPU) is far higher &mdash;
-~160 color or ~30 motion streams &mdash; while the full decode&rarr;magnify&rarr;encode
-path (&#9314;) drops to ~12&ndash;15 streams because the output download is
-PCIe-bound. The end-to-end pipeline is currently capped by the CPU video codec.
-</p>
-<p>
-FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
-the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
-multi-GPU (P100/A100/H100) comparison in the
-<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">optimization writeup</a>.
-Further mid-pipeline work (TN IIR, sticky scratch, free-list pool, smem down)
-on RTX 3090 &mdash; motion compute ~934&rarr;~100&nbsp;ms (~9&times;) &mdash; in
+Accuracy: motion FP16 vs CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB); color face
+RMSE <b>0.00071</b> (max 1 LSB). Optimization history:
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">blog_speedup</a>,
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md">further optimizations</a>.
 </p>
 
@@ -525,7 +535,7 @@ on RTX 3090 &mdash; motion compute ~934&rarr;~100&nbsp;ms (~9&times;) &mdash; in
 <ul class="features">
     <li><b>Device-resident pipeline</b> &mdash; entire clip staged to GPU once; 50+ kernel launches with zero per-frame transfers</li>
     <li><b>Batched spatial kernels</b> &mdash; <code>grid.z = M</code> collapses ~35,000 launches into ~50</li>
-    <li><b>Templated FP16 storage</b> &mdash; all kernels compile in both FP32 and FP16; compute stays FP32, storage halves</li>
+    <li><b>Templated FP16 storage</b> &mdash; same spatial kernels for FP32/FP16; dense half smem + float MAC</li>
     <li><b>cuFFT plan caching</b> &mdash; eliminates per-call autotuning overhead</li>
     <li><b>92 tests</b> &mdash; every kernel validated against the Python oracle, including MIT reference comparison</li>
 </ul>
