@@ -14,10 +14,10 @@ motion variations that the eye cannot detect. This repository is an open-source
 **CUDA C++** implementation of the MIT SIGGRAPH 2012 method (Wu, Rubinstein,
 Freeman, Durand, Guttag), with pulse and motion demos, benchmarks, and writeups.
 
-It ports the MIT reference from MATLAB to raw CUDA C++, achieving **~1,280×**
-motion compute-only speedup (and **~2,500×** color) over the Python/NumPy
-baseline on an NVIDIA H100, while matching the Python baseline within
-end-to-end RMSE &lt; 0.01.
+It ports the MIT reference from MATLAB to raw CUDA C++, with **~3,200+ FPS**
+of motion compute on a consumer RTX 3090 (~90 ms for baby.mp4) and matching
+the Python baseline within end-to-end RMSE &lt; 0.01. Datacenter numbers
+(H100/A100) are below.
 
 ---
 
@@ -44,35 +44,37 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 ## Performance
 
 Current production path. Harness: `evm_cuda.benchmark` — **1 warmup + median of
-7 timed runs**, `cudaDeviceSynchronize` per stage. Sources:
-`benches/bench_truba_h100.json`, `benches/bench_truba_a100.json`,
-`benches/bench_osiris_3090.json`, `benches/bench_kaggle_p100.json`.
+7 timed runs**, `cudaDeviceSynchronize` per stage. Primary numbers:
+**RTX 3090** (most common consumer GPU for this workload). Sources:
+`benches/bench_osiris_3090.json`, `benches/bench_truba_a100.json`,
+`benches/bench_truba_h100.json`, `benches/bench_kaggle_p100.json`.
 
 Python CPU baselines: color **11,194 ms**, motion **44,190 ms**.
 
-### H100-80GB
+### RTX 3090 24GB (primary)
 
-| Pipeline | ① Compute | ② + H2D | ③ + H2D+D2H | ① vs CPU |
-|----------|----------:|--------:|------------:|---------:|
-| Color FP32 (`face.mp4`) | **4.9 ms** | 34.6 ms | 103.6 ms | **~2,290×** |
-| Color FP16 (`face.mp4`) | **4.4 ms** | 34.2 ms | 102.8 ms | **~2,540×** |
-| Motion FP32 (`baby.mp4`) | **35.8 ms** | 82.1 ms | 196.0 ms | **~1,230×** |
-| Motion FP16 (`baby.mp4`) | **34.5 ms** (**0.96×** FP32) | 81.0 ms | 189.3 ms | **~1,280×** |
+| Pipeline | ① Compute | ② + H2D | ③ + H2D+D2H | Compute FPS | ① vs CPU |
+|----------|----------:|--------:|------------:|------------:|---------:|
+| Motion FP32 (`baby.mp4`) | **90.4 ms** | 128.0 ms | 203.5 ms | **~3,220** | **~490×** |
+| Motion FP16 (`baby.mp4`) | **75.1 ms** (**0.83×**) | 107.1 ms | 179.5 ms | **~3,870** | **~590×** |
+| Color FP32 (`face.mp4`) | **10.1 ms** | 29.5 ms | 73.2 ms | — | **~1,110×** |
+| Color FP16 (`face.mp4`) | **7.8 ms** (**0.77×**) | 26.9 ms | 71.1 ms | — | **~1,440×** |
+| Color FP32 (`baby.mp4`) | **15.8 ms** | 48.6 ms | 121.0 ms | — | **~710×** |
+| Color FP16 (`baby.mp4`) | **12.2 ms** (**0.77×**) | 45.0 ms | 117.9 ms | — | **~920×** |
 
 - **①** kernels only · **②** upload + compute · **③** full H2D+D2H  
-On H100, transfers dominate wall time.
+Motion FP16 uses the same spatial templates as FP32 (dense half smem + float
+MAC). Transfers still dominate file-to-file wall time.
 
 ### Other GPUs (compute only)
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
-| **RTX 3090** 24GB | **90.4 / 75.1 ms** (0.83×) | **10.1 / 7.8 ms** (0.77×) |
 | **A100** 80GB | **54.4 / 48.2 ms** (0.89×) | **8.8 / 8.2 ms** (0.93×) |
+| **H100** 80GB | **35.8 / 34.5 ms** (0.96×) | **4.9 / 4.4 ms** (0.90×) |
 | **P100** 16GB | — | **31.6 / 27.1 ms** (0.86×) |
 
-3090 also: color baby **15.8 / 12.2 ms** (0.77×). Motion compute FPS on 3090
-(291 frames): FP32 **~3,220**, FP16 **~3,870**. P100 motion was OOM in the
-multi-config harness; standalone motion FP16 peaks **~8–9 GB**.
+P100 motion OOM in multi-config harness; standalone motion FP16 peaks **~8–9 GB**.
 
 ### Accuracy
 
@@ -83,7 +85,7 @@ multi-config harness; standalone motion FP16 peaks **~8–9 GB**.
 
 End-to-end vs Python stays under RMSE &lt; 0.01.
 
-Optimization history and stage-by-stage improvements:
+Optimization history:
 [blog_speedup.md](docs/blog_speedup.md) ·
 [blog_further_optimizations.md](docs/blog_further_optimizations.md).
 
