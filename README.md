@@ -188,8 +188,8 @@ No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++.
   via `cvt_in`/`cvt_out` helpers; compute stays FP32, storage halves
 - Multiple-elements-per-thread render and transpose kernels process
   4 pixels per thread to pipeline independent memory reads (22% speedup)
-- **92 tests** (67 functions, parametrized to 92 cases) validating every kernel
-  end-to-end RMSE checks and MIT reference output comparison
+- 92 tests (67 functions, parametrized to 92 cases) covering every kernel,
+  end-to-end RMSE checks, and MIT reference comparison
 
 ## Project structure
 

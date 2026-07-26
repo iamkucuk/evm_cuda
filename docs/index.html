@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eulerian Video Magnification — CUDA Implementation, Pulse &amp; Motion Demos</title>
-    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, ~3,200 to 3,900 FPS motion compute on RTX 3090 (~30× 1080p@30 streams, compute-only); RMSE &lt; 0.01.">
+    <title>Eulerian Video Magnification: CUDA Implementation, Pulse &amp; Motion Demos</title>
+    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion demos, ~590x motion / ~1,440x color compute on RTX 3090 (FP16); RMSE &lt; 0.01.">
     <meta name="keywords" content="Eulerian Video Magnification, EVM, video magnification, pulse magnification, motion magnification, MIT SIGGRAPH, Wu Rubinstein, CUDA, GPU, computer vision, vital signs video">
     <meta name="author" content="Furkan Kucuk">
     <meta name="robots" content="index, follow, max-image-preview:large">
@@ -13,20 +13,20 @@
     <!-- Open Graph -->
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Eulerian Video Magnification (CUDA)">
-    <meta property="og:title" content="Eulerian Video Magnification — open-source CUDA implementation">
-    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, with ~3,200 to 3,900 FPS motion compute on RTX 3090 (~30 concurrent 1080p@30 streams, compute-only).">
+    <meta property="og:title" content="Eulerian Video Magnification: open-source CUDA implementation">
+    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++: demos, writeups, ~590x motion / ~1,440x color compute on RTX 3090 (FP16).">
     <meta property="og:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="Pulse magnification demo — blood flow becomes visible with Eulerian Video Magnification">
+    <meta property="og:image:alt" content="Pulse magnification demo: blood flow becomes visible with Eulerian Video Magnification">
     <meta property="og:url" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Eulerian Video Magnification — open-source CUDA implementation">
+    <meta name="twitter:title" content="Eulerian Video Magnification: open-source CUDA implementation">
     <meta name="twitter:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ with demos and benchmarks.">
     <meta name="twitter:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
-    <meta name="twitter:image:alt" content="Pulse magnification demo — blood flow becomes visible with Eulerian Video Magnification">
+    <meta name="twitter:image:alt" content="Pulse magnification demo: blood flow becomes visible with Eulerian Video Magnification">
 
     <!-- Structured data for Google rich results -->
     <script type="application/ld+json">
@@ -343,13 +343,12 @@ reconstructs the video.
 </p>
 <p>
 This site is a full open-source <strong>CUDA</strong> implementation of that
-pipeline &mdash; color (pulse) magnification with an ideal bandpass and motion
-magnification with a Laplacian pyramid + IIR bandpass &mdash; with demos,
+pipeline: color (pulse) magnification with an ideal bandpass and motion
+magnification with a Laplacian pyramid + IIR bandpass, with demos,
 benchmarks, and writeups. It ports the MIT reference from MATLAB to raw CUDA
-C++ and delivers <b>~3,200 to 3,900 FPS of motion compute on a consumer RTX 3090</b>
-(~90&nbsp;ms FP32, ~75&nbsp;ms FP16 for baby.mp4), about
-30 concurrent 1080p@30 motion streams in pure compute (FP16).
-Output matches the Python baseline within RMSE 0.01. Other GPUs below.
+C++. On a consumer RTX 3090 it reaches about 590x compute-only speedup on
+motion (FP16) and about 1,440x on color (FP16) over the Python/NumPy baseline,
+while matching that baseline within RMSE 0.01. Other GPUs below.
 </p>
 </div>
 
@@ -496,59 +495,40 @@ Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
 </tr>
 </table>
 <ul class="features">
-    <li><b>&#9312; Compute only</b> &mdash; kernels only (data already on GPU).</li>
-    <li><b>&#9313; + H2D</b> &mdash; inference-style: input upload + compute; output stays on device.</li>
-    <li><b>&#9314; + H2D + D2H</b> &mdash; full file-to-array path (PCIe both ways).</li>
+    <li><b>&#9312; Compute only</b>: kernels only (data already on GPU).</li>
+    <li><b>&#9313; + H2D</b>: inference-style (input upload + compute; output stays on device).</li>
+    <li><b>&#9314; + H2D + D2H</b>: full file-to-array path (PCIe both ways).</li>
 </ul>
 
-<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Throughput (compute-only)</h3>
+<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Throughput and real-time capacity</h3>
 <p>
-Pixel-scale from measured clips. <b>1080p@30 &approx; 62.2 Mpx/s.</b>
-Stream counts are <b>GPU compute capacity only</b> (not decode/encode/PCIe).
-</p>
-<p>
-One RTX 3090 can handle about 30 concurrent 1080p@30 motion streams
-in pure compute (FP16), or about 190 color streams. That is roughly 100x
-real-time for a single baby-class motion clip. File-to-file paths pay PCIe
-and codec overhead and run far fewer concurrent streams.
+At the realistic <i>inference</i> tier (&#9313;, input upload included, output kept
+on the GPU), pixel rates scale from the measured clips as:
 </p>
 <table>
 <tr>
-    <th>GPU</th>
-    <th>Motion FP16 Gpx/s</th>
-    <th>&approx; 1080p@30 motion streams</th>
-    <th>Color face FP16 Gpx/s</th>
-    <th>&approx; 1080p@30 color streams</th>
+    <th>Pipeline (FP16, RTX 3090)</th>
+    <th>Throughput (&#9313;)</th>
+    <th>~ 1080p @ 30 fps</th>
 </tr>
 <tr>
-    <td><b>RTX 3090</b></td>
-    <td>~2.0</td>
-    <td><b>~30</b></td>
-    <td>~12</td>
-    <td><b>~190</b></td>
+    <td>Color (face)</td>
+    <td>~3.4 Gpx/s</td>
+    <td>~55 streams</td>
 </tr>
 <tr>
-    <td><b>A100</b></td>
-    <td>~3.2</td>
-    <td><b>~50</b></td>
-    <td>~11</td>
-    <td><b>~180</b></td>
-</tr>
-<tr>
-    <td><b>H100</b></td>
-    <td>~4.4</td>
-    <td><b>~70</b></td>
-    <td>~21</td>
-    <td><b>~330</b></td>
-</tr>
-<tr>
-    <td><b>P100</b></td>
-    <td></td>
-    <td></td>
-    <td>~3.4</td>
-    <td><b>~50</b></td>
+    <td>Motion (baby)</td>
+    <td>~1.4 Gpx/s</td>
+    <td>~23 streams</td>
 </tr>
 </table>
+<p>
+The compute-only ceiling (&#9312;, data already on the GPU) is higher: about
+~12 Gpx/s color (~190 streams) or ~2.0 Gpx/s motion (~30 streams). The full
+path (&#9314;) drops further and is usually PCIe-bound on the download.
+1080p@30 needs about 62.2 Mpx/s; stream counts are pixel-scaled capacity, not
+a measured multi-stream harness.
+</p>
 
 <h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Other GPUs (compute only)</h3>
 <table>
@@ -559,27 +539,27 @@ and codec overhead and run far fewer concurrent streams.
     <th>vs 3090 motion FP16</th>
 </tr>
 <tr>
-    <td><b>A100</b> 80GB</td>
-    <td><b>54.4 / 48.2&nbsp;ms</b> (0.89&times;)</td>
-    <td><b>8.8 / 8.2&nbsp;ms</b> (0.93&times;)</td>
+    <td>A100 80GB</td>
+    <td>54.4 / 48.2&nbsp;ms (0.89&times;)</td>
+    <td>8.8 / 8.2&nbsp;ms (0.93&times;)</td>
     <td>~1.6&times; faster</td>
 </tr>
 <tr>
-    <td><b>H100</b> 80GB</td>
-    <td><b>35.8 / 34.5&nbsp;ms</b> (0.96&times;)</td>
-    <td><b>4.9 / 4.4&nbsp;ms</b> (0.90&times;)</td>
+    <td>H100 80GB</td>
+    <td>35.8 / 34.5&nbsp;ms (0.96&times;)</td>
+    <td>4.9 / 4.4&nbsp;ms (0.90&times;)</td>
     <td>~2.2&times; faster</td>
 </tr>
 <tr>
-    <td><b>P100</b> 16GB</td>
+    <td>P100 16GB</td>
     <td></td>
-    <td><b>31.6 / 27.1&nbsp;ms</b> (0.86&times;)</td>
+    <td>31.6 / 27.1&nbsp;ms (0.86&times;)</td>
     <td>color only</td>
 </tr>
 </table>
 <p>
-Accuracy: motion FP16 vs CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB); color face
-RMSE <b>0.00071</b> (max 1 LSB). Optimization history:
+Accuracy: motion FP16 vs CUDA FP32 RMSE 0.00232 (max 5 LSB); color face
+RMSE 0.00071 (max 1 LSB). Optimization history:
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">blog_speedup</a>,
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md">further optimizations</a>.
 </p>
@@ -587,11 +567,11 @@ RMSE <b>0.00071</b> (max 1 LSB). Optimization history:
 <!-- ===================== ARCHITECTURE ===================== -->
 <h2 class="section-title">Architecture</h2>
 <ul class="features">
-    <li><b>Device-resident pipeline:</b> entire clip staged to GPU once; 50+ kernel launches with zero per-frame transfers</li>
-    <li><b>Batched spatial kernels:</b> <code>grid.z = M</code> collapses ~35,000 launches into ~50</li>
-    <li><b>Templated FP16 storage:</b> same spatial kernels for FP32/FP16; dense half smem + float MAC</li>
-    <li><b>cuFFT plan caching</b> eliminates per-call autotuning overhead</li>
-    <li><b>92 tests</b> &mdash; every kernel validated against the Python oracle, including MIT reference comparison</li>
+    <li>Device-resident pipeline: entire clip staged to GPU once; 50+ kernel launches with zero per-frame transfers</li>
+    <li>Batched spatial kernels: <code>grid.z = M</code> collapses ~35,000 launches into ~50</li>
+    <li>Templated FP16 storage: same spatial kernels for FP32/FP16; dense half smem + float MAC</li>
+    <li>cuFFT plan caching eliminates per-call autotuning overhead</li>
+    <li>92 tests covering every kernel against the Python oracle, including MIT reference comparison</li>
 </ul>
 <p>
 No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++ with
