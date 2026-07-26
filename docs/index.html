@@ -423,15 +423,17 @@ for the kernel-by-kernel mapping.
 <!-- ===================== RESULTS ===================== -->
 <h2 class="section-title">Performance</h2>
 <p>
-Fresh measurements on the <b>current</b> production path (true half-band motion,
-dense half smem templates). Harness: <code>evm_cuda.benchmark</code> &mdash;
-1 untimed warmup + median of 7 timed runs, <code>cudaDeviceSynchronize</code>
-per stage. Source: <code>benches/bench_truba_h100.json</code>,
-<code>benches/bench_osiris_3090.json</code>.
+Current production path. Harness: <code>evm_cuda.benchmark</code> &mdash;
+1 warmup + median of 7 timed runs, <code>cudaDeviceSynchronize</code> per stage.
+Sources: <code>benches/bench_truba_h100.json</code>,
+<code>benches/bench_truba_a100.json</code>,
+<code>benches/bench_osiris_3090.json</code>,
+<code>benches/bench_kaggle_p100.json</code>.
 </p>
 <p>
 Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
 </p>
+
 <h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">H100-80GB</h3>
 <table>
 <tr>
@@ -476,69 +478,34 @@ Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
     <li><b>&#9314; + H2D + D2H</b> &mdash; full file-to-array path (PCIe both ways).</li>
 </ul>
 
-<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">RTX 3090 24GB (fresh process per config)</h3>
+<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Other GPUs (compute only)</h3>
 <table>
 <tr>
-    <th>Pipeline</th>
-    <th>Compute</th>
-    <th>Full (H2D+compute+D2H)</th>
-    <th>FP16/FP32 compute</th>
+    <th>GPU</th>
+    <th>Motion FP32 / FP16</th>
+    <th>Color face FP32 / FP16</th>
 </tr>
 <tr>
-    <td>Motion FP32 (baby)</td>
-    <td><b>90.4&nbsp;ms</b></td>
-    <td>203.5&nbsp;ms</td>
+    <td><b>RTX 3090</b> 24GB</td>
+    <td><b>90.4 / 75.1&nbsp;ms</b> (0.83&times;)</td>
+    <td><b>10.1 / 7.8&nbsp;ms</b> (0.77&times;)</td>
+</tr>
+<tr>
+    <td><b>A100</b> 80GB</td>
+    <td><b>54.4 / 48.2&nbsp;ms</b> (0.89&times;)</td>
+    <td><b>8.8 / 8.2&nbsp;ms</b> (0.93&times;)</td>
+</tr>
+<tr>
+    <td><b>P100</b> 16GB</td>
     <td>&mdash;</td>
-</tr>
-<tr>
-    <td>Motion FP16 (baby)</td>
-    <td><b>75.1&nbsp;ms</b></td>
-    <td>179.5&nbsp;ms</td>
-    <td><b>0.83&times;</b></td>
-</tr>
-<tr>
-    <td>Color FP32 (face)</td>
-    <td><b>10.1&nbsp;ms</b></td>
-    <td>73.2&nbsp;ms</td>
-    <td>&mdash;</td>
-</tr>
-<tr>
-    <td>Color FP16 (face)</td>
-    <td><b>7.8&nbsp;ms</b></td>
-    <td>71.1&nbsp;ms</td>
-    <td><b>0.77&times;</b></td>
-</tr>
-<tr>
-    <td>Color FP32 (baby)</td>
-    <td><b>15.8&nbsp;ms</b></td>
-    <td>121.0&nbsp;ms</td>
-    <td>&mdash;</td>
-</tr>
-<tr>
-    <td>Color FP16 (baby)</td>
-    <td><b>12.2&nbsp;ms</b></td>
-    <td>117.9&nbsp;ms</td>
-    <td><b>0.77&times;</b></td>
+    <td><b>31.6 / 27.1&nbsp;ms</b> (0.86&times;)</td>
 </tr>
 </table>
 <p>
-Also remeasured on <b>A100-80GB</b>: motion <b>54.4 / 48.2&nbsp;ms</b> FP32/FP16,
-color face <b>8.8 / 8.2&nbsp;ms</b> (<code>benches/bench_truba_a100.json</code>).
-P100 color face <b>31.6 / 27.1&nbsp;ms</b>.
-</p>
-<p>
-Accuracy (same builds): motion FP16 vs CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB);
-color face RMSE <b>0.00071</b> (max 1 LSB).
-</p>
-<p>
-<b>vs older published numbers:</b> H100 motion compute ~85&rarr;<b>35.8&nbsp;ms</b>
-(~2.4&times;), color ~9&rarr;<b>4.9&nbsp;ms</b> (~1.8&times;); A100 motion
-~209&rarr;<b>54&nbsp;ms</b> (~3.8&times;). Those older figures predate the
-mid-pipeline series (TN IIR, sticky scratch, pool, smem down) <i>and</i> true
-half-band &mdash; the jump is mostly that stack landing on each GPU, not
-&ldquo;FP16 alone.&rdquo; Half-band density is the extra FP16 edge (clearest on
-3090: motion 0.83&times;, color 0.77&times;). 3090 mid-pipeline history
-(~934&rarr;~100&nbsp;ms) in
+3090 color baby: <b>15.8 / 12.2&nbsp;ms</b> (0.77&times;). Accuracy: motion FP16 vs
+CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB); color face RMSE <b>0.00071</b>
+(max 1 LSB). Optimization history:
+<a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">blog_speedup</a>,
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md">further optimizations</a>.
 </p>
 

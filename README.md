@@ -43,15 +43,14 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 ## Performance
 
-Fresh measurements on the **current** production path. Harness:
-`evm_cuda.benchmark` — **1 untimed warmup + median of 7 timed runs**,
-`cudaDeviceSynchronize` after every stage. JSON:
+Current production path. Harness: `evm_cuda.benchmark` — **1 warmup + median of
+7 timed runs**, `cudaDeviceSynchronize` per stage. Sources:
 `benches/bench_truba_h100.json`, `benches/bench_truba_a100.json`,
 `benches/bench_osiris_3090.json`, `benches/bench_kaggle_p100.json`.
 
-Python CPU baselines (unchanged): color **11,194 ms**, motion **44,190 ms**.
+Python CPU baselines: color **11,194 ms**, motion **44,190 ms**.
 
-### H100-80GB (TRUBA `kolyoz-cuda`, sm_90)
+### H100-80GB
 
 | Pipeline | ① Compute | ② + H2D | ③ + H2D+D2H | ① vs CPU |
 |----------|----------:|--------:|------------:|---------:|
@@ -60,59 +59,32 @@ Python CPU baselines (unchanged): color **11,194 ms**, motion **44,190 ms**.
 | Motion FP32 (`baby.mp4`) | **35.8 ms** | 82.1 ms | 196.0 ms | **~1,230×** |
 | Motion FP16 (`baby.mp4`) | **34.5 ms** (**0.96×** FP32) | 81.0 ms | 189.3 ms | **~1,280×** |
 
-- **① Compute only** — kernels only (data already on GPU).
-- **② + H2D** — inference-style: input upload + compute; output stays on GPU.
-- **③ + H2D + D2H** — full file-to-array path (PCIe both ways).
+- **①** kernels only · **②** upload + compute · **③** full H2D+D2H  
+On H100, transfers dominate wall time.
 
-Transfers dominate H100 wall time. FP16 is a small compute edge over FP32 here.
+### Other GPUs (compute only)
 
-### RTX 3090 24GB (osiris WSL2) · A100-80GB (TRUBA `palamut-cuda`)
-
-| GPU | Motion FP32/FP16 | Color face FP32/FP16 | FP16/FP32 motion |
-|-----|-----------------:|---------------------:|-----------------:|
-| **3090** | **90.4 / 75.1 ms** | **10.1 / 7.8 ms** | **0.83×** |
-| **A100** | **54.4 / 48.2 ms** | **8.8 / 8.2 ms** | **0.89×** |
+| GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
+|-----|-------------------:|-----------------------:|
+| **RTX 3090** 24GB | **90.4 / 75.1 ms** (0.83×) | **10.1 / 7.8 ms** (0.77×) |
+| **A100** 80GB | **54.4 / 48.2 ms** (0.89×) | **8.8 / 8.2 ms** (0.93×) |
+| **P100** 16GB | — | **31.6 / 27.1 ms** (0.86×) |
 
 3090 also: color baby **15.8 / 12.2 ms** (0.77×). Motion compute FPS on 3090
-(291 frames): FP32 **~3,220**, FP16 **~3,870**.
+(291 frames): FP32 **~3,220**, FP16 **~3,870**. P100 motion was OOM in the
+multi-config harness; standalone motion FP16 peaks **~8–9 GB**.
 
-### P100 16GB (Kaggle)
+### Accuracy
 
-Color face **31.6 / 27.1 ms** FP32/FP16 (0.86×). Motion OOM in the multi-config
-harness; standalone motion FP16 peaks **~8–9 GB** (may fit if isolated). Prefer
-≥24 GB for comfortable whole-clip baby motion.
+| Compare | RMSE | max LSB |
+|---------|-----:|--------:|
+| Motion FP16 vs CUDA FP32 (baby) | **0.00232** | **5** |
+| Color FP16 vs CUDA FP32 (face) | **0.00071** | **1** |
 
-### Accuracy (same builds)
+End-to-end vs Python stays under RMSE &lt; 0.01.
 
-| Compare | RMSE | max abs | max LSB |
-|---------|-----:|--------:|--------:|
-| Motion FP16 vs CUDA FP32 (baby) | **0.00232** | 0.0196 | **5** |
-| Color FP16 vs CUDA FP32 (face) | **0.00071** | 0.00392 | **1** |
-
-Both under end-to-end RMSE &lt; 0.01 vs Python.
-
-### vs previous published numbers (honest attribution)
-
-| GPU | Metric | Old docs | Now | Faster by |
-|-----|--------|---------:|----:|----------:|
-| H100 | Motion FP32 compute | ~85 ms | **35.8 ms** | **~2.4×** |
-| H100 | Motion FP16 compute | ~79 ms | **34.5 ms** | **~2.3×** |
-| H100 | Color FP32 compute | ~9 ms | **4.9 ms** | **~1.8×** |
-| A100 | Motion FP32 compute | ~209 ms† | **54.4 ms** | **~3.8×** |
-| A100 | Color FP32 compute | ~72 ms† | **8.8 ms** | **~8×** |
-| P100 | Color FP32 compute | ~138 ms† | **31.6 ms** | **~4.4×** |
-| 3090 | Motion FP32 compute | ~934 → ~100 ms‡ | **90.4 ms** | ~10× vs series start |
-
-† Old multi-GPU rows predate the mid-pipeline series (TN IIR, sticky scratch,
-DeviceMemPool, smem fused downsample) **and** the later true half-band / dense
-smem work. The H100/A100/P100 jumps are **not** “FP16 alone gave 2–8×” — FP32
-moved almost as much as FP16, so the bulk is mid-pipeline + packaging, with
-half-band density as an extra FP16 edge (clearest on 3090: motion **0.83×**,
-color **0.77×**).
-
-‡ 3090 arc in [further optimizations](docs/blog_further_optimizations.md).
-
-More tables: [blog_speedup.md](docs/blog_speedup.md),
+Optimization history and stage-by-stage improvements:
+[blog_speedup.md](docs/blog_speedup.md) ·
 [blog_further_optimizations.md](docs/blog_further_optimizations.md).
 
 ## How it works
