@@ -432,38 +432,35 @@ again, do not attribute the whole jump to FP16 density alone.
 ### Measured throughput (compute-only, current production)
 
 Pixel rates from remeasured compute and clip geometry (face 291×592×528;
-baby 291×960×544):
+baby 291×960×544). **1080p@30 ≈ 62.2 Mpx/s.** Stream counts are **compute-only**
+(device-resident capacity); do **not** read them as file→file real-time.
 
-| Pipeline | GPU | Compute | Gpx/s (approx) |
-|----------|-----|--------:|---------------:|
-| Color face | H100 FP32 | 4.9 ms | ~18.5 |
-| Color face | A100 FP32 | 8.8 ms | ~10.3 |
-| Color face | 3090 FP32 | 10.1 ms | ~9.0 |
-| Color face | P100 FP32 | 31.6 ms | ~2.9 |
-| Motion baby | H100 FP16 | 34.5 ms | ~4.4 |
-| Motion baby | A100 FP16 | 48.2 ms | ~3.2 |
-| Motion baby | 3090 FP16 | 75.1 ms | ~2.0 |
+| Pipeline | GPU | Compute | Gpx/s | ≈ 1080p@30 streams |
+|----------|-----|--------:|------:|-------------------:|
+| Color face FP16 | **RTX 3090** | 7.8 ms | ~12 | **~190** |
+| Color face FP16 | A100 | 8.2 ms | ~11 | **~180** |
+| Color face FP16 | H100 | 4.4 ms | ~21 | **~330** |
+| Color face FP16 | P100 | 27.1 ms | ~3.4 | **~50** |
+| Motion baby FP16 | **RTX 3090** | 75.1 ms | ~2.0 | **~30** |
+| Motion baby FP16 | A100 | 48.2 ms | ~3.2 | **~50** |
+| Motion baby FP16 | H100 | 34.5 ms | ~4.4 | **~70** |
 
-Motion is slower per pixel (9-level Laplacian + sequential IIR). Full path
-including H2D/D2H is much lower on every GPU because transfers dominate.
+**Punchline (3090):** one card can host on the order of **~30 concurrent
+1080p@30 motion streams** or **~190 color streams** in pure GPU compute
+(~100× real-time for one baby-class motion clip). Full H2D+D2H paths are
+transfer-bound and support far fewer concurrent streams without NVDEC/NVENC
+or device-resident consumers.
 
-### Realtime performance projection (H100, compute-only)
+Relative to 3090 motion FP16 compute: A100 ~**1.6×**, H100 ~**2.2×**.
 
-Pixel-scale from the remeasured clips (face color 4.9 ms / 291×592×528;
-motion FP16 34.5 ms / 291×960×544). Bottleneck stages scale with pixels:
+### Realtime projection (compute-only, pixel-scale)
 
-| Resolution | Color FP32 | Motion FP16 | Realtime (30 fps)? |
-|-----------|-------|--------|---------------------|
-| 1080p (1920x1080) | ~9,000 fps | ~2,100 fps | large headroom |
-| 4K (3840x2160) | ~2,250 fps | ~530 fps | still compute-only headroom |
+| Resolution | 3090 motion FP16 | H100 motion FP16 | 3090 color FP16 |
+|-----------|-----------------:|-----------------:|----------------:|
+| 1080p@30 streams | **~30** | **~70** | **~190** |
+| 4K@30 streams | **~8** | **~18** | **~50** |
 
-These are **GPU compute-only** numbers. Including H2D/D2H, H100 wall time is
-transfer-dominated (~100–200 ms full path), so product FPS is much lower
-without NVDEC/NVENC / device-resident consumers (see the three-tier table).
-
-The end-to-end pipeline (including video decode and encode) is currently
-bottlenecked by the CPU codec, which limits realtime throughput regardless of
-GPU speed.
+4K stream counts = 1080p / 4 (pixel-scale). These remain compute-only.
 
 ### Resource utilization: both underutilized
 

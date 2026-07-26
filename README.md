@@ -14,10 +14,10 @@ motion variations that the eye cannot detect. This repository is an open-source
 **CUDA C++** implementation of the MIT SIGGRAPH 2012 method (Wu, Rubinstein,
 Freeman, Durand, Guttag), with pulse and motion demos, benchmarks, and writeups.
 
-It ports the MIT reference from MATLAB to raw CUDA C++, with **~3,200+ FPS**
-of motion compute on a consumer RTX 3090 (~90 ms for baby.mp4) and matching
-the Python baseline within end-to-end RMSE &lt; 0.01. Datacenter numbers
-(H100/A100) are below.
+It ports the MIT reference from MATLAB to raw CUDA C++. On a consumer
+**RTX 3090**, motion compute is **~75–90 ms** for baby.mp4 (**~3,200–3,900 FPS**) —
+enough for **~30 concurrent 1080p@30 motion streams** (compute-only, FP16).
+Matches the Python baseline within end-to-end RMSE &lt; 0.01.
 
 ---
 
@@ -64,17 +64,41 @@ Python CPU baselines: color **11,194 ms**, motion **44,190 ms**.
 
 - **①** kernels only · **②** upload + compute · **③** full H2D+D2H  
 Motion FP16 uses the same spatial templates as FP32 (dense half smem + float
-MAC). Transfers still dominate file-to-file wall time.
+MAC). Transfers still dominate **file-to-file** wall time.
+
+#### Throughput & concurrent 1080p streams (compute-only)
+
+Pixel-scale from measured clips (face 291×592×528, baby 291×960×544).  
+**1080p@30 ≈ 62.2 Mpx/s.** Stream counts are **GPU compute capacity only** —
+not decode/encode/PCIe; for device-resident / inference-style pipelines.
+
+| Pipeline (FP16) | Gpx/s | ≈ concurrent 1080p@30 streams |
+|-----------------|------:|------------------------------:|
+| **Motion** | **~2.0** | **~30** |
+| **Color (face)** | **~12** | **~190** |
+
+**Punchline:** one RTX 3090 can magnify on the order of **~30× 1080p@30 motion
+streams** (or **~190× color**) at once in pure GPU compute — ~100× real-time
+for a single baby-class motion clip. File→file paths pay PCIe/codec and run
+far fewer concurrent streams.
 
 ### Other GPUs (compute only)
 
-| GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
-|-----|-------------------:|-----------------------:|
-| **A100** 80GB | **54.4 / 48.2 ms** (0.89×) | **8.8 / 8.2 ms** (0.93×) |
-| **H100** 80GB | **35.8 / 34.5 ms** (0.96×) | **4.9 / 4.4 ms** (0.90×) |
-| **P100** 16GB | — | **31.6 / 27.1 ms** (0.86×) |
+| GPU | Motion FP32 / FP16 | Color face FP32 / FP16 | Motion FP16 ≈ 1080p@30 streams* |
+|-----|-------------------:|-----------------------:|--------------------------------:|
+| **RTX 3090** 24GB | **90.4 / 75.1 ms** (0.83×) | **10.1 / 7.8 ms** (0.77×) | **~30** |
+| **A100** 80GB | **54.4 / 48.2 ms** (0.89×) | **8.8 / 8.2 ms** (0.93×) | **~50** |
+| **H100** 80GB | **35.8 / 34.5 ms** (0.96×) | **4.9 / 4.4 ms** (0.90×) | **~70** |
+| **P100** 16GB | — | **31.6 / 27.1 ms** (0.86×) | — (color ~**50** streams) |
 
-P100 motion OOM in multi-config harness; standalone motion FP16 peaks **~8–9 GB**.
+\*Compute-only, pixel-scaled from measured Gpx/s. P100 motion OOM in multi-config
+harness; standalone motion FP16 peaks **~8–9 GB**.
+
+| GPU | Motion compute vs 3090 FP16 | Color face compute vs 3090 FP16 |
+|-----|----------------------------:|--------------------------------:|
+| A100 | **~1.6× faster** (48 vs 75 ms) | **~0.95×** (similar) |
+| H100 | **~2.2× faster** (35 vs 75 ms) | **~1.8× faster** (4.4 vs 7.8 ms) |
+| P100 | — | **~0.29×** (27 vs 7.8 ms) |
 
 ### Accuracy
 
