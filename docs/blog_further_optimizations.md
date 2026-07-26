@@ -456,9 +456,14 @@ Cross-GPU remeasure (same code): A100 motion **54.4 → 48.2 ms**, color face
 **8.8 → 8.2 ms** (`benches/bench_a100.json`); H100 motion **35.8 → 34.5 ms**,
 color face **4.9 → 4.4 ms** (`benches/bench_h100.json`).
 
-A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames on
-3090 FP32) lands around 190-200 FPS of pure mid-pipeline. VRAM may force tiling
-on full-res long clips; whole-clip resident 4K motion exceeds 24 GB without tiling.
+**Throughput punchline (3090, compute-only):** ~2.0 Gpx/s motion FP16 ⇒
+**~30 concurrent 1080p@30 motion streams** (~100× real-time for one baby-class
+clip). Color face FP16 ~12 Gpx/s ⇒ **~190 streams**. Not file→file (PCIe/codec
+bound). A100/H100 motion FP16 ≈ **50 / 70** streams at 1080p@30 (same scaling).
+
+A rough 4K compute-only motion stream count is ~1080p/4 (~8 on 3090 FP16).
+VRAM may force tiling on full-res long clips; whole-clip resident 4K motion
+exceeds 24 GB without tiling.
 
 ---
 

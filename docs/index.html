@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Eulerian Video Magnification — CUDA Implementation, Pulse &amp; Motion Demos</title>
-    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, ~3,200+ FPS motion compute on RTX 3090, validated within RMSE &lt; 0.01.">
+    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, ~3,200–3,900 FPS motion compute on RTX 3090 (~30× 1080p@30 streams, compute-only); RMSE &lt; 0.01.">
     <meta name="keywords" content="Eulerian Video Magnification, EVM, video magnification, pulse magnification, motion magnification, MIT SIGGRAPH, Wu Rubinstein, CUDA, GPU, computer vision, vital signs video">
     <meta name="author" content="Furkan Kucuk">
     <meta name="robots" content="index, follow, max-image-preview:large">
@@ -14,7 +14,7 @@
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Eulerian Video Magnification (CUDA)">
     <meta property="og:title" content="Eulerian Video Magnification — open-source CUDA implementation">
-    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, with ~3,200+ FPS motion compute on RTX 3090.">
+    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, with ~3,200–3,900 FPS motion compute on RTX 3090 (~30 concurrent 1080p@30 streams, compute-only).">
     <meta property="og:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -346,9 +346,10 @@ This site is a full open-source <strong>CUDA</strong> implementation of that
 pipeline &mdash; color (pulse) magnification with an ideal bandpass and motion
 magnification with a Laplacian pyramid + IIR bandpass &mdash; with demos,
 benchmarks, and writeups. It ports the MIT reference from MATLAB to raw CUDA
-C++ and delivers <b>~3,200+ FPS of motion compute on a consumer RTX 3090</b>
-(~90&nbsp;ms for baby.mp4; FP16 ~75&nbsp;ms), with output validated against the
-Python baseline within RMSE 0.01. Datacenter numbers (A100/H100) are below.
+C++ and delivers <b>~3,200&ndash;3,900 FPS of motion compute on a consumer RTX 3090</b>
+(~90&nbsp;ms FP32 / ~75&nbsp;ms FP16 for baby.mp4) &mdash; about
+<b>~30 concurrent 1080p@30 motion streams</b> (compute-only, FP16). Output
+matches the Python baseline within RMSE 0.01. Other GPUs below.
 </p>
 </div>
 
@@ -500,27 +501,81 @@ Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
     <li><b>&#9314; + H2D + D2H</b> &mdash; full file-to-array path (PCIe both ways).</li>
 </ul>
 
+<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Throughput (compute-only)</h3>
+<p>
+Pixel-scale from measured clips. <b>1080p@30 &approx; 62.2 Mpx/s.</b>
+Stream counts are <b>GPU compute capacity only</b> (not decode/encode/PCIe).
+</p>
+<p>
+<b>One RTX 3090</b> can sustain on the order of
+<b>~30&times; 1080p@30 motion streams</b> (FP16) or
+<b>~190&times; color streams</b> in pure compute &mdash; roughly
+<b>100&times; real-time</b> for a single baby-class motion clip. File&rarr;file
+paths pay PCIe/codec and run far fewer concurrent streams.
+</p>
+<table>
+<tr>
+    <th>GPU</th>
+    <th>Motion FP16 Gpx/s</th>
+    <th>&approx; 1080p@30 motion streams</th>
+    <th>Color face FP16 Gpx/s</th>
+    <th>&approx; 1080p@30 color streams</th>
+</tr>
+<tr>
+    <td><b>RTX 3090</b></td>
+    <td>~2.0</td>
+    <td><b>~30</b></td>
+    <td>~12</td>
+    <td><b>~190</b></td>
+</tr>
+<tr>
+    <td><b>A100</b></td>
+    <td>~3.2</td>
+    <td><b>~50</b></td>
+    <td>~11</td>
+    <td><b>~180</b></td>
+</tr>
+<tr>
+    <td><b>H100</b></td>
+    <td>~4.4</td>
+    <td><b>~70</b></td>
+    <td>~21</td>
+    <td><b>~330</b></td>
+</tr>
+<tr>
+    <td><b>P100</b></td>
+    <td>&mdash;</td>
+    <td>&mdash;</td>
+    <td>~3.4</td>
+    <td><b>~50</b></td>
+</tr>
+</table>
+
 <h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Other GPUs (compute only)</h3>
 <table>
 <tr>
     <th>GPU</th>
     <th>Motion FP32 / FP16</th>
     <th>Color face FP32 / FP16</th>
+    <th>vs 3090 motion FP16</th>
 </tr>
 <tr>
     <td><b>A100</b> 80GB</td>
     <td><b>54.4 / 48.2&nbsp;ms</b> (0.89&times;)</td>
     <td><b>8.8 / 8.2&nbsp;ms</b> (0.93&times;)</td>
+    <td>~1.6&times; faster</td>
 </tr>
 <tr>
     <td><b>H100</b> 80GB</td>
     <td><b>35.8 / 34.5&nbsp;ms</b> (0.96&times;)</td>
     <td><b>4.9 / 4.4&nbsp;ms</b> (0.90&times;)</td>
+    <td>~2.2&times; faster</td>
 </tr>
 <tr>
     <td><b>P100</b> 16GB</td>
     <td>&mdash;</td>
     <td><b>31.6 / 27.1&nbsp;ms</b> (0.86&times;)</td>
+    <td>color only</td>
 </tr>
 </table>
 <p>
