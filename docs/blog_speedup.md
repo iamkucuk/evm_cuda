@@ -429,37 +429,45 @@ residual. Prefer ≥24 GB for comfortable whole-clip motion.
 (~4.4×). Those old rows predated the mid-pipeline series **and** true half-band;
 again, do not attribute the whole jump to FP16 density alone.
 
-### Measured throughput (compute-only, current production)
+### Measured throughput (current production)
 
-Pixel rates from remeasured compute and clip geometry (face 291×592×528;
-baby 291×960×544). **1080p@30 ≈ 62.2 Mpx/s.** Stream counts are **compute-only**
-(device-resident capacity); do **not** read them as file→file real-time.
+Pixel rates from remeasured times and clip geometry (face 291×592×528;
+baby 291×960×544). **1080p@30 ≈ 62.2 Mpx/s.** Stream counts are pixel-scaled
+capacity, not a measured multi-stream harness.
 
-| Pipeline | GPU | Compute | Gpx/s | ≈ 1080p@30 streams |
-|----------|-----|--------:|------:|-------------------:|
-| Color face FP16 | **RTX 3090** | 7.8 ms | ~12 | **~190** |
-| Color face FP16 | A100 | 8.2 ms | ~11 | **~180** |
-| Color face FP16 | H100 | 4.4 ms | ~21 | **~330** |
-| Color face FP16 | P100 | 27.1 ms | ~3.4 | **~50** |
-| Motion baby FP16 | **RTX 3090** | 75.1 ms | ~2.0 | **~30** |
-| Motion baby FP16 | A100 | 48.2 ms | ~3.2 | **~50** |
-| Motion baby FP16 | H100 | 34.5 ms | ~4.4 | **~70** |
+At the realistic *inference* tier (②, input upload included, output kept on
+the GPU):
 
-One 3090 handles about 30 concurrent 1080p@30 motion streams in pure
-compute, or about 190 color streams. That is roughly 100x real-time for
-one baby-class motion clip. Full H2D+D2H paths are transfer-bound and
-support far fewer concurrent streams.
+| Pipeline (FP16) | GPU | ② time | Gpx/s (②) | ≈ 1080p@30 streams |
+|-----------------|-----|-------:|----------:|-------------------:|
+| Color face | RTX 3090 | 26.9 ms | ~3.4 | ~55 |
+| Motion baby | RTX 3090 | 107.1 ms | ~1.4 | ~23 |
 
-Relative to 3090 motion FP16 compute: A100 ~**1.6×**, H100 ~**2.2×**.
+The compute-only ceiling (①, data already on the GPU) is higher:
 
-### Realtime projection (compute-only, pixel-scale)
+| Pipeline (FP16) | GPU | ① time | Gpx/s (①) | ≈ 1080p@30 streams |
+|-----------------|-----|-------:|----------:|-------------------:|
+| Color face | RTX 3090 | 7.8 ms | ~12 | ~190 |
+| Color face | A100 | 8.2 ms | ~11 | ~180 |
+| Color face | H100 | 4.4 ms | ~21 | ~330 |
+| Color face | P100 | 27.1 ms | ~3.4 | ~50 |
+| Motion baby | RTX 3090 | 75.1 ms | ~2.0 | ~30 |
+| Motion baby | A100 | 48.2 ms | ~3.2 | ~50 |
+| Motion baby | H100 | 34.5 ms | ~4.4 | ~70 |
 
-| Resolution | 3090 motion FP16 | H100 motion FP16 | 3090 color FP16 |
-|-----------|-----------------:|-----------------:|----------------:|
-| 1080p@30 streams | **~30** | **~70** | **~190** |
-| 4K@30 streams | **~8** | **~18** | **~50** |
+The full path (③) drops further and is usually PCIe-bound on the download.
+Do not read ① stream counts as file-to-file real-time capacity.
 
-4K stream counts = 1080p / 4 (pixel-scale). These remain compute-only.
+Relative to 3090 motion FP16 compute: A100 ~1.6×, H100 ~2.2×.
+
+### Realtime projection (pixel-scale)
+
+| Resolution | 3090 motion ② | 3090 motion ① | 3090 color ② |
+|-----------|--------------:|--------------:|-------------:|
+| 1080p@30 streams | ~23 | ~30 | ~55 |
+| 4K@30 streams | ~6 | ~8 | ~14 |
+
+4K stream counts = 1080p / 4 (pixel-scale).
 
 ### Resource utilization: both underutilized
 
