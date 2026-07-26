@@ -87,36 +87,47 @@ cuda/
 | DeviceMemPool | `bindings.cpp:DeviceMemPool` | n/a | free-list by size for pipeline DeviceBuffers |
 | Sticky lpyr scratch | `bindings.cpp:sticky_f*_slots` | n/a | grow-only scratch for build/recon/blur |
 | cuFFT plan cache | `bindings.cpp:g_fft_cache` | n/a | keyed on (T,N) |
-| FP16 conversion | `fp16_cvt.cu:f32_to_f16 / f16_to_f32` | `(⌈n/256⌉) / (256,1,1)` | motion f16: build still writes float bands then convert |
+| FP16 conversion | `fp16_cvt.cu:f32_to_f16 / f16_to_f32` | `(⌈n/256⌉) / (256,1,1)` | residual casts (e.g. color gdown→FFT); motion bands stay half end-to-end |
 
 ## FP16 storage rationale
 
 Both pipelines support an FP16 storage path (`magnify_color_gdown_ideal_fp16`
-and `magnify_motion_lpyr_iir_fp16` in `batched.py`). All batched spatial,
-transpose, IIR, and render kernels are templated on input/output type.
-When instantiated with `__half`, reads convert via `__half2float` and
-writes via `__float2half`. Compute stays FP32 throughout.
+and `magnify_motion_lpyr_iir_fp16` in `batched.py`). Batched spatial kernels are
+templated on storage type `In`/`Out`. Shared tiles use `__shared__ In tile`, so
+half storage stays dense in smem; MAC is float via `cvt_in`/`cvt_out` at the
+arithmetic edge. Instantiating `<__half,__half>` is the production FP16 path —
+same code as FP32, not a forked algorithm.
 
-**Motion FP16:** Stores NTSC, planar, bands, filtered bands, and delta all
-in `__half`. Halves VRAM (23 GB to 12 GB for baby.mp4) and halves the
-render stage's memory traffic (82 ms to 45 ms on A100, 8.6 ms to 5.6 ms on
-P100). The IIR accumulator stays FP64 regardless of storage type.
+**Motion FP16:** NTSC, planar, bands, filtered bands, and delta are `__half`
+end-to-end (no full float band stack). Stage A is fused `u8→YIQ→half`. Peak
+VRAM for baby.mp4-class clips is ~12 GB (vs ~23 GB FP32). IIR state stays
+FP64. Fresh remeasure (1 warmup + median of 7):
 
-**Color FP16:** Stores NTSC as `__half` (the dominant persistent buffer
-read by render). The Gaussian downsample output goes to FP32 (cuFFT
-bandpass needs float). The `filt` signal (FFT output) stays FP32. Only the
-NTSC buffer is halved.
+| GPU | Motion FP32 | Motion FP16 | ratio |
+|---|---:|---:|---:|
+| RTX 3090 | **90.4 ms** | **75.1 ms** | **0.83×** |
+| A100 80GB | **54.4 ms** | **48.2 ms** | **0.89×** |
+| H100 80GB | **35.8 ms** | **34.5 ms** | **0.96×** |
 
-Precision: RMSE between FP32 and FP16 output is 0.0016 for motion, which
-is 6.2x under the 0.01 end-to-end tolerance. The maximum per-pixel error
-is 3/255 (3 uint8 quantization steps). For color FP16, the uint8 output
-differs from FP32 by at most 2 LSB per channel.
+Accuracy vs CUDA FP32 (baby): RMSE **0.00232**, max **5** LSB.
 
-**FP16 color is GPU-dependent.** The color render kernel reads 15 values
-per output pixel (3 NTSC + 12 bilinear filt taps). FP16 NTSC reduces total
-traffic by only 10% (filt stays FP32). On the A100 (1935 GB/s bandwidth),
-this is invisible and conversion overhead makes FP16 slower. On the P100
-(732 GB/s), the 10% traffic reduction is measurable and FP16 is 13% faster.
+**Color FP16:** NTSC + planar blur scratch are `__half`. Final Gaussian gdown
+converts to FP32 for cuFFT; `filt` stays FP32. First blur level reads the
+caller's planar input (no full-frame D2D copy into sticky scratch). Fresh
+remeasure:
+
+| GPU / clip | Color FP32 | Color FP16 | ratio |
+|---|---:|---:|---:|
+| P100 / face | **31.6 ms** | **27.1 ms** | **0.86×** |
+| 3090 / face | **10.1 ms** | **7.8 ms** | **0.77×** |
+| A100 / face | **8.8 ms** | **8.2 ms** | **0.93×** |
+| H100 / face | **4.9 ms** | **4.4 ms** | **0.90×** |
+| 3090 / baby | **15.8 ms** | **12.2 ms** | **0.77×** |
+
+Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
+Source: `benches/bench_rtx3090.json`, `benches/bench_a100.json`,
+`benches/bench_h100.json`, `benches/bench_p100.json`.
+P100 motion OOM in multi-config harness (standalone FP16 peak ~8–9 GB).
 
 ## Precision rationale
 

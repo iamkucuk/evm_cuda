@@ -17,19 +17,27 @@ change that stayed. The EVM math did not change: same Laplacian levels, same
 r1/r2 IIR, same Figure-6 alpha. What changed is how memory is addressed, how
 buffers live across calls, and which half of the pyramid is worth fusing.
 
-Headline numbers (RTX 3090, `data/baby.mp4`, 291 frames at 960x544, 9 levels,
-FP32 motion *compute only*):
+Headline numbers for the mid-pipeline series (RTX 3090, `data/baby.mp4`, 291
+frames at 960x544, 9 levels, FP32 motion *compute only*):
 
 | Arc | Compute |
 |---|---:|
 | Before this series | ~934 ms |
 | After coalesced TN IIR + sticky lpyr scratch | ~377-407 ms |
 | After DeviceBuffer free-list + smem fused downsample | ~96-104 ms |
-| Total | about 9x mid-pipeline compute |
+| Total (series) | about 9x mid-pipeline compute |
+| **Current production (remeasured)** | **3090 90.4/75.1; A100 54.4/48.2; H100 35.8/34.5 (FP32/FP16 motion)** |
 
 H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
 product latency is a different problem (NVDEC/NVENC, async H2D).
+
+**Cross-GPU note:** Older H100 (~85 ms motion) and A100 (~209 ms motion) doc
+numbers predate this mid-pipeline series. Remeasuring them *after* TN IIR /
+sticky / pool / smem-down (and later true half-band) shows ~2.4× (H100) and
+~3.8× (A100) on motion FP32 — that is the series landing on those GPUs, not
+half-band alone. Half-band / dense smem is the extra FP16 edge (3090 motion
+0.83×; H100 only 0.96× because the path is already tiny and transfer-bound).
 
 Stage tables for each keep are in this post. Pre/post CUDA FP32 A/B on
 baby.mp4 (same params, tree before this series vs production): not
@@ -405,10 +413,12 @@ new isolation A/B that beats separable on recon and build.
 |---|---|
 | Stage buffers | Free-list `DeviceMemPool` (no hot-path `cudaFree`) |
 | lpyr scratch | Sticky grow-only |
-| Temporal IIR | Coalesced `(T,N)` + alpha scale |
+| Temporal IIR | Coalesced `(T,N)` + alpha scale; FP64 state |
 | Planar / bands | Channel-outer; contiguous band write/add |
 | Downsample | Smem fused cols then rows |
 | Upsample | Separable rows then cols (fused tried and failed) |
+| FP16 spatial | Same templates as FP32 (`__shared__ In tile`); half bands end-to-end |
+| Color blur | First level reads caller input (no full-frame D2D into sticky) |
 | File I/O | Still transfer/encode dominated |
 
 ### Cumulative compute (3090 baby)
@@ -421,10 +431,34 @@ new isolation A/B that beats separable on recon and build.
 | DeviceMemPool | ~113-133 | ~7-8x |
 | Layout foundation | ~106-110 | ~8.5x |
 | Smem fused down | ~96-104 | ~9x |
+| True half bands + dense smem (remeasured) | **3090 90.4/75.1; A100 54.4/48.2; H100 35.8/34.5** | **~10× / ~12× on 3090** |
 
-A rough 4K compute-only FPS estimate (pixel-scale from ~100 ms / 291 frames)
-lands around 170-190 FPS of pure mid-pipeline. VRAM may force tiling on
-full-res long clips.
+### Current production stage table (3090, baby motion)
+
+Fresh process per config; 1 warmup + median of 7 (`benches/bench_rtx3090.json`).
+
+| Stage | FP32 (ms) | FP16 (ms) | ratio |
+|---|---:|---:|---:|
+| A) NTSC | 2.9 | 1.7 | 0.59 |
+| B) lpyr_build | 32.5 | 26.8 | 0.82 |
+| C) IIR | 24.7 | 23.4 | 0.95 |
+| D1) recon | 25.3 | 20.8 | 0.82 |
+| D2) render | 5.0 | 2.4 | 0.48 |
+| **Compute** | **90.4** | **75.1** | **0.83** |
+| H2D+D2H | 113.1 | 104.4 | 0.92 |
+| **TOTAL** | **203.5** | **179.5** | **0.88** |
+
+Same-day color (fresh process each): face compute **10.1 → 7.8 ms** (0.77×);
+baby color compute **15.8 → 12.2 ms** (0.77×). Accuracy: motion FP16 vs CUDA
+FP32 RMSE **0.00232** / max **5** LSB; color face RMSE **0.00071** / max **1** LSB.
+
+Cross-GPU remeasure (same code): A100 motion **54.4 → 48.2 ms**, color face
+**8.8 → 8.2 ms** (`benches/bench_a100.json`); H100 motion **35.8 → 34.5 ms**,
+color face **4.9 → 4.4 ms** (`benches/bench_h100.json`).
+
+A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames on
+3090 FP32) lands around 190-200 FPS of pure mid-pipeline. VRAM may force tiling
+on full-res long clips; whole-clip resident 4K motion exceeds 24 GB without tiling.
 
 ---
 
@@ -461,6 +495,8 @@ malloc/freeing stage buffers every stage.
 | Channel-outer / contiguous band | Done (foundation; little wall win) |
 | Smem fused downsample | Done (small win) |
 | Smem / dense fused upsample | Ruled out (regression, twice) |
+| True half-band motion + dense smem templates | Done (production; ~0.84× FP32 on 3090) |
+| Packed `__half2` / scalar half-acc spatial | Experiment-only; not production |
 | Stage C multi-series IIR / CUDA Graphs | Open: kernel can sit near BW; stage is still ~9x3 launches |
 | PCIe + encode | Open: product path, not mid-pipeline |
 | Scan / blocked IIR | Still low ROI while TN IIR matches copy on clean runs |
@@ -475,8 +511,9 @@ calls threw multi-GB scratch away. Coalesced TN IIR and sticky scratch cut that
 to about 0.4 s. A free-list pool then collapsed the remaining fake stage walls
 to real kernel times (about another 4x). Channel-outer layout cleaned the band
 bridge without buying much wall time. Smem fused downsample shaved a few more
-milliseconds. Fused upsample regressed again, so production keeps separable up
-and sits near 100 ms mid-pipeline compute for baby.mp4 (about 9x from the start
-of this series). File-to-file is now dominated by transfer and encode.
+milliseconds. Fused upsample regressed again, so production keeps separable up.
+True half-band storage with dense half smem (same templates as FP32) then lands
+near **90 ms FP32 / 76 ms FP16** mid-pipeline compute for baby.mp4 (~10-12x from
+the start of this series). File-to-file is still dominated by transfer and encode.
 
 [repo]: https://github.com/iamkucuk/eulerian-video-magnification-cuda

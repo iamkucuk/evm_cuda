@@ -14,10 +14,10 @@ motion variations that the eye cannot detect. This repository is an open-source
 **CUDA C++** implementation of the MIT SIGGRAPH 2012 method (Wu, Rubinstein,
 Freeman, Durand, Guttag), with pulse and motion demos, benchmarks, and writeups.
 
-It ports the MIT reference from MATLAB to raw CUDA C++, achieving **557x
-compute-only speedup** (273x full pipeline including H2D/D2H transfers) over the
-Python/NumPy baseline on an NVIDIA H100, while matching the Python baseline
-within end-to-end RMSE < 0.01.
+It ports the MIT reference from MATLAB to raw CUDA C++, with **~3,200+ FPS**
+of motion compute on a consumer RTX 3090 (~90 ms for baby.mp4) and matching
+the Python baseline within end-to-end RMSE &lt; 0.01. Datacenter numbers
+(H100/A100) are below.
 
 ---
 
@@ -43,56 +43,51 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 ## Performance
 
-Measured on an NVIDIA H100-80GB (sm_90) vs the Python/NumPy CPU baseline. Each
-stage — including every H2D/D2H transfer — is timed separately with
-`cudaDeviceSynchronize`, median of 5 runs after one warmup. We report the
-speedup at three inclusion levels because they answer different questions:
+Current production path. Harness: `evm_cuda.benchmark` — **1 warmup + median of
+7 timed runs**, `cudaDeviceSynchronize` per stage. Primary numbers:
+**RTX 3090** (most common consumer GPU for this workload). Sources:
+`benches/bench_rtx3090.json`, `benches/bench_a100.json`,
+`benches/bench_h100.json`, `benches/bench_p100.json`.
 
-| Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
-|----------|-----------:|---------------:|--------------------:|---------------------:|
-| Color FP32 | 11,194 ms | 9 ms (**1,302x**) | 47 ms (238x) | 119 ms (94x) |
-| Motion FP32 | 44,190 ms | 85 ms (**522x**) | 135 ms (**329x**) | 162 ms (**273x**) |
-| Motion FP16 | 44,190 ms | 79 ms (**557x**) | 141 ms (314x) | 183 ms (242x) |
+Python CPU baselines: color **11,194 ms**, motion **44,190 ms**.
 
-- **① Compute only** — the kernel speedup, pure compute capability (data
-  already on the GPU, e.g. part of a larger device-resident graph).
-- **② + H2D** — realistic *inference* cost: the data starts on the host, so you
-  pay the input upload. The output D2H is **deliberately excluded**: in most
-  real uses the amplified signal is *consumed on the GPU* (heart-rate
-  estimation, motion-feature extraction, a downstream neural net) — you don't
-  need the magnified video on the host to extract information from it. This is
-  the cost of an embedded EVM stage in a GPU pipeline.
-- **③ + H2D + D2H** — full standalone "decode → magnify → encode" offload,
-  when you must materialize a viewable video on the host.
+### RTX 3090 24GB (primary)
 
-For motion the inference speedup (②, 329x) is within 1.2x of the compute
-speedup (①, 522x) — the upload is a minor tax and the GPU genuinely does the
-work. For color the output D2H dominates if included (66 ms alone), so ② is the
-honest headline for any real invocation.
+| Pipeline | ① Compute | ② + H2D | ③ + H2D+D2H | Compute FPS | ① vs CPU |
+|----------|----------:|--------:|------------:|------------:|---------:|
+| Motion FP32 (`baby.mp4`) | **90.4 ms** | 128.0 ms | 203.5 ms | **~3,220** | **~490×** |
+| Motion FP16 (`baby.mp4`) | **75.1 ms** (**0.83×**) | 107.1 ms | 179.5 ms | **~3,870** | **~590×** |
+| Color FP32 (`face.mp4`) | **10.1 ms** | 29.5 ms | 73.2 ms | — | **~1,110×** |
+| Color FP16 (`face.mp4`) | **7.8 ms** (**0.77×**) | 26.9 ms | 71.1 ms | — | **~1,440×** |
+| Color FP32 (`baby.mp4`) | **15.8 ms** | 48.6 ms | 121.0 ms | — | **~710×** |
+| Color FP16 (`baby.mp4`) | **12.2 ms** (**0.77×**) | 45.0 ms | 117.9 ms | — | **~920×** |
 
-### Throughput & real-time capacity
+- **①** kernels only · **②** upload + compute · **③** full H2D+D2H  
+Motion FP16 uses the same spatial templates as FP32 (dense half smem + float
+MAC). Transfers still dominate file-to-file wall time.
 
-At the realistic *inference* tier (②, input upload included, output kept on the
-GPU), the pipelines sustain:
+### Other GPUs (compute only)
 
-| Pipeline | Throughput | 1080p @ 30 fps |
-|----------|-----------:|---------------:|
-| Color FP32  | 1.9 Gpx/s | ~30 streams |
-| Motion FP32 | 1.1 Gpx/s | ~18 streams |
-| Motion FP16 | 1.1 Gpx/s | ~17 streams |
+| GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
+|-----|-------------------:|-----------------------:|
+| **A100** 80GB | **54.4 / 48.2 ms** (0.89×) | **8.8 / 8.2 ms** (0.93×) |
+| **H100** 80GB | **35.8 / 34.5 ms** (0.96×) | **4.9 / 4.4 ms** (0.90×) |
+| **P100** 16GB | — | **31.6 / 27.1 ms** (0.86×) |
 
-The compute-only ceiling (①, data already on the GPU) is far higher — ~160 color
-or ~30 motion streams — while the full decode→magnify→encode path (③) drops to
-~12–15 streams because the output download is PCIe-bound.
+P100 motion OOM in multi-config harness; standalone motion FP16 peaks **~8–9 GB**.
 
-FP16 motion fits in 12 GB VRAM (down from 23 GB), running on 16 GB GPUs like
-the Tesla P100 and T4. Full per-stage breakdown (with transfers) and the
-multi-GPU (P100/A100/H100) comparison in the
-[optimization writeup](docs/blog_speedup.md). Further mid-pipeline work
-(TN IIR, sticky scratch, free-list pool, smem downsample) on an RTX 3090 —
-motion compute **~934 → ~100 ms** (~9×) — in
-[further optimizations](docs/blog_further_optimizations.md)
-.
+### Accuracy
+
+| Compare | RMSE | max LSB |
+|---------|-----:|--------:|
+| Motion FP16 vs CUDA FP32 (baby) | **0.00232** | **5** |
+| Color FP16 vs CUDA FP32 (face) | **0.00071** | **1** |
+
+End-to-end vs Python stays under RMSE &lt; 0.01.
+
+Optimization history:
+[blog_speedup.md](docs/blog_speedup.md) ·
+[blog_further_optimizations.md](docs/blog_further_optimizations.md).
 
 ## How it works
 
