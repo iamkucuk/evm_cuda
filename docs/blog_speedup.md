@@ -116,7 +116,7 @@ The implementation has 32 CUDA kernels across 10 source files:
 
 Performance was measured with the `evm_cuda.benchmark` harness
 (`scripts/profile_full_comparison.py` invokes it), which brackets every
-pipeline stage — including each H2D/D2H transfer — with
+pipeline stage, including each H2D/D2H transfer, with
 `cudaDeviceSynchronize` and reports the median of 5 iterations after one
 warmup run. All device buffers are pre-allocated so `cudaMalloc` doesn't
 contaminate kernel measurements.
@@ -142,7 +142,7 @@ must be reported separately to be honest about the real pipeline cost.
 | D2H: filt x3 | 3.0 ms | transfer | Per-channel bandpass output download. |
 | H2D: filt | 4.7 ms | transfer | Gained-filter upload. |
 | render | 0.6 ms | compute | See analysis below. |
-| **D2H: output** | **65.6 ms** | **transfer** | **PCIe download of the output clip — 55% of total.** |
+| **D2H: output** | **65.6 ms** | **transfer** | **PCIe download of the output clip, 55% of total.** |
 
 **Motion pipeline (baby.mp4, 291 frames, 960x544, 9 levels): 35.8 ms compute / 196 ms total (H100 remeasure)**
 
@@ -159,14 +159,14 @@ must be reported separately to be honest about the real pipeline cost.
 **The headline change from earlier measurements:** the previous profiler
 lumped the D2H download into the "render" stage, which inflated the H100
 "render" to ~208 ms and made it look slower than A100. With transfers
-separated, the render *kernel* is 0.6–1.5 ms and the dominant non-compute cost
+separated, the render *kernel* is 0.6 to 1.5 ms and the dominant non-compute cost
 is the output D2H (PCIe-bound). Transfers now dominate color total time (93%)
 and are a substantial share of motion (48%).
 
 ### The render stage: now a minor cost
 
 After the Level-4 optimization below (multiple-elements-per-thread), the
-render *kernel* dropped to 0.6 ms (color) / 1.5 ms (motion) on the H100 —
+render *kernel* dropped to 0.6 ms (color) / 1.5 ms (motion) on the H100.
 under 1% of compute time. The historical analysis that follows describes the
 pre-optimization state (where render was 40-73% of compute and the prime
 optimization target); it is retained because it explains the access-pattern
@@ -337,11 +337,11 @@ before the temporal filter).
 
 | Stage | A100 FP32† | A100 FP16† | P100 FP32† | P100 FP16† | H100 FP32‡ | H100 FP16‡ |
 |-------|-----------|-----------|-----------|-----------|-----------|-----------|
-| NTSC convert | 1.6 ms | 5.6 ms | 16.6 ms | 28.5 ms | — | — |
-| lpyr_build | 35.3 ms | 37.0 ms | 402.8 ms | 183.4 ms | — | — |
-| temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms | — | — |
-| lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms | — | — |
-| render (kernel) | 82.3 ms¹ | 44.7 ms¹ | 8.6 ms | 5.6 ms | — | — |
+| NTSC convert | 1.6 ms | 5.6 ms | 16.6 ms | 28.5 ms |  |  |
+| lpyr_build | 35.3 ms | 37.0 ms | 402.8 ms | 183.4 ms |  |  |
+| temporal IIR | 61.4 ms | 61.7 ms | 608.2 ms | 365.7 ms |  |  |
+| lpyr_recon | 23.6 ms | 21.4 ms | 107.0 ms | 91.9 ms |  |  |
+| render (kernel) | 82.3 ms¹ | 44.7 ms¹ | 8.6 ms | 5.6 ms |  |  |
 | **compute total** | **~205 ms** | **~172 ms** | **1,143 ms** | **676 ms** | **35.8 ms** | **34.5 ms** |
 
 † A100/P100 stage breakdown is **historical** (pre true half-band + dense smem
@@ -375,7 +375,7 @@ delta), so FP16 halves the traffic completely (24 to 12 bytes).
 Precision: RMSE between FP32 and FP16 output is 0.0016 for motion, which
 is 6.2x under the 0.01 end-to-end tolerance. The maximum per-pixel error
 is 3/255 (3 uint8 quantization steps). For color FP16, the uint8 output
-differs from FP32 by at most 2 LSB per channel. Standalone motion FP16 peaks about **8–9 GB** on baby.mp4 (measured on
+differs from FP32 by at most 2 LSB per channel. Standalone motion FP16 peaks about 8 to 9 GB on baby.mp4 (measured on
 RTX 3090). Rough “half of FP32 (~23 GB) ⇒ ~12 GB” is only a ballpark.
 Whole-clip motion can still OOM on 16 GB if the process is warm (pool/
 sticky residual after other configs); a clean FP16-only process may fit.
@@ -391,22 +391,22 @@ Python CPU baselines unchanged (color 11,194 ms / motion 44,190 ms).
 |----------|------------------|-----------:|-----------:|------------:|------------:|
 | **CPU baseline** | Python/NumPy compute | 11,194 ms | 11,194 ms | 44,190 ms | 44,190 ms |
 | **① Compute only** | GPU kernels (no transfers) | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
-| — *speedup* | | **~2,290×** | **~2,540×** | **~1,230×** | **~1,280×** |
+|  *speedup* | | **~2,290×** | **~2,540×** | **~1,230×** | **~1,280×** |
 | **② Compute + H2D** | + input upload from host | **34.6 ms** | **34.2 ms** | **82.1 ms** | **81.0 ms** |
-| — *speedup* | | **~320×** | **~330×** | **~540×** | **~550×** |
+|  *speedup* | | **~320×** | **~330×** | **~540×** | **~550×** |
 | **③ Compute + H2D + D2H** | + output download to host | **103.6 ms** | **102.8 ms** | **196.0 ms** | **189.3 ms** |
-| — *speedup* | | **~110×** | **~110×** | **~225×** | **~230×** |
+|  *speedup* | | **~110×** | **~110×** | **~225×** | **~230×** |
 
 Color: `face.mp4`. Motion: `baby.mp4`. Source: `benches/bench_h100.json`.
 
 **① / ② / ③** mean the same as before: compute-only, inference (+H2D), full
-file-to-array (+D2H). On this H100 run D2H alone is ~70–110 ms and dominates
+file-to-array (+D2H). On this H100 run D2H alone is ~70 to 110 ms and dominates
 wall time.
 
 **vs older H100 doc numbers (~85 / 79 ms motion, ~9 ms color):** current is
-~2.3–2.4× faster on motion and ~1.8–2× on color. That gap is **mostly the
+~2.3 to 2.4x faster on motion and ~1.8 to 2x on color. That gap is **mostly the
 mid-pipeline series** (TN IIR, sticky scratch, pool, smem downsample) that was
-proven on 3090 and only remeasured on H100 here — **not** “half-band alone
+proven on 3090 and only remeasured on H100 here, not “half-band alone
 gave 2× on H100.” FP32 moved almost as much as FP16; half-band / dense smem
 adds a smaller FP16 edge (H100 motion 0.96×, color 0.90×).
 
@@ -421,7 +421,7 @@ adds a smaller FP16 edge (H100 motion 0.96×, color 0.90×).
 
 Sources: `benches/bench_p100.json`, `bench_rtx3090.json`,
 `bench_a100.json`, `bench_h100.json` (1 warmup + median of 7).
-Standalone motion FP16 peaks ~8–9 GB; *P100 motion OOM was multi-config pool
+Standalone motion FP16 peaks ~8 to 9 GB; *P100 motion OOM was multi-config pool
 residual. Prefer ≥24 GB for comfortable whole-clip motion.
 
 **vs older multi-GPU rows (same table, pre-remeasure):** A100 motion ~209 →
@@ -445,11 +445,10 @@ baby 291×960×544). **1080p@30 ≈ 62.2 Mpx/s.** Stream counts are **compute-on
 | Motion baby FP16 | A100 | 48.2 ms | ~3.2 | **~50** |
 | Motion baby FP16 | H100 | 34.5 ms | ~4.4 | **~70** |
 
-**Punchline (3090):** one card can host on the order of **~30 concurrent
-1080p@30 motion streams** or **~190 color streams** in pure GPU compute
-(~100× real-time for one baby-class motion clip). Full H2D+D2H paths are
-transfer-bound and support far fewer concurrent streams without NVDEC/NVENC
-or device-resident consumers.
+One 3090 handles about 30 concurrent 1080p@30 motion streams in pure
+compute, or about 190 color streams. That is roughly 100x real-time for
+one baby-class motion clip. Full H2D+D2H paths are transfer-bound and
+support far fewer concurrent streams.
 
 Relative to 3090 motion FP16 compute: A100 ~**1.6×**, H100 ~**2.2×**.
 
@@ -465,7 +464,7 @@ Relative to 3090 motion FP16 compute: A100 ~**1.6×**, H100 ~**2.2×**.
 ### Resource utilization: both underutilized
 
 Pre-optimization, the render stage took 40 to 73% of GPU compute yet achieved
-only 0.4% of peak memory bandwidth and 0.003% of peak FP32 throughput — neither
+only 0.4% of peak memory bandwidth and 0.003% of peak FP32 throughput. Neither
 resource was saturated. The Level-4 multiple-elements-per-thread fix (below)
 addressed the worst of this, but the underlying access-pattern problem
 remains the limiting factor on the bandwidth-bound stages.
@@ -490,19 +489,19 @@ thread does too little independent work to keep the memory pipeline busy.
 ## Open optimization surfaces
 
 On the H100 the compute kernel cost is small (~5-36 ms on the current path); the remaining
-headroom is split between (a) the transfer cost — the output D2H dominates
-color total time and is a large share of motion — and (b) the still-memory-bound
+headroom is split between (a) the transfer cost: the output D2H dominates
+color total time and is a large share of motion, and (b) the still-memory-bound
 render/IIR access patterns at the architectural level.
 
 **Output D2H / host round-trips.** ~~The color pipeline does four host
 round-trips (gdown D2H, per-channel sig/filt H2D/D2H, output D2H) totaling
-~110 ms — 93% of its wall clock. The motion pipeline is cleaner (one input
+~110 ms, 93% of its wall clock. The motion pipeline is cleaner (one input
 H2D, one output D2H). Eliminating the color bandpass host round-trip (running
 cuFFT on-device end-to-end) and keeping the result device-resident would cut
 most of this.~~ **DONE (feature/kernel-optimization-A):** the color bandpass
 is now fully device-resident. Stage 2b's D2H+reshape plus the surrounding
 per-channel H2D/D2H round-trips are replaced by a single unified cuFFT call
-over `(N=hl*wl*3, T=n)` — cuFFT filters each row independently, so the
+over `(N=hl*wl*3, T=n)`. cuFFT filters each row independently, so the
 unified batch is numerically identical to 3 per-channel calls. The color
 pipeline now has exactly two end-to-end transfers (input H2D, output D2H);
 only the unavoidable output D2H remains as a transfer-side cost.
@@ -515,13 +514,13 @@ face.mp4), so the conversion is sub-millisecond. This would address the 80%
 of render traffic that FP16 NTSC storage doesn't touch. *Reverted (final)
 after measurement on two architectures:* on Tesla P100 (sm_60) the FP16-filt
 render regressed from 4.8 ms to 10.8 ms (+125%); on H100 (sm_90) it was
-neutral (0.6 → 0.7 ms — within noise, no measurable benefit). Root cause:
+neutral (0.6 to 0.7 ms, within noise, no measurable benefit). Root cause:
 the 12 per-pixel `__half→float` conversions in the bilinear tap loop are
 scalar and strided, so they cannot vectorize into `__half2` SIMD loads.
 On sm_60, scalar `__half` operations run at ½ FP32 rate (only packed
 `__half2` gets the 2× advantage), so the conversion overhead dominates the
 bandwidth saving on the small (~5 MB) filt buffer. On sm_90, the
-conversions are full-rate native instructions, so they're nearly free — but
+conversions are full-rate native instructions, so they're nearly free, but
 then there's no win either, because the buffer is too small for the
 bandwidth saving to register at 3350 GB/s. The blog's "P100 FP16 = 13%
 faster" prediction held for FP16 *NTSC* storage (large contiguous buffer,
@@ -548,7 +547,7 @@ filter across levels/channels) could overlap on multiple streams.
 (sz ≈ H·W ≈ 500k threads) already saturates the H100's ~270k resident
 threads, so multi-streaming yields ~0% gain where most of the 46 ms IIR cost
 lives. Only the coarser (smaller) levels have spare SM capacity, and the
-absolute time saved there is small — estimated 1–4% end-to-end motion
+absolute time saved there is small, estimated 1 to 4% end-to-end motion
 speedup. Not worth the binding/API churn (4 new bindings + 6 signature
 changes + per-stream scratch) for that payoff.
 
@@ -556,9 +555,9 @@ For the IIR stage, an isolation-probe study (2026-07) showed the dominant cost
 was **not** FP64 math or peak HBM saturation but **warp-uncoalesced `(N,T)`
 access plus a redundant transpose sandwich** around a filter whose bands were
 already `(T,N)`. Production now runs coalesced `iir_bandpass_tn` in place
-(no `thwc_to_nt` / `nt_to_thwc` in Stage C). Further mid-pipeline work —
+(no `thwc_to_nt` / `nt_to_thwc` in Stage C). Further mid-pipeline work.
 sticky lpyr scratch, free-list `DeviceMemPool`, channel-outer bands, smem
-fused *downsample* (fused *upsample* regressed and was reverted) — took
+fused *downsample* (fused *upsample* regressed and was reverted), took
 RTX 3090 motion FP32 compute from **~934 ms → ~100 ms** (~9×). Full
 measurement-driven writeup:
 [`docs/blog_further_optimizations.md`](blog_further_optimizations.md).

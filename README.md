@@ -8,16 +8,15 @@
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
 **[Eulerian Video Magnification](http://people.csail.mit.edu/mrub/vidmag/)** (EVM)
-reveals invisible temporal changes in video — a person's pulse, a baby's
-breathing, the vibration of machinery — by amplifying sub-pixel color and
+reveals invisible temporal changes in video by amplifying sub-pixel color and
 motion variations that the eye cannot detect. This repository is an open-source
 **CUDA C++** implementation of the MIT SIGGRAPH 2012 method (Wu, Rubinstein,
 Freeman, Durand, Guttag), with pulse and motion demos, benchmarks, and writeups.
 
 It ports the MIT reference from MATLAB to raw CUDA C++. On a consumer
-**RTX 3090**, motion compute is **~75–90 ms** for baby.mp4 (**~3,200–3,900 FPS**) —
-enough for **~30 concurrent 1080p@30 motion streams** (compute-only, FP16).
-Matches the Python baseline within end-to-end RMSE &lt; 0.01.
+An RTX 3090 processes motion in ~75 to 90 ms for baby.mp4 (3,200 to 3,900 FPS),
+which is about 30 concurrent 1080p@30 motion streams in pure compute (FP16).
+Output matches the Python baseline within RMSE &lt; 0.01.
 
 ---
 
@@ -28,7 +27,7 @@ Matches the Python baseline within end-to-end RMSE &lt; 0.01.
 </p>
 
 <p align="center"><sub>Left: original. Right: amplified. The green tint shows amplified
-blood flow — each heartbeat causes sub-pixel skin color changes that EVM makes visible.</sub></p>
+blood flow. Each heartbeat causes sub-pixel skin color changes that EVM makes visible.</sub></p>
 
 ### Motion magnification (IIR pipeline)
 
@@ -43,7 +42,7 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 ## Performance
 
-Current production path. Harness: `evm_cuda.benchmark` — **1 warmup + median of
+Current production path. Harness: `evm_cuda.benchmark`, 1 warmup + median of
 7 timed runs**, `cudaDeviceSynchronize` per stage. Primary numbers:
 **RTX 3090** (most common consumer GPU for this workload). Sources:
 `benches/bench_rtx3090.json`, `benches/bench_a100.json`,
@@ -57,10 +56,10 @@ Python CPU baselines: color **11,194 ms**, motion **44,190 ms**.
 |----------|----------:|--------:|------------:|------------:|---------:|
 | Motion FP32 (`baby.mp4`) | **90.4 ms** | 128.0 ms | 203.5 ms | **~3,220** | **~490×** |
 | Motion FP16 (`baby.mp4`) | **75.1 ms** (**0.83×**) | 107.1 ms | 179.5 ms | **~3,870** | **~590×** |
-| Color FP32 (`face.mp4`) | **10.1 ms** | 29.5 ms | 73.2 ms | — | **~1,110×** |
-| Color FP16 (`face.mp4`) | **7.8 ms** (**0.77×**) | 26.9 ms | 71.1 ms | — | **~1,440×** |
-| Color FP32 (`baby.mp4`) | **15.8 ms** | 48.6 ms | 121.0 ms | — | **~710×** |
-| Color FP16 (`baby.mp4`) | **12.2 ms** (**0.77×**) | 45.0 ms | 117.9 ms | — | **~920×** |
+| Color FP32 (`face.mp4`) | **10.1 ms** | 29.5 ms | 73.2 ms |  | **~1,110×** |
+| Color FP16 (`face.mp4`) | **7.8 ms** (**0.77×**) | 26.9 ms | 71.1 ms |  | **~1,440×** |
+| Color FP32 (`baby.mp4`) | **15.8 ms** | 48.6 ms | 121.0 ms |  | **~710×** |
+| Color FP16 (`baby.mp4`) | **12.2 ms** (**0.77×**) | 45.0 ms | 117.9 ms |  | **~920×** |
 
 - **①** kernels only · **②** upload + compute · **③** full H2D+D2H  
 Motion FP16 uses the same spatial templates as FP32 (dense half smem + float
@@ -69,18 +68,18 @@ MAC). Transfers still dominate **file-to-file** wall time.
 #### Throughput & concurrent 1080p streams (compute-only)
 
 Pixel-scale from measured clips (face 291×592×528, baby 291×960×544).  
-**1080p@30 ≈ 62.2 Mpx/s.** Stream counts are **GPU compute capacity only** —
-not decode/encode/PCIe; for device-resident / inference-style pipelines.
+1080p@30 needs about 62.2 Mpx/s. Stream counts are GPU compute capacity only,
+not decode/encode/PCIe. They apply to device-resident or inference-style pipelines.
 
 | Pipeline (FP16) | Gpx/s | ≈ concurrent 1080p@30 streams |
 |-----------------|------:|------------------------------:|
 | **Motion** | **~2.0** | **~30** |
 | **Color (face)** | **~12** | **~190** |
 
-**Punchline:** one RTX 3090 can magnify on the order of **~30× 1080p@30 motion
-streams** (or **~190× color**) at once in pure GPU compute — ~100× real-time
-for a single baby-class motion clip. File→file paths pay PCIe/codec and run
-far fewer concurrent streams.
+One RTX 3090 can handle about 30 concurrent 1080p@30 motion streams in pure
+compute, or about 190 color streams. That is roughly 100x real-time for a
+single baby-class motion clip. File-to-file paths pay PCIe and codec overhead
+and run far fewer concurrent streams.
 
 ### Other GPUs (compute only)
 
@@ -89,16 +88,16 @@ far fewer concurrent streams.
 | **RTX 3090** 24GB | **90.4 / 75.1 ms** (0.83×) | **10.1 / 7.8 ms** (0.77×) | **~30** |
 | **A100** 80GB | **54.4 / 48.2 ms** (0.89×) | **8.8 / 8.2 ms** (0.93×) | **~50** |
 | **H100** 80GB | **35.8 / 34.5 ms** (0.96×) | **4.9 / 4.4 ms** (0.90×) | **~70** |
-| **P100** 16GB | — | **31.6 / 27.1 ms** (0.86×) | — (color ~**50** streams) |
+| **P100** 16GB |  | **31.6 / 27.1 ms** (0.86×) |  (color: ~50 streams) |
 
 \*Compute-only, pixel-scaled from measured Gpx/s. P100 motion OOM in multi-config
-harness; standalone motion FP16 peaks **~8–9 GB**.
+harness. Standalone motion FP16 peaks around 8 to 9 GB.
 
 | GPU | Motion compute vs 3090 FP16 | Color face compute vs 3090 FP16 |
 |-----|----------------------------:|--------------------------------:|
 | A100 | **~1.6× faster** (48 vs 75 ms) | **~0.95×** (similar) |
 | H100 | **~2.2× faster** (35 vs 75 ms) | **~1.8× faster** (4.4 vs 7.8 ms) |
-| P100 | — | **~0.29×** (27 vs 7.8 ms) |
+| P100 |  | **~0.29×** (27 vs 7.8 ms) |
 
 ### Accuracy
 
@@ -168,17 +167,17 @@ make help              # all targets
 | Encode | PyAV (libx264) | H.264 yuv420p +faststart output (browser/VSCode-playable) |
 | Compute | NumPy / SciPy (baseline) | The correctness oracle |
 
-No PyTorch, no CuPy, no Numba — every kernel is hand-written CUDA C++.
+No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++.
 
 ## Architecture highlights
 
-- **Device-resident pipeline** — the entire clip is staged to GPU memory once;
+- Device-resident pipeline: the entire clip is staged to GPU memory once;
   all 50+ kernel launches execute without a single host-device round-trip
-- **Batched spatial kernels** — `grid.z = M` collapses ~35,000 launches into ~50
-- **cuFFT plan caching** — eliminates per-call autotuning overhead
-- **Templated FP16 storage** — all kernels compile in both FP32 and FP16 variants
+- Batched spatial kernels: `grid.z = M` collapses ~35,000 launches into ~50
+- cuFFT plan caching eliminates per-call autotuning overhead
+- Templated FP16 storage: all kernels compile in both FP32 and FP16 variants
   via `cvt_in`/`cvt_out` helpers; compute stays FP32, storage halves
-- **Multiple-elements-per-thread** — render and transpose kernels process
+- Multiple-elements-per-thread render and transpose kernels process
   4 pixels per thread to pipeline independent memory reads (22% speedup)
 - **92 tests** (67 functions, parametrized to 92 cases) validating every kernel
   end-to-end RMSE checks and MIT reference output comparison
@@ -225,6 +224,6 @@ This project builds on the original EVM work:
 
 ## License
 
-[BSD 3-Clause (Non-Commercial Research Use)](LICENSE) — free for academic
+[BSD 3-Clause (Non-Commercial Research Use)](LICENSE), free for academic
 research and non-commercial educational use. Commercial use requires written
 permission. Citation is required for any derived publication.
