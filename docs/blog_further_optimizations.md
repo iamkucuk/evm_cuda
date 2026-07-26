@@ -35,7 +35,7 @@ product latency is a different problem (NVDEC/NVENC, async H2D).
 **Cross-GPU note:** Older H100 (~85 ms motion) and A100 (~209 ms motion) doc
 numbers predate this mid-pipeline series. Remeasuring them *after* TN IIR /
 sticky / pool / smem-down (and later true half-band) shows ~2.4× (H100) and
-~3.8× (A100) on motion FP32 — that is the series landing on those GPUs, not
+~3.8× (A100) on motion FP32. That is the series landing on those GPUs, not
 half-band alone. Half-band / dense smem is the extra FP16 edge (3090 motion
 0.83×; H100 only 0.96× because the path is already tiny and transfer-bound).
 
@@ -456,10 +456,9 @@ Cross-GPU remeasure (same code): A100 motion **54.4 → 48.2 ms**, color face
 **8.8 → 8.2 ms** (`benches/bench_a100.json`); H100 motion **35.8 → 34.5 ms**,
 color face **4.9 → 4.4 ms** (`benches/bench_h100.json`).
 
-**Throughput punchline (3090, compute-only):** ~2.0 Gpx/s motion FP16 ⇒
-**~30 concurrent 1080p@30 motion streams** (~100× real-time for one baby-class
-clip). Color face FP16 ~12 Gpx/s ⇒ **~190 streams**. Not file→file (PCIe/codec
-bound). A100/H100 motion FP16 ≈ **50 / 70** streams at 1080p@30 (same scaling).
+3090 throughput (compute-only): ~2.0 Gpx/s motion FP16, which is
+about 30 concurrent 1080p@30 motion streams (roughly 100x real-time for one baby-class
+clip). Color face FP16 ~12 Gpx/s ⇒ about 190 color streams. Not file-to-file (PCIe/codec bound). A100/H100 motion FP16 ≈ **50 / 70** streams at 1080p@30 (same scaling).
 
 A rough 4K compute-only motion stream count is ~1080p/4 (~8 on 3090 FP16).
 VRAM may force tiling on full-res long clips; whole-clip resident 4K motion
