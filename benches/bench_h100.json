@@ -1,5 +1,5 @@
 {
-  "host": "truba",
+  "host": "h100",
   "gpu": "NVIDIA H100 80GB HBM3, 81559 MiB",
   "n_iter": 7,
   "results": {

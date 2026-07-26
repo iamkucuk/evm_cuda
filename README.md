@@ -46,8 +46,8 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 Current production path. Harness: `evm_cuda.benchmark` — **1 warmup + median of
 7 timed runs**, `cudaDeviceSynchronize` per stage. Primary numbers:
 **RTX 3090** (most common consumer GPU for this workload). Sources:
-`benches/bench_osiris_3090.json`, `benches/bench_truba_a100.json`,
-`benches/bench_truba_h100.json`, `benches/bench_kaggle_p100.json`.
+`benches/bench_rtx3090.json`, `benches/bench_a100.json`,
+`benches/bench_h100.json`, `benches/bench_p100.json`.
 
 Python CPU baselines: color **11,194 ms**, motion **44,190 ms**.
 

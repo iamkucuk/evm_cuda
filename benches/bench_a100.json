@@ -1,6 +1,5 @@
 {
-  "host": "truba",
-  "partition": "palamut-cuda",
+  "host": "a100",
   "gpu": "NVIDIA A100-SXM4-80GB, 81920 MiB",
   "n_iter": 7,
   "method": "fresh process per config; 1 warmup + median of 7",

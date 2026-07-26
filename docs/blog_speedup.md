@@ -346,9 +346,9 @@ before the temporal filter).
 
 † A100/P100 stage breakdown is **historical** (pre true half-band + dense smem
 templates). Current P100 **color** is **31.6 / 27.1 ms** compute
-(`benches/bench_kaggle_p100.json`); current P100 **motion** OOMs on 16 GB.
+(`benches/bench_p100.json`); current P100 **motion** OOMs on 16 GB.
 ‡ H100 compute totals are the **current** remeasure
-(`benches/bench_truba_h100.json`); per-stage H100 detail is in that JSON.
+(`benches/bench_h100.json`); per-stage H100 detail is in that JSON.
 
 ¹ A100/P100 historical render figures are from the pre-transfer-separation
 profiler (which bundled the D2H download into "render").
@@ -384,7 +384,7 @@ sticky residual after other configs); a clean FP16-only process may fit.
 
 ### Speedup vs CPU: three scenarios (H100-80GB, current production)
 
-Re-measured on **current** production (TRUBA H100, 1 warmup + median of 7).
+Re-measured on **current** production (H100, 1 warmup + median of 7).
 Python CPU baselines unchanged (color 11,194 ms / motion 44,190 ms).
 
 | Scenario | What it measures | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
@@ -397,7 +397,7 @@ Python CPU baselines unchanged (color 11,194 ms / motion 44,190 ms).
 | **③ Compute + H2D + D2H** | + output download to host | **103.6 ms** | **102.8 ms** | **196.0 ms** | **189.3 ms** |
 | — *speedup* | | **~110×** | **~110×** | **~225×** | **~230×** |
 
-Color: `face.mp4`. Motion: `baby.mp4`. Source: `benches/bench_truba_h100.json`.
+Color: `face.mp4`. Motion: `baby.mp4`. Source: `benches/bench_h100.json`.
 
 **① / ② / ③** mean the same as before: compute-only, inference (+H2D), full
 file-to-array (+D2H). On this H100 run D2H alone is ~70–110 ms and dominates
@@ -419,8 +419,8 @@ adds a smaller FP16 edge (H100 motion 0.96×, color 0.90×).
 | **A100** (80GB, sm_80) | 1,935 GB/s | **8.8 ms** | **8.2 ms** | **54.4 ms** | **48.2 ms** |
 | **H100** (80GB, sm_90) | 3,350 GB/s | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
 
-Sources: `benches/bench_kaggle_p100.json`, `bench_osiris_3090.json`,
-`bench_truba_a100.json`, `bench_truba_h100.json` (1 warmup + median of 7).
+Sources: `benches/bench_p100.json`, `bench_rtx3090.json`,
+`bench_a100.json`, `bench_h100.json` (1 warmup + median of 7).
 Standalone motion FP16 peaks ~8–9 GB; *P100 motion OOM was multi-config pool
 residual. Prefer ≥24 GB for comfortable whole-clip motion.
 

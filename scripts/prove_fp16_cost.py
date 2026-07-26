@@ -7,7 +7,7 @@ Honest configs:
   f16_halfacc    half storage + scalar half MAC        (NOT 2x Ampere path)
   f16_half2      half storage + packed __hfma2         (real 2x half datapath)
 
-Optional: --ncu runs ncu on one kernel launch per mode (osiris preferred).
+Optional: --ncu runs ncu on one kernel launch per mode (preferred when available).
 """
 from __future__ import annotations
 
@@ -196,7 +196,7 @@ def main():
                     if any(k in line for k in keys):
                         print(line)
                 if out.returncode != 0 and "ERR_NVGPUCTRPERM" in text:
-                    print("NCU counters blocked (ERR_NVGPUCTRPERM). Need admin / osiris toolkit perms.")
+                    print("NCU counters blocked (ERR_NVGPUCTRPERM). Need admin / GPU toolkit perms.")
                     break
             except FileNotFoundError:
                 print("ncu not on PATH")

@@ -435,7 +435,7 @@ new isolation A/B that beats separable on recon and build.
 
 ### Current production stage table (3090, baby motion)
 
-Fresh process per config; 1 warmup + median of 7 (`benches/bench_osiris_3090.json`).
+Fresh process per config; 1 warmup + median of 7 (`benches/bench_rtx3090.json`).
 
 | Stage | FP32 (ms) | FP16 (ms) | ratio |
 |---|---:|---:|---:|
@@ -453,8 +453,8 @@ baby color compute **15.8 → 12.2 ms** (0.77×). Accuracy: motion FP16 vs CUDA
 FP32 RMSE **0.00232** / max **5** LSB; color face RMSE **0.00071** / max **1** LSB.
 
 Cross-GPU remeasure (same code): A100 motion **54.4 → 48.2 ms**, color face
-**8.8 → 8.2 ms** (`benches/bench_truba_a100.json`); H100 motion **35.8 → 34.5 ms**,
-color face **4.9 → 4.4 ms** (`benches/bench_truba_h100.json`).
+**8.8 → 8.2 ms** (`benches/bench_a100.json`); H100 motion **35.8 → 34.5 ms**,
+color face **4.9 → 4.4 ms** (`benches/bench_h100.json`).
 
 A rough 4K compute-only FPS estimate (pixel-scale from ~90 ms / 291 frames on
 3090 FP32) lands around 190-200 FPS of pure mid-pipeline. VRAM may force tiling

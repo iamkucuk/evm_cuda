@@ -1,5 +1,5 @@
 {
-  "host": "osiris",
+  "host": "rtx3090",
   "gpu": "RTX 3090",
   "n_iter": 7,
   "method": "fresh process per config; 1 warmup + median of 7",
