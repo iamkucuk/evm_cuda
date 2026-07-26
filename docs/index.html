@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Eulerian Video Magnification — CUDA Implementation, Pulse &amp; Motion Demos</title>
-    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, ~1,280× H100 motion compute speedup, validated within RMSE &lt; 0.01.">
+    <meta name="description" content="Eulerian Video Magnification (EVM) reveals invisible pulse and motion in ordinary video. Open-source CUDA C++ port of the MIT SIGGRAPH 2012 method: color and motion magnification demos, ~3,200+ FPS motion compute on RTX 3090, validated within RMSE &lt; 0.01.">
     <meta name="keywords" content="Eulerian Video Magnification, EVM, video magnification, pulse magnification, motion magnification, MIT SIGGRAPH, Wu Rubinstein, CUDA, GPU, computer vision, vital signs video">
     <meta name="author" content="Furkan Kucuk">
     <meta name="robots" content="index, follow, max-image-preview:large">
@@ -14,7 +14,7 @@
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Eulerian Video Magnification (CUDA)">
     <meta property="og:title" content="Eulerian Video Magnification — open-source CUDA implementation">
-    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, and ~1,280× H100 motion compute speedup.">
+    <meta property="og:description" content="See pulse and breathing in ordinary video with Eulerian Video Magnification. MIT SIGGRAPH 2012 method in raw CUDA C++ — demos, writeups, with ~3,200+ FPS motion compute on RTX 3090.">
     <meta property="og:image" content="https://iamkucuk.github.io/eulerian-video-magnification-cuda/img/og_preview.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -346,9 +346,9 @@ This site is a full open-source <strong>CUDA</strong> implementation of that
 pipeline &mdash; color (pulse) magnification with an ideal bandpass and motion
 magnification with a Laplacian pyramid + IIR bandpass &mdash; with demos,
 benchmarks, and writeups. It ports the MIT reference from MATLAB to raw CUDA
-C++ and achieves a <b>~1,280&times; motion compute-only speedup</b> (~225&times; including
-host-device transfers) over a Python/NumPy baseline on an NVIDIA H100, with
-output validated against the Python baseline within RMSE 0.01.
+C++ and delivers <b>~3,200+ FPS of motion compute on a consumer RTX 3090</b>
+(~90&nbsp;ms for baby.mp4; FP16 ~75&nbsp;ms), with output validated against the
+Python baseline within RMSE 0.01. Datacenter numbers (A100/H100) are below.
 </p>
 </div>
 
@@ -423,53 +423,75 @@ for the kernel-by-kernel mapping.
 <!-- ===================== RESULTS ===================== -->
 <h2 class="section-title">Performance</h2>
 <p>
-Current production path. Harness: <code>evm_cuda.benchmark</code> &mdash;
+Current production path. Primary numbers: <b>RTX 3090</b> (most common consumer
+GPU for this workload). Harness: <code>evm_cuda.benchmark</code> &mdash;
 1 warmup + median of 7 timed runs, <code>cudaDeviceSynchronize</code> per stage.
-Sources: <code>benches/bench_truba_h100.json</code>,
+Sources: <code>benches/bench_osiris_3090.json</code>,
 <code>benches/bench_truba_a100.json</code>,
-<code>benches/bench_osiris_3090.json</code>,
+<code>benches/bench_truba_h100.json</code>,
 <code>benches/bench_kaggle_p100.json</code>.
 </p>
 <p>
 Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
 </p>
 
-<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">H100-80GB</h3>
+<h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">RTX 3090 24GB (primary)</h3>
 <table>
 <tr>
     <th>Pipeline</th>
     <th>&#9312; Compute</th>
     <th>&#9313; + H2D</th>
     <th>&#9314; + H2D + D2H</th>
+    <th>Compute FPS</th>
     <th>&#9312; vs CPU</th>
 </tr>
 <tr>
-    <td>Color FP32 (face)</td>
-    <td><b>4.9&nbsp;ms</b></td>
-    <td>34.6&nbsp;ms</td>
-    <td>103.6&nbsp;ms</td>
-    <td><b>~2,290&times;</b></td>
-</tr>
-<tr>
-    <td>Color FP16 (face)</td>
-    <td><b>4.4&nbsp;ms</b></td>
-    <td>34.2&nbsp;ms</td>
-    <td>102.8&nbsp;ms</td>
-    <td><b>~2,540&times;</b></td>
-</tr>
-<tr>
     <td>Motion FP32 (baby)</td>
-    <td><b>35.8&nbsp;ms</b></td>
-    <td>82.1&nbsp;ms</td>
-    <td>196.0&nbsp;ms</td>
-    <td><b>~1,230&times;</b></td>
+    <td><b>90.4&nbsp;ms</b></td>
+    <td>128.0&nbsp;ms</td>
+    <td>203.5&nbsp;ms</td>
+    <td><b>~3,220</b></td>
+    <td><b>~490&times;</b></td>
 </tr>
 <tr>
     <td>Motion FP16 (baby)</td>
-    <td><b>34.5&nbsp;ms</b> (0.96&times; FP32)</td>
-    <td>81.0&nbsp;ms</td>
-    <td>189.3&nbsp;ms</td>
-    <td><b>~1,280&times;</b></td>
+    <td><b>75.1&nbsp;ms</b> (0.83&times;)</td>
+    <td>107.1&nbsp;ms</td>
+    <td>179.5&nbsp;ms</td>
+    <td><b>~3,870</b></td>
+    <td><b>~590&times;</b></td>
+</tr>
+<tr>
+    <td>Color FP32 (face)</td>
+    <td><b>10.1&nbsp;ms</b></td>
+    <td>29.5&nbsp;ms</td>
+    <td>73.2&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~1,110&times;</b></td>
+</tr>
+<tr>
+    <td>Color FP16 (face)</td>
+    <td><b>7.8&nbsp;ms</b> (0.77&times;)</td>
+    <td>26.9&nbsp;ms</td>
+    <td>71.1&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~1,440&times;</b></td>
+</tr>
+<tr>
+    <td>Color FP32 (baby)</td>
+    <td><b>15.8&nbsp;ms</b></td>
+    <td>48.6&nbsp;ms</td>
+    <td>121.0&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~710&times;</b></td>
+</tr>
+<tr>
+    <td>Color FP16 (baby)</td>
+    <td><b>12.2&nbsp;ms</b> (0.77&times;)</td>
+    <td>45.0&nbsp;ms</td>
+    <td>117.9&nbsp;ms</td>
+    <td>&mdash;</td>
+    <td><b>~920&times;</b></td>
 </tr>
 </table>
 <ul class="features">
@@ -486,14 +508,14 @@ Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
     <th>Color face FP32 / FP16</th>
 </tr>
 <tr>
-    <td><b>RTX 3090</b> 24GB</td>
-    <td><b>90.4 / 75.1&nbsp;ms</b> (0.83&times;)</td>
-    <td><b>10.1 / 7.8&nbsp;ms</b> (0.77&times;)</td>
-</tr>
-<tr>
     <td><b>A100</b> 80GB</td>
     <td><b>54.4 / 48.2&nbsp;ms</b> (0.89&times;)</td>
     <td><b>8.8 / 8.2&nbsp;ms</b> (0.93&times;)</td>
+</tr>
+<tr>
+    <td><b>H100</b> 80GB</td>
+    <td><b>35.8 / 34.5&nbsp;ms</b> (0.96&times;)</td>
+    <td><b>4.9 / 4.4&nbsp;ms</b> (0.90&times;)</td>
 </tr>
 <tr>
     <td><b>P100</b> 16GB</td>
@@ -502,9 +524,8 @@ Python CPU baselines: color <b>11,194&nbsp;ms</b>, motion <b>44,190&nbsp;ms</b>.
 </tr>
 </table>
 <p>
-3090 color baby: <b>15.8 / 12.2&nbsp;ms</b> (0.77&times;). Accuracy: motion FP16 vs
-CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB); color face RMSE <b>0.00071</b>
-(max 1 LSB). Optimization history:
+Accuracy: motion FP16 vs CUDA FP32 RMSE <b>0.00232</b> (max 5 LSB); color face
+RMSE <b>0.00071</b> (max 1 LSB). Optimization history:
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_speedup.md">blog_speedup</a>,
 <a href="https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/docs/blog_further_optimizations.md">further optimizations</a>.
 </p>
