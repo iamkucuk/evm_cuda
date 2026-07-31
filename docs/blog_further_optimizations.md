@@ -492,7 +492,7 @@ kernel sitting at 15-22%.
 
 `band_subtract` is the control: 12 registers, full occupancy, plainly
 coalesced, and it runs at 97-103% of the copy roof on the same hardware. The
-memory system is fine. Something specific to up_conv is not.
+memory system is fine. Whatever slows up_conv belongs to up_conv.
 
 ### Four hypotheses, from reading the kernels
 
@@ -576,12 +576,12 @@ bandwidth per integer ALU, so index math binds sooner.
 
 Padding the tile to a warp multiple makes it slower on both architectures. A
 `[8][32]` tile loads 33% more elements than `[8][24]`, and the alignment saved
-does not cover the extra fetch. Tile size dominates tile alignment for this
-kernel, which is E1's lesson arriving from the other direction: the cheapest
-byte is the one never fetched.
+does not cover the extra fetch. Tile size matters more than tile alignment
+here. E1 says the same thing from the other side: both wins came from fetching
+fewer elements, not from fetching them more neatly.
 
-Worth recording as a failure, since "make the tile warp-aligned" is the
-reflex.
+It is worth recording as a failure, because warp-aligning the tile is the
+obvious first thing to try.
 
 ### The production change
 
@@ -610,9 +610,9 @@ constexpr int UY  = SP_BY / 2 + SP_HALO + 2;  // 8, was SP_BY + 2*SP_HALO + 2 = 
 constexpr int UXW = SP_BX / 2 + SP_HALO + 2;  // 20, was SP_BX/2 + 2*SP_HALO + 4 = 24
 ```
 
-The halving is the point: BY output rows span BY/2 input rows because the
-input is half resolution, so the old output-space bound fetched about twice
-what it used.
+The bound halves because BY output rows span only BY/2 input rows when the
+input is half resolution. The old bound counted in output space and fetched
+about twice what it used.
 
 ```cpp
 // (r & 1) == ((yo + k) & 1); parity is known before the loop
@@ -642,8 +642,8 @@ Full motion pipeline, A100, before and after in the same job on the same node:
 | `add_planar_quantize` | 2.564 ms | 2.551 ms | 1.00x |
 | **Total GPU kernel time** | **55.55 ms** | **43.80 ms** | **1.27x** |
 
-The untouched kernels landing within 0.1% is the control. It says the delta is
-the patch and not the node, the clocks, or the memory state.
+The untouched kernels stayed within 0.1%. That is the control: the difference
+comes from the patch and not from the state of the node.
 
 Test suite: 95 of 95 green on the patched build.
 
@@ -651,7 +651,7 @@ Test suite: 95 of 95 green on the patched build.
 
 Even with all three changes, up_conv sits at 32-34% of the roof on the A100
 and 54-57% on the 3090. E1, E3 and E4 together explain roughly half the
-original gap. The rest is unexplained. Naming it needs the NCU counters that
+original gap. The rest is unexplained, and naming it needs the NCU counters
 neither host will collect.
 
 Two limits on the numbers. The 3090 was measured at kernel level, not end to
@@ -684,11 +684,11 @@ declared `__shared__ In tile[UY][SP_BX]`: rows 1792 to 1024 bytes in FP32 and
 even-tap loop still unrolls and the 5-tap filter array stays in registers
 despite the runtime-dependent loop start.
 
-One number in that table is worth reading twice. FP16 moves half the bytes and
-takes the same time as FP32, before the patch and after it. A DRAM-bound
-kernel would have halved. up_conv never was one, which is why the fixes that
-worked were index math and fetch count rather than anything about precision,
-and why both instantiations gain the same multiple from one shared body.
+FP16 moves half the bytes and takes the same time as FP32, before the patch
+and after it. A DRAM-bound kernel would have halved. up_conv never was one,
+which is why the fixes that worked were index math and fetch count rather than
+anything about precision, and why both instantiations gain the same multiple
+from one shared body.
 
 ---
 
@@ -768,16 +768,17 @@ exceeds 24 GB without tiling.
 6. After ~100 ms compute, transfer owns the wall. Further mid-pipeline work is
    for purity and paper numbers, not for real-time file-to-file without
    NVDEC/NVENC / async H2D.
-7. Ruling an approach out is not the same as diagnosing the problem. Fused
-   up_conv lost twice, and that closed the question for a while. The separable
-   kernels were still carrying a 14-row tile for 8 rows of output, an integer
-   modulo five times per output element, and a five-iteration loop that used
-   two or three of them. None of that needed fusion to fix.
-8. A profiler is a convenience, not a prerequisite. Registers and shared memory
-   come out of `cuobjdump -res-usage`, SM limits out of
+7. A failed fix can close a question it never answered. Fused up_conv lost
+   twice, and up_conv stayed "weak access" in the bound table for the rest of
+   the series. The separable kernels were still carrying a 14-row tile for 8
+   rows of output, an integer modulo five times per output element, and a
+   five-iteration loop that used two or three of those iterations. Fusion was
+   never required to fix any of it.
+8. Missing counters slowed the diagnosis but did not block it. Registers and
+   shared memory come out of `cuobjdump -res-usage`, SM limits out of
    `cudaGetDeviceProperties`, kernel timings out of Nsight Systems, and one
-   template argument per hypothesis covers the rest. Counters would have named
-   the residual gap faster; their absence did not block the three fixes.
+   template argument per hypothesis covers the rest. NCU would have named the
+   residual gap faster.
 
 Harris's reduction paper still applies: performance is often about how the
 kernel talks to the memory system. Here that meant warp-coalesced temporal
