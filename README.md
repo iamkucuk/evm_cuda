@@ -78,9 +78,9 @@ FP16 11.4 / 44.3 / 117.2 ms for ① / ② / ③.
 within about 1% across runs. H2D/D2H do not: they drift up to 8% between
 sessions on this WSL2 host regardless of what the code does. Columns ② and ③
 therefore hold H2D/D2H at the values recorded in the earlier session and add
-only the new compute, so the three tiers stay comparable across versions
-instead of tracking whatever the host's PCIe was doing that day. That is valid
-here because the transfer path is untouched by the kernel work: nothing in
+only the new compute. The three tiers then move when the code moves, rather
+than tracking whatever the host's PCIe was doing that day. That is valid here
+because the transfer path is untouched by the kernel work: nothing in
 `DeviceBuffer.upload` / `download` changed. `benches/bench_rtx3090.json` keeps
 the raw fresh run, its own slower transfer included, for the unadjusted view.
 
@@ -118,9 +118,9 @@ scratch, free-list pool, smem downsample) is in
 
 † Measured before the up_conv work (smaller tiles, divide-free `reflect1`,
 even-tap loop) and not yet re-run. That change is worth about 1.2x on motion
-compute on the 3090 and is architecture-independent, so these three rows are
-pessimistic by roughly that much. Cross-GPU ratios below are left from the
-pre-change measurement and will shift once the others are re-run.
+compute on the 3090 and nothing about it is architecture specific, so these
+three rows are pessimistic by roughly that much. Cross-GPU ratios below are
+left from the pre-change measurement and will shift once the others are re-run.
 
 P100 is color-only here (motion OOM'd in the multi-config harness). Raw JSON:
 `benches/bench_rtx3090.json`, `bench_a100.json`, `bench_h100.json`,
