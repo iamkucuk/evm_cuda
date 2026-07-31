@@ -338,7 +338,11 @@ __global__ void up_conv_rows_batched_kernel(
     // Simpler: load a vertical strip of input rows covering [yo0-HALO, yo0+BY+HALO]
     // mapped through even samples — load ceil range of in_H with halo.
     // Use tile of (BY + 2*HALO + 2) input rows × BX cols — generous for pad=2.
-    constexpr int UY = SP_BY + 2 * SP_HALO + 2;  // 14
+    // Tile height in INPUT rows. The input is half resolution, so BY output
+    // rows span BY/2 input rows, plus HALO each side and one row of margin
+    // for the odd-yo0 phase. The previous bound counted in output space and
+    // fetched about twice the rows it used.
+    constexpr int UY = SP_BY / 2 + SP_HALO + 2;  // 8
     __shared__ In tile[UY][SP_BX];
 
     const In* sin = in + b * slice_stride_in;
@@ -368,20 +372,22 @@ __global__ void up_conv_rows_batched_kernel(
     const int pad = SP_HALO;
     const int up_H = 2 * in_H;
     float acc = 0.0f;
+    // Only taps landing on an even upsampled index contribute. The period
+    // 2*(n-1) is even, so reflection preserves parity and (r & 1) equals
+    // ((yo + k) & 1), known before the loop. Start at k = yo&1 and stride by
+    // 2: three taps when yo is even, two when it is odd, and no branch.
     #pragma unroll
-    for (int k = 0; k < 5; ++k) {
+    for (int k = (yo & 1); k < 5; k += 2) {
         int u_idx = yo + (k - pad);
         int r = reflect1(u_idx, up_H);
-        if ((r & 1) == 0) {
-            int src = r / 2;
-            // Map src to tile row: src - y_in0
-            int ly = src - y_in0;
-            if (ly >= 0 && ly < UY) {
-                acc += f[k] * cvt_in<In>(tile[ly][tx]);
-            } else {
-                // Fallback (should be rare if UY generous)
-                acc += f[k] * cvt_in<In>(sin[src * W + x]);
-            }
+        int src = r >> 1;
+        // Map src to tile row: src - y_in0
+        int ly = src - y_in0;
+        if (ly >= 0 && ly < UY) {
+            acc += f[k] * cvt_in<In>(tile[ly][tx]);
+        } else {
+            // Border rows outside the tile.
+            acc += f[k] * cvt_in<In>(sin[src * W + x]);
         }
     }
     out[b * slice_stride_out + yo * W + x] = cvt_out<Out>(acc);
@@ -412,7 +418,11 @@ __global__ void up_conv_cols_batched_kernel(
     // Use UX = SP_BX + 4 (generous for BX=32 outputs spanning ~16 input centers + pad)
     // Actually outputs xo0..xo0+31 need src up to ~xo0/2+16+2. Width ~ BX/2+HALO+2 ~ 20.
     // Use 24.
-    constexpr int UXW = SP_BX / 2 + 2 * SP_HALO + 4;  // 24
+    // Tile width in INPUT columns, same reasoning as UY in up_conv_rows.
+    // Widening this to a warp multiple (32) was measured and is slower on
+    // both sm_80 and sm_86: the extra tile elements cost more than the
+    // alignment saves.
+    constexpr int UXW = SP_BX / 2 + SP_HALO + 2;  // 20
     __shared__ In tile[SP_BY][UXW];
 
     const In* sin = in + b * slice_stride_in;
@@ -441,18 +451,17 @@ __global__ void up_conv_cols_batched_kernel(
     const int pad = SP_HALO;
     const int up_W = 2 * in_W;
     float acc = 0.0f;
+    // Same parity hoist as up_conv_rows.
     #pragma unroll
-    for (int k = 0; k < 5; ++k) {
+    for (int k = (xo & 1); k < 5; k += 2) {
         int u_idx = xo + (k - pad);
         int r = reflect1(u_idx, up_W);
-        if ((r & 1) == 0) {
-            int src = r / 2;
-            int lx = src - x_in0;
-            if (lx >= 0 && lx < UXW) {
-                acc += f[k] * cvt_in<In>(tile[ty][lx]);
-            } else {
-                acc += f[k] * cvt_in<In>(sin[y * in_W + src]);
-            }
+        int src = r >> 1;
+        int lx = src - x_in0;
+        if (lx >= 0 && lx < UXW) {
+            acc += f[k] * cvt_in<In>(tile[ty][lx]);
+        } else {
+            acc += f[k] * cvt_in<In>(sin[y * in_W + src]);
         }
     }
     out[b * slice_stride_out + y * out_W + xo] = cvt_out<Out>(acc);
