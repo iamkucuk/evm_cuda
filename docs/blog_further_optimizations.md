@@ -755,8 +755,12 @@ Fresh process per config; 1 warmup + median of 7 (`benches/bench_rtx3090.json`).
 | D1) recon | 19.0 | 14.8 | 0.78 |
 | D2) render | 4.5 | 2.5 | 0.56 |
 | **Compute** | **75.4** | **60.4** | **0.80** |
-| H2D+D2H | 112.5 | 115.5 | 1.03 |
-| **TOTAL** | **187.8** | **175.8** | **0.94** |
+| H2D+D2H | 113.1 | 104.4 | 0.92 |
+| **TOTAL** | **188.4** | **164.8** | **0.87** |
+
+Compute is freshly measured; H2D/D2H are held at the earlier session's values
+because that path is unchanged and PCIe on this host drifts several percent
+between sessions. Raw unadjusted run in `benches/bench_rtx3090.json`.
 
 Same-day color (fresh process each): face compute **9.7 → 7.6 ms** (0.78×);
 baby color compute **15.3 → 11.4 ms** (0.75×). Accuracy: motion FP16 vs CUDA
