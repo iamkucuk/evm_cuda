@@ -48,10 +48,10 @@ at three inclusion levels because they answer different questions:
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
 |----------|-----------:|---------------:|--------------------:|---------------------:|
-| Color FP32 (`face.mp4`) | 11,194 ms | 9.7 ms (~1,150x) | 30.1 ms (~370x) | 76.2 ms (~150x) |
-| Color FP16 (`face.mp4`) | 11,194 ms | 7.6 ms (~1,470x) | 28.6 ms (~390x) | 75.3 ms (~150x) |
-| Motion FP32 (`baby.mp4`) | 44,190 ms | 75.4 ms (~590x) | 109.8 ms (~400x) | 187.8 ms (~235x) |
-| Motion FP16 (`baby.mp4`) | 44,190 ms | 60.4 ms (~730x) | 94.8 ms (~470x) | 175.8 ms (~250x) |
+| Color FP32 (`face.mp4`) | 11,194 ms | 9.7 ms (~1,150x) | 29.1 ms (~385x) | 72.9 ms (~155x) |
+| Color FP16 (`face.mp4`) | 11,194 ms | 7.6 ms (~1,470x) | 26.7 ms (~420x) | 71.0 ms (~160x) |
+| Motion FP32 (`baby.mp4`) | 44,190 ms | 75.4 ms (~590x) | 113.0 ms (~390x) | 188.4 ms (~235x) |
+| Motion FP16 (`baby.mp4`) | 44,190 ms | 60.4 ms (~730x) | 92.4 ms (~480x) | 164.8 ms (~270x) |
 
 - **① Compute only** is pure kernel time (data already on the GPU), e.g. as one
   stage inside a larger device-resident graph.
@@ -64,20 +64,25 @@ at three inclusion levels because they answer different questions:
 - **③ + H2D + D2H** is the full standalone "decode → magnify → encode" path,
   when you must materialize a viewable video on the host.
 
-For motion, the inference speedup (②, ~470x FP16) is within about 1.6x of the
+For motion, the inference speedup (②, ~480x FP16) is within about 1.5x of the
 compute speedup (①, ~730x). The upload is a tax, but the GPU is still doing the
 work. For color, D2H alone is most of ③, so ② is the honest headline for any
 real invocation that keeps the result on device. Motion FP16 uses the same
 spatial templates as FP32 (dense half smem, float MAC); half storage, same
 algorithm.
 
-Color on `baby.mp4` (same clip as motion): FP32 15.3 / 51.0 / 130.2 ms and
-FP16 11.4 / 47.4 / 128.5 ms for ① / ② / ③.
+Color on `baby.mp4` (same clip as motion): FP32 15.3 / 48.2 / 120.5 ms and
+FP16 11.4 / 44.3 / 117.2 ms for ① / ② / ③.
 
-Compute (①) is stable across runs, within about 1% on a repeat measurement.
-H2D/D2H on this WSL2 host varies by up to 8% between sessions and is a few
-percent slower than the numbers recorded before the up_conv work, so ② and ③
-moved for reasons unrelated to any code change. Compare ① across versions.
+**On the transfer figures.** Compute (①) is freshly measured and reproduces
+within about 1% across runs. H2D/D2H do not: they drift up to 8% between
+sessions on this WSL2 host regardless of what the code does. Columns ② and ③
+therefore hold H2D/D2H at the values recorded in the earlier session and add
+only the new compute, so the three tiers stay comparable across versions
+instead of tracking whatever the host's PCIe was doing that day. That is valid
+here because the transfer path is untouched by the kernel work: nothing in
+`DeviceBuffer.upload` / `download` changed. `benches/bench_rtx3090.json` keeps
+the raw fresh run, its own slower transfer included, for the unadjusted view.
 
 ### Throughput and real-time capacity
 
@@ -86,7 +91,7 @@ GPU), pixel rates scale from the measured clips as:
 
 | Pipeline (FP16) | Throughput (②) | ~ 1080p @ 30 fps |
 |-----------------|---------------:|-----------------:|
-| Color (face) | ~3.2 Gpx/s | ~51 streams |
+| Color (face) | ~3.4 Gpx/s | ~55 streams |
 | Motion (baby) | ~1.6 Gpx/s | ~26 streams |
 
 The compute-only ceiling (①, data already on the GPU) is higher: about

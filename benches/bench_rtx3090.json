@@ -245,5 +245,6 @@
    "max": 0.003921598196029663,
    "u8_max": 1
   }
- }
+ },
+ "note": "Raw fresh run after the up_conv work. Compute is freshly measured and reproduces within ~1% across runs; H2D/D2H in this session ran a few percent slower than the earlier session that produced the previous file. The README holds H2D/D2H at those earlier values for tiers 2 and 3 so versions stay comparable, since the transfer path is unchanged. Numbers here are unadjusted."
 }
