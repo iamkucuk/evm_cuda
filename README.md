@@ -74,16 +74,6 @@ algorithm.
 Color on `baby.mp4` (same clip as motion): FP32 15.3 / 48.2 / 120.5 ms and
 FP16 11.4 / 44.3 / 117.2 ms for ① / ② / ③.
 
-**On the transfer figures.** Compute (①) is freshly measured and reproduces
-within about 1% across runs. H2D/D2H do not: they drift up to 8% between
-sessions on this WSL2 host regardless of what the code does. Columns ② and ③
-therefore hold H2D/D2H at the values recorded in the earlier session and add
-only the new compute. The three tiers then move when the code moves, rather
-than tracking whatever the host's PCIe was doing that day. That is valid here
-because the transfer path is untouched by the kernel work: nothing in
-`DeviceBuffer.upload` / `download` changed. `benches/bench_rtx3090.json` keeps
-the raw fresh run, its own slower transfer included, for the unadjusted view.
-
 ### Throughput and real-time capacity
 
 At the realistic *inference* tier (②, input upload included, output kept on the
