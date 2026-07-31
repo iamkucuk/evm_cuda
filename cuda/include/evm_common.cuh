@@ -83,10 +83,13 @@ __device__ __forceinline__ int reflect1(int i, int n) {
     // Mirror without duplicating the edge sample. The period is 2*(n-1).
     if (n == 1) return 0;
     const int period = 2 * (n - 1);
-    // Fold i into [0, period) using the same modulo convention as numpy
-    // (result takes the sign of the divisor).
-    i = i % period;
-    if (i < 0) i += period;
+    // Reflection is symmetric about 0, so negating folds the negative side.
+    if (i < 0) i = -i;
+    // The GPU has no hardware integer divide, so the modulo costs ~20-30
+    // instructions. Spatial callers stay within one period (taps reach at
+    // most HALO past an edge), so it is skipped on the hot path and kept
+    // only to preserve the general contract for any input.
+    if (i >= period) i %= period;
     if (i >= n) i = period - i;
     return i;
 }
