@@ -159,11 +159,23 @@ half-sample symmetric reflection without duplicating the edge sample.
 __device__ int reflect1(int i, int n) {
     if (n == 1) return 0;
     const int period = 2 * (n - 1);
-    i = i % period;  if (i < 0) i += period;
+    if (i < 0) i = -i;             // reflection is symmetric about 0
+    if (i >= period) i %= period;  // skipped on the hot path
     if (i >= n) i = period - i;
     return i;
 }
 ```
+
+This form is there for speed, not clarity. The GPU has no hardware
+integer divide, so `i % period` costs ~20-30 instructions, and `up_conv`
+called this five times per output element. Spatial callers never reach more
+than one period past an edge, so the modulo is skipped for them; it stays
+in the general path so the function's contract is unchanged for any input.
+Measured 1.3-1.6x on `up_conv` alone.
+
+The even period also means reflection preserves parity, which `up_conv`
+uses to hoist its tap predicate: `(r & 1)` equals `((yo + k) & 1)` and is
+known before the loop runs.
 
 Any mistake here propagates into every pyramid band and the Laplacian
 round-trip. Verified against numpy's behaviour in `tests/cuda/test_spatial.py`

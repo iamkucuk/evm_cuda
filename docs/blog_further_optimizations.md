@@ -95,7 +95,7 @@ Motion FP32 compute on 3090 (`baby.mp4`):
 | Level 5: smem fused downsample | ~98-102 ms | Small real Stage B win |
 | Level 6: smem fused upsample | 127-189 ms | Regressed, then reverted |
 | Production | ~96-104 ms | about 9x vs series start |
-| Level 7: up_conv tile/reflect/taps | not yet landed | 1.70x rows, 1.46x cols in isolation (3090); 1.27x total GPU kernel time (A100 trace) |
+| Level 7: up_conv tile/reflect/taps | ~76 ms | Smaller tiles, no integer divide, even taps only |
 
 Full stage collapse (pre-pool ~407 ms era to production ~100 ms era):
 
@@ -418,8 +418,8 @@ on.
 
 This level opens the kernels instead of the launch structure.
 
-Status: measured and validated, not yet landed in the tree. Numbers below come
-from a patched scratch copy; the production tables above are still pre-Level-7.
+This one landed. 3090 motion FP32 compute goes from 88.1 ms to 76.2 ms, with
+Stage B down 17% and Stage D1 down 22%.
 
 ### Where the clock actually is
 
@@ -585,25 +585,33 @@ obvious first thing to try.
 
 ### The production change
 
-Three files: the two kernels, the shared helper, and the DESIGN.md entry that
-records the numerical contract. A divide-free reflect that falls through to
-the modulo version for anything more than a period out of range:
+The first attempt added a second helper, `reflect1_fast`, and pointed the two
+up_conv kernels at it. That left the codebase with two reflects, a decision at
+every call site, and a note in DESIGN.md explaining why `corr_dn` kept the slow
+one. Simpler to make `reflect1` itself skip the divide, since the modulo is
+only needed for inputs more than one period out and no spatial caller produces
+those:
 
 ```cpp
-__device__ __forceinline__ int reflect1_fast(int i, int n) {
+__device__ __forceinline__ int reflect1(int i, int n) {
     if (n == 1) return 0;
-    if (i < 0) i = -i;                           // mirror about 0
     const int period = 2 * (n - 1);
-    if (i >= n) i = period - i;                  // mirror about n-1
-    if (i < 0 || i >= n) return reflect1(i, n);  // rare: >1 period out
+    if (i < 0) i = -i;             // reflection is symmetric about 0
+    if (i >= period) i %= period;  // skipped on the hot path
+    if (i >= n) i = period - i;
     return i;
 }
 ```
 
-And in the two production up_conv kernels: `reflect1` to `reflect1_fast`, the
-tap loop hoisted to even taps only, and both tile bounds rederived from the
-block constants the way the rest of the file does it, so they still track
-`SP_BX` / `SP_BY` if those ever move:
+One function, no call sites changed, and all 23 of them get the faster path
+including `corr_dn`. An exhaustive host check over 8.86 million `(i, n)` pairs
+covering `n` up to 2100 confirms it returns exactly what the modulo version
+returned, and that reflection preserves parity, which is what the tap loop
+below relies on.
+
+In the two production up_conv kernels: the tap loop hoisted to even taps only,
+and both tile bounds rederived from the block constants the way the rest of the
+file does it, so they still track `SP_BX` / `SP_BY` if those ever move:
 
 ```cpp
 constexpr int UY  = SP_BY / 2 + SP_HALO + 2;  // 8, was SP_BY + 2*SP_HALO + 2 = 14
@@ -618,7 +626,7 @@ about twice what it used.
 // (r & 1) == ((yo + k) & 1); parity is known before the loop
 #pragma unroll
 for (int k = (yo & 1); k < 5; k += 2) {
-    int r = reflect1_fast(yo + (k - pad), up_H);
+    int r = reflect1(yo + (k - pad), up_H);
     int src = r >> 1;
     ...
 }
@@ -645,7 +653,22 @@ Full motion pipeline, A100, before and after in the same job on the same node:
 The untouched kernels stayed within 0.1%. That is the control: the difference
 comes from the patch and not from the state of the node.
 
-Test suite: 95 of 95 green on the patched build.
+On the 3090, the same comparison run through the pipeline's own stage timers,
+with both builds compiled by the same toolchain:
+
+| Stage | Before | After | Change |
+|---|---:|---:|---:|
+| A) NTSC | 2.683 ms | 2.699 ms | untouched |
+| B) lpyr_build | 32.340 ms | 26.681 ms | **1.21x** |
+| C) IIR | 23.974 ms | 23.169 ms | untouched |
+| D1) recon | 24.560 ms | 19.119 ms | **1.28x** |
+| D2) render | 4.544 ms | 4.539 ms | untouched |
+| **Compute (A..D2)** | **88.10 ms** | **76.21 ms** | **1.16x** |
+
+Stages A, C and D2 land within 0.6%, which is the control again: only the two
+stages containing up_conv moved.
+
+Test suite: 95 of 95 green on both A100 and 3090.
 
 ### Honest read
 
@@ -797,7 +820,7 @@ malloc/freeing stage buffers every stage.
 | Channel-outer / contiguous band | Done (foundation; little wall win) |
 | Smem fused downsample | Done (small win) |
 | Smem / dense fused upsample | Ruled out (regression, twice) |
-| up_conv tile bound / divide-free reflect / even-tap loop | Measured and validated; patch not yet landed |
+| up_conv tile bound / divide-free reflect / even-tap loop | Done (3090 compute 88.1 to 76.2 ms) |
 | Warp-aligning the up_conv tile (`UXW = 32`) | Ruled out (slower on sm_80 and sm_86) |
 | Remaining up_conv gap (still ~2/3 off roof on A100) | Open: needs NCU counters, blocked on both hosts |
 | True half-band motion + dense smem templates | Done (production; ~0.84× FP32 on 3090) |
