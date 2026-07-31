@@ -26,7 +26,8 @@ frames at 960x544, 9 levels, FP32 motion *compute only*):
 | After coalesced TN IIR + sticky lpyr scratch | ~377-407 ms |
 | After DeviceBuffer free-list + smem fused downsample | ~96-104 ms |
 | Total (series) | about 9x mid-pipeline compute |
-| **Current production (remeasured)** | **3090 90.4/75.1; A100 54.4/48.2; H100 35.8/34.5 (FP32/FP16 motion)** |
+| After up_conv tile / reflect / taps | ~76 ms |
+| **Current production (remeasured)** | **3090 75.4/60.4 (FP32/FP16 motion); A100 54.4/48.2 and H100 35.8/34.5 predate Level 7** |
 
 H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
@@ -740,6 +741,7 @@ from one shared body.
 | Layout foundation | ~106-110 | ~8.5x |
 | Smem fused down | ~96-104 | ~9x |
 | True half bands + dense smem (remeasured) | **3090 90.4/75.1; A100 54.4/48.2; H100 35.8/34.5** | **~10× / ~12× on 3090** |
+| Level 7: up_conv tile / reflect / taps | **3090 75.4/60.4** | **~12× / ~15× on 3090** |
 
 ### Current production stage table (3090, baby motion)
 
@@ -747,17 +749,17 @@ Fresh process per config; 1 warmup + median of 7 (`benches/bench_rtx3090.json`).
 
 | Stage | FP32 (ms) | FP16 (ms) | ratio |
 |---|---:|---:|---:|
-| A) NTSC | 2.9 | 1.7 | 0.59 |
-| B) lpyr_build | 32.5 | 26.8 | 0.82 |
-| C) IIR | 24.7 | 23.4 | 0.95 |
-| D1) recon | 25.3 | 20.8 | 0.82 |
-| D2) render | 5.0 | 2.4 | 0.48 |
-| **Compute** | **90.4** | **75.1** | **0.83** |
-| H2D+D2H | 113.1 | 104.4 | 0.92 |
-| **TOTAL** | **203.5** | **179.5** | **0.88** |
+| A) NTSC | 2.7 | 1.8 | 0.68 |
+| B) lpyr_build | 26.7 | 19.6 | 0.73 |
+| C) IIR | 22.5 | 21.7 | 0.96 |
+| D1) recon | 19.0 | 14.8 | 0.78 |
+| D2) render | 4.5 | 2.5 | 0.56 |
+| **Compute** | **75.4** | **60.4** | **0.80** |
+| H2D+D2H | 112.5 | 115.5 | 1.03 |
+| **TOTAL** | **187.8** | **175.8** | **0.94** |
 
-Same-day color (fresh process each): face compute **10.1 → 7.8 ms** (0.77×);
-baby color compute **15.8 → 12.2 ms** (0.77×). Accuracy: motion FP16 vs CUDA
+Same-day color (fresh process each): face compute **9.7 → 7.6 ms** (0.78×);
+baby color compute **15.3 → 11.4 ms** (0.75×). Accuracy: motion FP16 vs CUDA
 FP32 RMSE **0.00232** / max **5** LSB; color face RMSE **0.00071** / max **1** LSB.
 
 Cross-GPU remeasure (same code): A100 motion **54.4 → 48.2 ms**, color face
@@ -841,7 +843,11 @@ to real kernel times (about another 4x). Channel-outer layout cleaned the band
 bridge without buying much wall time. Smem fused downsample shaved a few more
 milliseconds. Fused upsample regressed again, so production keeps separable up.
 True half-band storage with dense half smem (same templates as FP32) then lands
-near **90 ms FP32 / 76 ms FP16** mid-pipeline compute for baby.mp4 (~10-12x from
-the start of this series). File-to-file is still dominated by transfer and encode.
+near 90 ms FP32 / 76 ms FP16. Finally up_conv, which had sat at "weak access"
+in the bound table since the fused attempt failed, turned out to be carrying an
+oversized tile, an integer divide five times per output element, and a loop
+that discarded most of its own iterations. Fixing those three lands
+**75 ms FP32 / 60 ms FP16** mid-pipeline compute for baby.mp4 (~12-15x from the
+start of this series). File-to-file is still dominated by transfer and encode.
 
 [repo]: https://github.com/iamkucuk/eulerian-video-magnification-cuda

@@ -13,7 +13,7 @@ motion variations that the eye cannot detect.**
 
 This project ports the MIT SIGGRAPH 2012 reference (Wu, Rubinstein, Freeman,
 Durand, Guttag) from MATLAB to raw CUDA C++. On a consumer RTX 3090 it reaches
-about 590x compute-only speedup on motion (FP16) and about 1,440x on color
+about 730x compute-only speedup on motion (FP16) and about 1,470x on color
 (FP16) over the Python/NumPy baseline, while matching that baseline within
 end-to-end RMSE < 0.01.
 
@@ -48,10 +48,10 @@ at three inclusion levels because they answer different questions:
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
 |----------|-----------:|---------------:|--------------------:|---------------------:|
-| Color FP32 (`face.mp4`) | 11,194 ms | 10.1 ms (~1,110x) | 29.5 ms (~380x) | 73.2 ms (~150x) |
-| Color FP16 (`face.mp4`) | 11,194 ms | 7.8 ms (~1,440x) | 26.9 ms (~420x) | 71.1 ms (~160x) |
-| Motion FP32 (`baby.mp4`) | 44,190 ms | 90.4 ms (~490x) | 128.0 ms (~350x) | 203.5 ms (~220x) |
-| Motion FP16 (`baby.mp4`) | 44,190 ms | 75.1 ms (~590x) | 107.1 ms (~410x) | 179.5 ms (~250x) |
+| Color FP32 (`face.mp4`) | 11,194 ms | 9.7 ms (~1,150x) | 30.1 ms (~370x) | 76.2 ms (~150x) |
+| Color FP16 (`face.mp4`) | 11,194 ms | 7.6 ms (~1,470x) | 28.6 ms (~390x) | 75.3 ms (~150x) |
+| Motion FP32 (`baby.mp4`) | 44,190 ms | 75.4 ms (~590x) | 109.8 ms (~400x) | 187.8 ms (~235x) |
+| Motion FP16 (`baby.mp4`) | 44,190 ms | 60.4 ms (~730x) | 94.8 ms (~470x) | 175.8 ms (~250x) |
 
 - **① Compute only** is pure kernel time (data already on the GPU), e.g. as one
   stage inside a larger device-resident graph.
@@ -64,15 +64,20 @@ at three inclusion levels because they answer different questions:
 - **③ + H2D + D2H** is the full standalone "decode → magnify → encode" path,
   when you must materialize a viewable video on the host.
 
-For motion, the inference speedup (②, ~410x FP16) is within about 1.4x of the
-compute speedup (①, ~590x). The upload is a tax, but the GPU is still doing the
+For motion, the inference speedup (②, ~470x FP16) is within about 1.6x of the
+compute speedup (①, ~730x). The upload is a tax, but the GPU is still doing the
 work. For color, D2H alone is most of ③, so ② is the honest headline for any
 real invocation that keeps the result on device. Motion FP16 uses the same
 spatial templates as FP32 (dense half smem, float MAC); half storage, same
 algorithm.
 
-Color on `baby.mp4` (same clip as motion): FP32 15.8 / 48.6 / 121.0 ms and
-FP16 12.2 / 45.0 / 117.9 ms for ① / ② / ③.
+Color on `baby.mp4` (same clip as motion): FP32 15.3 / 51.0 / 130.2 ms and
+FP16 11.4 / 47.4 / 128.5 ms for ① / ② / ③.
+
+Compute (①) is stable across runs, within about 1% on a repeat measurement.
+H2D/D2H on this WSL2 host varies by up to 8% between sessions and is a few
+percent slower than the numbers recorded before the up_conv work, so ② and ③
+moved for reasons unrelated to any code change. Compare ① across versions.
 
 ### Throughput and real-time capacity
 
@@ -81,11 +86,11 @@ GPU), pixel rates scale from the measured clips as:
 
 | Pipeline (FP16) | Throughput (②) | ~ 1080p @ 30 fps |
 |-----------------|---------------:|-----------------:|
-| Color (face) | ~3.4 Gpx/s | ~55 streams |
-| Motion (baby) | ~1.4 Gpx/s | ~23 streams |
+| Color (face) | ~3.2 Gpx/s | ~51 streams |
+| Motion (baby) | ~1.6 Gpx/s | ~26 streams |
 
 The compute-only ceiling (①, data already on the GPU) is higher: about
-~12 Gpx/s color (~190 streams) or ~2.0 Gpx/s motion (~30 streams). The full
+~12 Gpx/s color (~190 streams) or ~2.5 Gpx/s motion (~40 streams). The full
 decode→magnify→encode path (③) drops further and is usually PCIe-bound on the
 download. 1080p@30 needs about 62.2 Mpx/s; stream counts are pixel-scaled
 capacity, not a measured multi-stream harness.
@@ -101,15 +106,19 @@ scratch, free-list pool, smem downsample) is in
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
-| RTX 3090 24GB | 90.4 / 75.1 ms | 10.1 / 7.8 ms |
-| A100 80GB | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
-| H100 80GB | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
-| P100 16GB |  | 31.6 / 27.1 ms |
+| RTX 3090 24GB | 75.4 / 60.4 ms | 9.7 / 7.6 ms |
+| A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
+| H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
+| P100 16GB † |  | 31.6 / 27.1 ms |
 
-Relative to 3090 motion FP16 compute, A100 is about 1.6x faster and H100 about
-2.2x. Color on A100 is roughly the same wall time as 3090; H100 is about 1.8x
-faster. P100 is color-only here (motion OOM'd in the multi-config harness).
-Raw JSON: `benches/bench_rtx3090.json`, `bench_a100.json`, `bench_h100.json`,
+† Measured before the up_conv work (smaller tiles, divide-free `reflect1`,
+even-tap loop) and not yet re-run. That change is worth about 1.2x on motion
+compute on the 3090 and is architecture-independent, so these three rows are
+pessimistic by roughly that much. Cross-GPU ratios below are left from the
+pre-change measurement and will shift once the others are re-run.
+
+P100 is color-only here (motion OOM'd in the multi-config harness). Raw JSON:
+`benches/bench_rtx3090.json`, `bench_a100.json`, `bench_h100.json`,
 `bench_p100.json`.
 
 ### Accuracy
