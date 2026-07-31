@@ -419,8 +419,9 @@ on.
 
 This level opens the kernels instead of the launch structure.
 
-This one landed. 3090 motion FP32 compute goes from 88.1 ms to 76.2 ms, with
-Stage B down 17% and Stage D1 down 22%.
+This one landed. On the 3090 it takes motion FP32 compute from 90.4 ms to
+75.4 ms and FP16 from 75.1 ms to 60.4 ms, with Stage B down about 18% and
+Stage D1 down about 22%.
 
 ### Where the clock actually is
 
@@ -587,11 +588,11 @@ obvious first thing to try.
 ### The production change
 
 The first attempt added a second helper, `reflect1_fast`, and pointed the two
-up_conv kernels at it. That left the codebase with two reflects, a decision at
-every call site, and a note in DESIGN.md explaining why `corr_dn` kept the slow
-one. Simpler to make `reflect1` itself skip the divide, since the modulo is
-only needed for inputs more than one period out and no spatial caller produces
-those:
+up_conv kernels at it. That left two reflects in the tree and a decision at
+every call site, plus a note in DESIGN.md explaining why `corr_dn` kept the
+slow one. It was simpler to make `reflect1` itself skip the divide, since the
+modulo is only needed for inputs more than one period out and no spatial caller
+produces those:
 
 ```cpp
 __device__ __forceinline__ int reflect1(int i, int n) {
@@ -604,8 +605,8 @@ __device__ __forceinline__ int reflect1(int i, int n) {
 }
 ```
 
-One function, no call sites changed, and all 23 of them get the faster path
-including `corr_dn`. An exhaustive host check over 8.86 million `(i, n)` pairs
+That leaves one function and no call site edits, so all 23 of them get the
+faster path including `corr_dn`. An exhaustive host check over 8.86 million `(i, n)` pairs
 covering `n` up to 2100 confirms it returns exactly what the modulo version
 returned, and that reflection preserves parity, which is what the tap loop
 below relies on.
@@ -654,8 +655,10 @@ Full motion pipeline, A100, before and after in the same job on the same node:
 The untouched kernels stayed within 0.1%. That is the control: the difference
 comes from the patch and not from the state of the node.
 
-On the 3090, the same comparison run through the pipeline's own stage timers,
-with both builds compiled by the same toolchain:
+On the 3090, the same comparison run back to back with both builds compiled by
+the same toolchain. This one uses a per-stage wall-clock timer rather than
+`evm_cuda.benchmark`, so its absolutes sit about 1% above the production table
+further down. The before/after ratio is the point here:
 
 | Stage | Before | After | Change |
 |---|---:|---:|---:|
