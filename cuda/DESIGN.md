@@ -138,8 +138,22 @@ used to accumulate every footprint. `benchmark.run` now calls
 paths. Two things came out of that: configs that used to die with a real
 `cudaMalloc` failure now run, and the timings stopped being distorted. With the
 3090 down to 0.03 GB free, the last config measured 302 ms of compute against
-~59 ms on a clean card. The multi-config harness now agrees with the
-fresh-process-per-config numbers in `benches/` to within 3%.
+~59 ms on a clean card.
+
+The multi-config harness now reproduces the fresh-process numbers in
+`benches/bench_rtx3090.json`. Median of three in-process runs, 2026-08-02,
+against the stored record:
+
+| Config | Stored (fresh process) | In-process, remeasured | Delta |
+|---|---:|---:|---:|
+| motion FP32 | 75.36 ms | 74.89 ms | -0.6% |
+| motion FP16 | 60.39 ms | 58.95 ms | -2.4% |
+| color face FP32 | 9.74 ms | 9.54 ms | -2.1% |
+
+The stored numbers stand; this is a confirmation, not a remeasure to publish.
+Color face FP16 is left out on purpose: on this host it is bimodal, three
+standalone repeats gave 7.33 / 11.82 / 11.70 ms against a stored 7.63 ms, so a
+single sample proves nothing. Anything measured here needs several repeats.
 
 ## Precision rationale
 

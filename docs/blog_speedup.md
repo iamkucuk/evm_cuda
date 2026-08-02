@@ -394,8 +394,14 @@ motion FP16 then measured **302 ms** of compute instead of ~59 ms: lpyr_build
 cause is the driver placing allocations in host memory once the card is full.
 The published multi-GPU numbers were never affected, because they were taken
 with a fresh process per config; the point is that the in-process harness
-disagreed with that method by 5x on the last config it ran, and now agrees
-with it to within 3%.
+disagreed with that method by 5x on the last config it ran, and now reproduces
+it. Median of three in-process runs on 2026-08-02 against the stored
+`benches/bench_rtx3090.json`: motion FP32 74.89 vs 75.36 ms (-0.6%), motion
+FP16 58.95 vs 60.39 ms (-2.4%), color face FP32 9.54 vs 9.74 ms (-2.1%). Small
+and all in one direction, but nothing in the compute path changed, so read it
+as agreement rather than a speedup. Color face FP16 is excluded because it is
+bimodal on that host: three standalone repeats gave 7.33 / 11.82 / 11.70 ms
+against a stored 7.63 ms, and picking one sample would decide the answer.
 
 ## Throughput and theoretical limits
 
