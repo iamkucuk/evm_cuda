@@ -546,16 +546,23 @@ the mid-pipeline arc is in
 </tr>
 <tr>
     <td>P100 16GB</td>
-    <td></td>
-    <td>31.6 / 27.1&nbsp;ms</td>
+    <td>OOM / 139.7&nbsp;ms</td>
+    <td>26.3 / 21.8&nbsp;ms</td>
+</tr>
+<tr>
+    <td>T4 16GB</td>
+    <td>OOM / 228.8&nbsp;ms</td>
+    <td>48.9 / 39.7&nbsp;ms</td>
 </tr>
 </table>
 <p>
 Relative to 3090 motion FP16 compute, A100 is about 1.6x faster and H100 about
 2.2x. Color on A100 is roughly the same wall time as 3090; H100 is about 1.8x
-faster. P100 is color-only here (motion OOM'd in the multi-config harness).
+faster. On the two 16&nbsp;GB cards, motion FP32 needs 16.3&nbsp;GB and does not
+fit; motion FP16 peaks at 8.4&nbsp;GB and runs on both.
 Raw JSON: <code>benches/bench_rtx3090.json</code>, <code>bench_a100.json</code>,
-<code>bench_h100.json</code>, <code>bench_p100.json</code>.
+<code>bench_h100.json</code>, <code>bench_p100.json</code>. The T4 row is a
+single run of the Colab notebook on shared hardware, with no stored JSON.
 </p>
 
 <h3 class="section-title" style="font-size:1.25em;border-bottom:1px solid #e1e4e8;">Accuracy</h3>
