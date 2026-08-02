@@ -100,8 +100,9 @@ same code as FP32, not a forked algorithm.
 
 **Motion FP16:** NTSC, planar, bands, filtered bands, and delta are `__half`
 end-to-end (no full float band stack). Stage A is fused `u8→YIQ→half`. Peak
-VRAM for baby.mp4-class clips is ~12 GB (vs ~23 GB FP32). IIR state stays
-FP64. Fresh remeasure (1 warmup + median of 7):
+VRAM on baby.mp4 (301 frames, 544x960) measures 8.4 GB, against 16.3 GB for
+FP32, so FP16 motion fits a 16 GB card and FP32 motion does not. IIR state
+stays FP64. Fresh remeasure (1 warmup + median of 7):
 
 | GPU | Motion FP32 | Motion FP16 | ratio |
 |---|---:|---:|---:|

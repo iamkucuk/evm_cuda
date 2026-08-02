@@ -22,8 +22,8 @@ import sys
 from pathlib import Path
 
 REPO_URL = "https://github.com/iamkucuk/eulerian-video-magnification-cuda.git"
-# Measure the production path that owns the half-smem / true half-band work.
-BRANCH = "feature/true-fp16-motion"
+# Measure main: the half-smem / true half-band work has landed there.
+BRANCH = "main"
 REPO_DIR = Path("evm_cuda")
 N_ITER = 7
 

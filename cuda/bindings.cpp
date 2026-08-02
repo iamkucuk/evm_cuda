@@ -294,6 +294,17 @@ struct StickyScratch {
         capacity = nbytes;
         return ptr;
     }
+    // Hand the buffer back to the driver and reset to empty. Only safe once
+    // outstanding kernels have finished; callers sync first. Returns bytes freed.
+    size_t release() {
+        if (!ptr) return 0;
+        void* p = ptr;
+        size_t freed = capacity;
+        ptr = nullptr;          // clear before the free so a throw below cannot
+        capacity = 0;           // leave a dangling pointer behind
+        CUDA_CHECK(cudaFree(p));
+        return freed;
+    }
 };
 StickyScratch g_scratch_f32;
 StickyScratch g_scratch_f16;
@@ -360,6 +371,26 @@ struct DeviceMemPool {
     void release(void* p, size_t n) {
         if (!p || n == 0) return;
         free_by_size[n].push_back(p);
+    }
+    // Give every cached block back to the driver. Only blocks that were already
+    // released sit in free_by_size, so a live DeviceBuffer is never touched.
+    // Reuse here is by exact size, so a process running several differently
+    // sized configs keeps the peak of all of them unless this is called between
+    // them. Callers sync first. Returns bytes freed.
+    size_t release_all() {
+        size_t freed = 0;
+        for (auto& kv : free_by_size) {
+            auto& bin = kv.second;
+            while (!bin.empty()) {
+                void* p = bin.back();
+                bin.pop_back();     // drop first: a throw below can never leave
+                if (!p) continue;   // an already-freed pointer in the list
+                CUDA_CHECK(cudaFree(p));
+                freed += kv.first;
+            }
+        }
+        free_by_size.clear();
+        return freed;
     }
 };
 DeviceMemPool g_device_pool;
@@ -1819,6 +1850,21 @@ PYBIND11_MODULE(_evm_cuda, m) {
         CUDA_CHECK(cudaMalloc(&p, nbytes));
         CUDA_CHECK(cudaFree(p));
     }, py::arg("nbytes"));
+
+    // Hand every cached device block (pool + both sticky scratch buffers) back
+    // to the driver, and report how many bytes that freed. Both caches are
+    // grow-only within a run and the pool reuses a block only on an exact
+    // byte-size match, so a process that runs several configs of different
+    // sizes accumulates all of their footprints; a later config then hits a
+    // real cudaMalloc failure even though it would fit on its own. Call this
+    // between configs, never while a DeviceBuffer is still alive.
+    m.def("free_device_pool", []() {
+        CUDA_CHECK(cudaDeviceSynchronize());
+        size_t freed = g_device_pool.release_all();
+        freed += g_scratch_f32.release();
+        freed += g_scratch_f16.release();
+        return freed;
+    });
 
     // Block the host until all outstanding async work on the default stream
     // completes. The batched_* wrappers are all fire-and-forget (they return

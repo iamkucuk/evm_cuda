@@ -375,10 +375,14 @@ delta), so FP16 halves the traffic completely (24 to 12 bytes).
 Precision: RMSE between FP32 and FP16 output is 0.0016 for motion, which
 is 6.2x under the 0.01 end-to-end tolerance. The maximum per-pixel error
 is 3/255 (3 uint8 quantization steps). For color FP16, the uint8 output
-differs from FP32 by at most 2 LSB per channel. Standalone motion FP16 peaks about 8 to 9 GB on baby.mp4 (measured on
-RTX 3090). Rough “half of FP32 (~23 GB) ⇒ ~12 GB” is only a ballpark.
-Whole-clip motion can still OOM on 16 GB if the process is warm (pool/
-sticky residual after other configs); a clean FP16-only process may fit.
+differs from FP32 by at most 2 LSB per channel. Motion FP16 peaks at 8.4 GB
+on baby.mp4 and motion FP32 at 16.3 GB (measured on RTX 3090, 301 frames at
+544x960), so FP16 fits a 16 GB card and FP32 does not. Those peaks used to be
+misleading in a warm process: the device pool reuses a block only on an exact
+byte-size match and held everything until process exit, so running several
+differently sized configs in one process accumulated all of their footprints
+and a later config failed even when it fit on its own. `benchmark.run` now
+returns the pool's blocks after every config, so each one starts clean.
 
 ## Throughput and theoretical limits
 

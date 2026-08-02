@@ -81,6 +81,18 @@ def _sync() -> None:
     _evm_cuda.device_synchronize()
 
 
+def _release_pool() -> int:
+    """Give the device pool's cached blocks back to the driver; return bytes freed.
+
+    The pool holds released blocks until the process exits and reuses one only
+    on an exact byte-size match, so running several configs of different sizes
+    in one process keeps every config's footprint. Only call this once the
+    pipeline's DeviceBuffers are gone, which is why ``run`` does it after
+    ``gc.collect()`` and a device sync.
+    """
+    return _evm_cuda.free_device_pool()
+
+
 def _median(xs: list[float]) -> float:
     s = sorted(xs)
     n = len(s)
@@ -169,7 +181,14 @@ class _StageRecorder:
 # ---------------------------------------------------------------------------
 
 def _estimated_peak_vram(pipeline: str, precision: str, n: int, h: int, w: int) -> int:
-    """A conservative byte estimate of peak VRAM for one config."""
+    """A rough byte estimate of peak VRAM for one config.
+
+    Counts only buffers that are alive at the same moment, so it reads well
+    below what the process actually holds: the pool also keeps released blocks
+    of every other size it has seen, plus sticky scratch and the CUDA context.
+    Motion FP16 on baby.mp4 estimates 2.7 GB against a measured 8.4 GB peak.
+    Fine for pre-skipping hopeless configs, not a capacity check.
+    """
     per = 2 if precision == "fp16" else 4
     if pipeline == "color":
         level = 4
@@ -260,17 +279,19 @@ def run(
         for _ in range(n_iter - 1):             # remaining timed iters (no write)
             _one_call(recorder, write=False)
     except MemoryError as e:                    # GPU/CPU OOM — report, don't crash
-        gc.collect(); _sync()
         result.notes = f"skipped (out of memory: {e})"
         return result
     except RuntimeError as e:                    # CUDA runtime errors (incl. OOM)
         if "out of memory" in str(e).lower():
-            gc.collect(); _sync()
             result.notes = f"skipped (out of memory)"
             return result
         raise                                    # genuine CUDA errors must surface
-
-    gc.collect(); _sync()
+    finally:
+        # Every exit path, the OOM ones included, hands the cached blocks back.
+        # A config that dies partway still allocated buffers first, and leaving
+        # those reserved is exactly what makes the *next* config fail.
+        gc.collect(); _sync()
+        _release_pool()
 
     # Collapse per-stage lists into median/min/max.
     names = list(recorder.stages.keys())
