@@ -131,6 +131,16 @@ Source: `benches/bench_rtx3090.json`, `benches/bench_a100.json`,
 P100 motion FP16 now measures **139.7 ms** compute in the multi-config
 harness; motion FP32 needs 16.3 GB and still does not fit a 16 GB card.
 
+The device pool holds released blocks until process exit and reuses one only on
+an exact byte-size match, so several differently sized configs in one process
+used to accumulate every footprint. `benchmark.run` now calls
+`_evm_cuda.free_device_pool()` from a `finally`, which also covers the OOM
+paths. Two things came out of that: configs that used to die with a real
+`cudaMalloc` failure now run, and the timings stopped being distorted. With the
+3090 down to 0.03 GB free, the last config measured 302 ms of compute against
+~59 ms on a clean card. The multi-config harness now agrees with the
+fresh-process-per-config numbers in `benches/` to within 3%.
+
 ## Precision rationale
 
 The Python baseline uses FP64 in `pyramids.py` and `filters.py` (its

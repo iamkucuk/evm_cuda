@@ -105,6 +105,7 @@ scratch, free-list pool, smem downsample) is in
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
 | P100 16GB | OOM / 139.7 ms | 26.3 / 21.8 ms |
+| T4 16GB ‡ | OOM / 228.8 ms | 48.9 / 39.7 ms |
 
 † Measured before the up_conv work (smaller tiles, divide-free `reflect1`,
 even-tap loop) and not yet re-run. That change is worth about 1.2x on motion
@@ -112,9 +113,14 @@ compute on the 3090 and nothing about it is architecture specific, so those
 two rows are pessimistic by roughly that much. Cross-GPU ratios below are
 left from the pre-change measurement and will shift once the others are re-run.
 
-P100 was re-measured on main. Motion FP32 needs 16.3 GB and does not fit a
-16 GB card. Motion FP16 peaks at 8.4 GB and now runs; it used to fail here
-only because the device pool held on to every earlier config's memory. Raw JSON:
+‡ One run of `colab/evm_cuda_benchmark.ipynb` on Colab's shared hardware, with
+no stored JSON. Indicative only: repeated runs on that class of machine moved
+by tens of percent.
+
+P100 and T4 were measured on main. Motion FP32 needs 16.3 GB and does not fit a
+16 GB card. Motion FP16 peaks at 8.4 GB and now runs on both; it used to fail
+there only because the device pool held on to every earlier config's memory.
+Raw JSON:
 `benches/bench_rtx3090.json`, `bench_a100.json`, `bench_h100.json`,
 `bench_p100.json`.
 

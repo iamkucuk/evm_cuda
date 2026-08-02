@@ -348,8 +348,10 @@ before the temporal filter).
 templates). Current P100 **color** is **26.3 / 21.8 ms** compute and current
 P100 **motion FP16** is **139.7 ms** (`benches/bench_p100.json`, remeasured on
 main); P100 **motion FP32** needs 16.3 GB and does not fit 16 GB.
-‡ H100 compute totals are the **current** remeasure
-(`benches/bench_h100.json`); per-stage H100 detail is in that JSON.
+‡ H100 compute totals postdate the true half-band + dense smem templates
+(`benches/bench_h100.json`, per-stage detail in that JSON) but predate the
+up_conv work, so like A100 they read a little pessimistic. Only the 3090 and
+P100 records were taken after up_conv.
 
 ¹ A100/P100 historical render figures are from the pre-transfer-separation
 profiler (which bundled the D2H download into "render").
@@ -385,6 +387,16 @@ differently sized configs in one process accumulated all of their footprints
 and a later config failed even when it fit on its own. `benchmark.run` now
 returns the pool's blocks after every config, so each one starts clean.
 
+That residual also corrupted timings, not just capacity. Running all four
+configs in one process on the 3090 left 0.03 GB free by the last one, and
+motion FP16 then measured **302 ms** of compute instead of ~59 ms: lpyr_build
+167 ms instead of 19, IIR 97 instead of 21, recon 29 instead of 14. The likely
+cause is the driver placing allocations in host memory once the card is full.
+The published multi-GPU numbers were never affected, because they were taken
+with a fresh process per config; the point is that the in-process harness
+disagreed with that method by 5x on the last config it ran, and now agrees
+with it to within 3%.
+
 ## Throughput and theoretical limits
 
 ### Speedup vs CPU: three scenarios (H100-80GB, current production)
@@ -419,13 +431,16 @@ adds a smaller FP16 edge (H100 motion 0.96×, color 0.90×).
 
 | GPU | BW | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |-----|-----|-----------|-----------|------------|------------|
+| **T4** (16GB, sm_75) | 320 GB/s | **48.9 ms** | **39.7 ms** | does not fit* | **228.8 ms** |
 | **P100** (16GB, sm_60) | 732 GB/s | **26.3 ms** | **21.8 ms** | does not fit* | **139.7 ms** |
 | **RTX 3090** (24GB, sm_86) | ~936 GB/s | **10.1 ms** | **7.8 ms** | **90.4 ms** | **75.1 ms** |
 | **A100** (80GB, sm_80) | 1,935 GB/s | **8.8 ms** | **8.2 ms** | **54.4 ms** | **48.2 ms** |
 | **H100** (80GB, sm_90) | 3,350 GB/s | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
 
 Sources: `benches/bench_p100.json`, `bench_rtx3090.json`,
-`bench_a100.json`, `bench_h100.json` (1 warmup + median of 7).
+`bench_a100.json`, `bench_h100.json` (1 warmup + median of 7). The T4 row is a
+single run of `colab/evm_cuda_benchmark.ipynb` on Colab's shared hardware, with
+no stored JSON; treat it as indicative, not as a careful measurement.
 Motion FP16 peaks at 8.4 GB and fits 16 GB; *motion FP32 peaks at 16.3 GB and
 does not. P100 motion FP16 used to fail here as well, from pool residual left
 by earlier configs in the same process; `benchmark.run` now releases between
@@ -458,10 +473,12 @@ The compute-only ceiling (①, data already on the GPU) is higher:
 | Color face | A100 | 8.2 ms | ~11 | ~180 |
 | Color face | H100 | 4.4 ms | ~21 | ~330 |
 | Color face | P100 | 21.8 ms | ~4.3 | ~60 |
+| Color face | T4 | 39.7 ms | ~2.3 | ~30 |
 | Motion baby | RTX 3090 | 75.1 ms | ~2.0 | ~30 |
 | Motion baby | A100 | 48.2 ms | ~3.2 | ~50 |
 | Motion baby | H100 | 34.5 ms | ~4.4 | ~70 |
 | Motion baby | P100 | 139.7 ms | ~1.1 | ~18 |
+| Motion baby | T4 | 228.8 ms | ~0.69 | ~11 |
 
 The full path (③) drops further and is usually PCIe-bound on the download.
 Do not read ① stream counts as file-to-file real-time capacity.
