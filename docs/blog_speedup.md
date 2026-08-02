@@ -345,8 +345,9 @@ before the temporal filter).
 | **compute total** | **~205 ms** | **~172 ms** | **1,143 ms** | **676 ms** | **35.8 ms** | **34.5 ms** |
 
 † A100/P100 stage breakdown is **historical** (pre true half-band + dense smem
-templates). Current P100 **color** is **31.6 / 27.1 ms** compute
-(`benches/bench_p100.json`); current P100 **motion** OOMs on 16 GB.
+templates). Current P100 **color** is **26.3 / 21.8 ms** compute and current
+P100 **motion FP16** is **139.7 ms** (`benches/bench_p100.json`, remeasured on
+main); P100 **motion FP32** needs 16.3 GB and does not fit 16 GB.
 ‡ H100 compute totals are the **current** remeasure
 (`benches/bench_h100.json`); per-stage H100 detail is in that JSON.
 
@@ -418,19 +419,21 @@ adds a smaller FP16 edge (H100 motion 0.96×, color 0.90×).
 
 | GPU | BW | Color FP32 | Color FP16 | Motion FP32 | Motion FP16 |
 |-----|-----|-----------|-----------|------------|------------|
-| **P100** (16GB, sm_60) | 732 GB/s | **31.6 ms** | **27.1 ms** | OOM in matrix* | OOM in matrix* |
+| **P100** (16GB, sm_60) | 732 GB/s | **26.3 ms** | **21.8 ms** | does not fit* | **139.7 ms** |
 | **RTX 3090** (24GB, sm_86) | ~936 GB/s | **10.1 ms** | **7.8 ms** | **90.4 ms** | **75.1 ms** |
 | **A100** (80GB, sm_80) | 1,935 GB/s | **8.8 ms** | **8.2 ms** | **54.4 ms** | **48.2 ms** |
 | **H100** (80GB, sm_90) | 3,350 GB/s | **4.9 ms** | **4.4 ms** | **35.8 ms** | **34.5 ms** |
 
 Sources: `benches/bench_p100.json`, `bench_rtx3090.json`,
 `bench_a100.json`, `bench_h100.json` (1 warmup + median of 7).
-Standalone motion FP16 peaks ~8 to 9 GB; *P100 motion OOM was multi-config pool
-residual. Prefer ≥24 GB for comfortable whole-clip motion.
+Motion FP16 peaks at 8.4 GB and fits 16 GB; *motion FP32 peaks at 16.3 GB and
+does not. P100 motion FP16 used to fail here as well, from pool residual left
+by earlier configs in the same process; `benchmark.run` now releases between
+configs. Prefer ≥24 GB for whole-clip motion in FP32.
 
 **vs older multi-GPU rows (same table, pre-remeasure):** A100 motion ~209 →
-**54 ms** (~3.8×), color ~72 → **8.8 ms** (~8×); P100 color ~138 → **31.6 ms**
-(~4.4×). Those old rows predated the mid-pipeline series **and** true half-band;
+**54 ms** (~3.8×), color ~72 → **8.8 ms** (~8×); P100 color ~138 → **26.3 ms**
+(~5.2×). Those old rows predated the mid-pipeline series **and** true half-band;
 again, do not attribute the whole jump to FP16 density alone.
 
 ### Measured throughput (current production)
@@ -454,10 +457,11 @@ The compute-only ceiling (①, data already on the GPU) is higher:
 | Color face | RTX 3090 | 7.8 ms | ~12 | ~190 |
 | Color face | A100 | 8.2 ms | ~11 | ~180 |
 | Color face | H100 | 4.4 ms | ~21 | ~330 |
-| Color face | P100 | 27.1 ms | ~3.4 | ~50 |
+| Color face | P100 | 21.8 ms | ~4.3 | ~60 |
 | Motion baby | RTX 3090 | 75.1 ms | ~2.0 | ~30 |
 | Motion baby | A100 | 48.2 ms | ~3.2 | ~50 |
 | Motion baby | H100 | 34.5 ms | ~4.4 | ~70 |
+| Motion baby | P100 | 139.7 ms | ~1.1 | ~18 |
 
 The full path (③) drops further and is usually PCIe-bound on the download.
 Do not read ① stream counts as file-to-file real-time capacity.

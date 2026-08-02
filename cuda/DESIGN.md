@@ -119,7 +119,7 @@ remeasure:
 
 | GPU / clip | Color FP32 | Color FP16 | ratio |
 |---|---:|---:|---:|
-| P100 / face | **31.6 ms** | **27.1 ms** | **0.86×** |
+| P100 / face | **26.3 ms** | **21.8 ms** | **0.83×** |
 | 3090 / face | **10.1 ms** | **7.8 ms** | **0.77×** |
 | A100 / face | **8.8 ms** | **8.2 ms** | **0.93×** |
 | H100 / face | **4.9 ms** | **4.4 ms** | **0.90×** |
@@ -128,7 +128,8 @@ remeasure:
 Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
 Source: `benches/bench_rtx3090.json`, `benches/bench_a100.json`,
 `benches/bench_h100.json`, `benches/bench_p100.json`.
-P100 motion OOM in multi-config harness (standalone FP16 peak ~8–9 GB).
+P100 motion FP16 now measures **139.7 ms** compute in the multi-config
+harness; motion FP32 needs 16.3 GB and still does not fit a 16 GB card.
 
 ## Precision rationale
 

@@ -104,15 +104,17 @@ scratch, free-list pool, smem downsample) is in
 | RTX 3090 24GB | 75.4 / 60.4 ms | 9.7 / 7.6 ms |
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
-| P100 16GB † |  | 31.6 / 27.1 ms |
+| P100 16GB | OOM / 139.7 ms | 26.3 / 21.8 ms |
 
 † Measured before the up_conv work (smaller tiles, divide-free `reflect1`,
 even-tap loop) and not yet re-run. That change is worth about 1.2x on motion
-compute on the 3090 and nothing about it is architecture specific, so these
-three rows are pessimistic by roughly that much. Cross-GPU ratios below are
+compute on the 3090 and nothing about it is architecture specific, so those
+two rows are pessimistic by roughly that much. Cross-GPU ratios below are
 left from the pre-change measurement and will shift once the others are re-run.
 
-P100 is color-only here (motion OOM'd in the multi-config harness). Raw JSON:
+P100 was re-measured on main. Motion FP32 needs 16.3 GB and does not fit a
+16 GB card. Motion FP16 peaks at 8.4 GB and now runs; it used to fail here
+only because the device pool held on to every earlier config's memory. Raw JSON:
 `benches/bench_rtx3090.json`, `bench_a100.json`, `bench_h100.json`,
 `bench_p100.json`.
 
