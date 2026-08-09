@@ -2,7 +2,17 @@
 > every implementing session can find the step it is executing.**
 >
 > - Branch: `library-restructure`.
-> - Status: **Phase 0 in progress as of 2026-08-09.**
+> - Status as of 2026-08-10: **phases 0 through 9 are done**, with the
+>   exceptions recorded below. Phase 8 (visibility) is prepared but consists
+>   almost entirely of actions only the project owner can take; see
+>   `docs/dev/release-checklist.md`.
+> - Departures from this plan, each recorded where it happened: the portable
+>   backend was built with OpenCL rather than Halide, after testing rather than
+>   from the recollection the plan rested on (phase 4V); Vulkan and Metal were
+>   not implemented, because every device targeted is already reachable through
+>   an OpenCL driver; and the phase-based method (phase 9) is checked against
+>   constructed motion rather than the authors' published output, which is not
+>   among the files this project can fetch.
 > - Section 3d (execution methodology) is binding and is enforced through
 >   `CLAUDE.md` and `.claude/rules/development-practices.md`, which sessions load
 >   automatically. This file is the reference for *what* to build; those two are the
