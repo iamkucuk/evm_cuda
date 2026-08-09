@@ -1,0 +1,26 @@
+Test suite on the GPU development server, 2026-08-09
+====================================================
+
+Host:   osiris (Windows desktop DESKTOP-4LO089U, WSL2 "Pengwin"), NVIDIA GeForce RTX 3090
+Build:  conda env evm-cuda (nvcc 12.9, cmake 4.4.2, ninja, g++), built with
+        -DCMAKE_CUDA_ARCHITECTURES=86  (the explicit flag is REQUIRED; see
+        docs/dev/packaging-notes.md for the CMakeLists defect that makes it so)
+Command: PYTHONPATH=<repo>/cuda python -m pytest tests/ -q -p no:randomly
+
+RUN 1 - 102 passed in 161.77s
+    NOT a clean pre-change baseline. The working copy was synced to this machine while
+    Phase 0 agents were still writing files, so it already contained
+    tests/test_reference_lock.py (7 cases) but not yet tests/test_golden.py.
+    Composition: 95 original cases + 7 = 102. Recorded here for honesty, not as a baseline.
+
+RUN 2 - 111 passed, 0 skipped in 169.43s
+    The real post-Phase-0 state: 95 original + 7 reference-lock + 9 golden = 111.
+    Zero skips, because the compiled CUDA module is importable on this host.
+
+For comparison, the same commit on macOS (no CUDA toolchain):
+    48 passed, 63 skipped - the 63 skips are the entire tests/cuda/ suite.
+    See benches/baseline_tests_2026-08-09_macos.txt.
+
+The original 95-case suite (before Phase 0 added any test) was never captured on this
+machine with zero skips; the macOS file is the authoritative record of the pre-change
+count, at 32 passed + 63 skipped.

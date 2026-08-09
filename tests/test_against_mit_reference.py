@@ -1,8 +1,8 @@
 """Slow integration tests comparing against MIT's own rendered outputs.
 
 Skipped unless ``data/face.mp4`` / ``data/baby.mp4`` and the MIT reference
-result videos are present (downloaded via ``scripts/download_samples.py`` and
-``scripts/download_mit_outputs.py``).
+result videos are present; fetch all four with
+``python scripts/download_samples.py face baby --with-references``.
 
 These are the ultimate correctness check for the port: they reproduce the
 exact calls in ``reproduceResults.m`` and assert that the per-pixel RMSE
