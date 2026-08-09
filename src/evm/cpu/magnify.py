@@ -578,3 +578,71 @@ def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
     # browser/VSCode-playable video.
     from ..io.video import encode_video
     encode_video(frames_uint8, out_path, fps)
+
+
+# ---------------------------------------------------------------------------
+# Phase-based magnification (the 2013 follow-up method)
+# ---------------------------------------------------------------------------
+#
+# Named to match the other four so the facade and the registry find it the same
+# way: `phase_core` takes frames, `magnify_phase` takes a path. The work itself
+# is in evm.cpu.phase_magnify, which is a different enough algorithm to deserve
+# its own module.
+
+
+def phase_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
+    *,
+    alpha: float,
+    fl: float | None = None,
+    fh: float | None = None,
+    r1: float | None = None,
+    r2: float | None = None,
+    scales: int = 3,
+    orientations: int = 4,
+    sigma: float = 0.0,
+    sampling_rate: float | None = None,
+) -> np.ndarray:
+    """Amplify motion by changing phase. Array in, array out.
+
+    See :func:`evm.cpu.phase_magnify.phase_magnify` for what the parameters do
+    and how this differs from the pyramid-based motion pipelines.
+    """
+    from .phase_magnify import phase_magnify
+
+    rate = fps if sampling_rate is None else sampling_rate
+    return phase_magnify(
+        _as_frames(frames_bgr_u8), rate, alpha=alpha, fl=fl, fh=fh,
+        r1=r1, r2=r2, scales=scales, orientations=orientations, sigma=sigma,
+    )
+
+
+def magnify_phase(
+    vid_path: str | Path,
+    out_path: str | Path,
+    *,
+    alpha: float,
+    fl: float | None = None,
+    fh: float | None = None,
+    r1: float | None = None,
+    r2: float | None = None,
+    scales: int = 3,
+    orientations: int = 4,
+    sigma: float = 0.0,
+    sampling_rate: float | None = None,
+) -> np.ndarray:
+    """Phase-based motion magnification, from a file to a file.
+
+    Drops the last ten frames, as the other path functions do, so that a clip
+    run through this and through them is the same length.
+    """
+    frames, fps = _read_frames(vid_path)
+    stack = np.stack(frames, axis=0)
+    out = phase_core(
+        stack, fps, alpha=alpha, fl=fl, fh=fh, r1=r1, r2=r2,
+        scales=scales, orientations=orientations, sigma=sigma,
+        sampling_rate=sampling_rate,
+    )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0

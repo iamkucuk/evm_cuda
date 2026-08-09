@@ -94,6 +94,37 @@ PRESETS: Mapping[str, Preset] = MappingProxyType(
                 "render baby-iir-r1-0.4-r2-0.05-alpha-10-lambda_c-16-chromAtn-0.1.mp4."
             ),
         ),
+        "motion_phase": Preset(
+            pipeline="phase",
+            params=MappingProxyType(
+                {
+                    "alpha": 15.0,
+                    "fl": 0.5,
+                    "fh": 1.5,
+                    "scales": 3,
+                    "orientations": 4,
+                    "sigma": 0.0,
+                }
+            ),
+            description=(
+                "The same sub-pixel motion as 'motion', but amplified by "
+                "changing phase rather than by scaling image detail. Slower, "
+                "and it holds together at amplifications where the other "
+                "method tears into ripples at edges. Use it when 'motion' "
+                "produces artefacts before it produces a visible movement."
+            ),
+            source=(
+                "Wadhwa, Rubinstein, Durand and Freeman, 'Phase-Based Video "
+                "Motion Processing', SIGGRAPH 2013. The parameters here are a "
+                "starting point rather than a reproduction of a published "
+                "call: unlike the other presets, this one is NOT checked "
+                "against the authors' own rendered output, because that output "
+                "is not among the files this project can fetch. What is "
+                "checked, in tests/test_phase_based.py, is that a clip built "
+                "with a known sub-pixel movement comes out moved by the "
+                "predicted amount."
+            ),
+        ),
         "vibration": Preset(
             pipeline="motion_lpyr_ideal",
             params=MappingProxyType(

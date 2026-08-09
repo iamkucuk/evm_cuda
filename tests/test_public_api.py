@@ -28,6 +28,9 @@ EXPECTED_ROOT = {
     # a file path and write a file.
     "magnify_color_gdown_ideal", "magnify_motion_lpyr_ideal",
     "magnify_motion_lpyr_butter", "magnify_motion_lpyr_iir",
+    # The 2013 phase-based method, which amplifies motion by changing phase
+    # rather than by scaling image detail.
+    "magnify_phase",
     # Video reading and writing.
     "load_video", "save_video", "VideoInfo", "rgb_to_yiq", "yiq_to_rgb",
     # Spatial building blocks.

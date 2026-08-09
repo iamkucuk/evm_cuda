@@ -64,6 +64,7 @@ from .cpu import (
     magnify_motion_lpyr_ideal,
     magnify_motion_lpyr_butter,
     magnify_motion_lpyr_iir,
+    magnify_phase,
     DROP_LAST,
     EXAGGERATION_FACTOR,
 )
@@ -124,6 +125,7 @@ __all__ = [
     "magnify_motion_lpyr_ideal",
     "magnify_motion_lpyr_butter",
     "magnify_motion_lpyr_iir",
+    "magnify_phase",
     "DROP_LAST",
     "EXAGGERATION_FACTOR",
 ]

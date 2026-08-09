@@ -172,7 +172,13 @@ def test_every_preset_runs_and_moves_the_picture(preset_name, retained, no_video
     more than rounding.
     """
     spec = PRESETS[preset_name]
-    out = evm.magnify(retained, preset=preset_name, fps=in_band_fps(spec, retained))
+    # On the CPU backend deliberately. Not every pipeline exists on every
+    # backend — the phase-based one is currently CPU only — and the point of
+    # this test is that each preset's numbers do something, not which hardware
+    # ran them. Automatic selection would make it a different test on every
+    # machine.
+    out = evm.magnify(retained, preset=preset_name, backend="cpu",
+                      fps=in_band_fps(spec, retained))
 
     assert out.shape == retained.shape and out.dtype == np.uint8
     moved = float(np.abs(out.astype(np.int16) - retained.astype(np.int16)).mean())

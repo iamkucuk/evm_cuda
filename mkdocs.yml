@@ -87,6 +87,7 @@ nav:
       - How it works: concepts/how-it-works.md
       - Choosing parameters: concepts/parameters.md
       - What can go wrong: concepts/pitfalls.md
+      - Phase-based magnification: concepts/phase-based.md
       - Backends and hardware: concepts/backends.md
   - Reference:
       - Entry point: reference/api.md

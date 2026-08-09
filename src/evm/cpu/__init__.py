@@ -41,6 +41,7 @@ from .magnify import (
     magnify_motion_lpyr_butter,
     magnify_motion_lpyr_ideal,
     magnify_motion_lpyr_iir,
+    magnify_phase,
 )
 
 __all__ = [
@@ -65,4 +66,5 @@ __all__ = [
     "magnify_motion_lpyr_butter",
     "magnify_motion_lpyr_ideal",
     "magnify_motion_lpyr_iir",
+    "magnify_phase",
 ]
