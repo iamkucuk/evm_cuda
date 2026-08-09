@@ -318,7 +318,30 @@ Correctness risk concentrates here: today `batched_*` takes bare `uintptr_t` wit
 - CI runs the torch-CPU parity suite green on every commit.
 - `docs/backends.md` published with honest verified/unverified labels.
 
-## Phase 4V — Native portable kernel backend (OpenCL + Vulkan + Metal) — PRIMARY multi-vendor path
+## Phase 4V — Native portable kernel backend — DONE via OpenCL (2026-08-10)
+
+**Outcome, and how it differs from what was planned.** The decision between
+Halide and hand-written kernels (decision D10) was settled by testing rather
+than by argument: macOS still ships OpenCL, it reaches the Apple graphics
+processor, and a kernel run through it agreed with NumPy on the first attempt.
+OpenCL covers Apple, AMD, Intel and NVIDIA from one source, needs no extra
+build system because programs are compiled at run time by the driver, and is
+close enough to CUDA C that porting the existing kernels was mechanical. Halide
+was not used.
+
+**Vulkan and Metal are not implemented, deliberately.** Every piece of hardware
+this project targets is reachable through an OpenCL driver, so a second and
+third set of kernels would add code and maintenance without adding a single
+supported device. Two things would change that judgement, and both are written
+down here so the decision can be revisited on evidence rather than habit:
+Apple has deprecated OpenCL, so a Metal backend becomes necessary if Apple
+removes it; and Vulkan would be the route to Android, which this project does
+not currently target. Measured results on the Apple graphics processor are in
+`benches/apple_m2_max_opencl_2026-08-10.md`.
+
+Original plan text follows.
+
+## Phase 4V (original) — OpenCL + Vulkan + Metal — PRIMARY multi-vendor path
 **Complexity: High. Effort: 20–30 days. Depends on: Phase 3 (implements the same array-core contract). Runs as soon after Phase 3 as capacity allows; does not wait for Phase 4P (which is optional). Parallel with: Phases 4, 5, 6, 7. Cross-checks: the CPU baseline is the correctness oracle; native CUDA is the second reference on NVIDIA hardware.**
 
 | # | Step | Detail |
