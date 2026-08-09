@@ -28,6 +28,7 @@
 
 #include "../include/evm_common.cuh"
 #include "../include/evm_check.cuh"
+#include "../include/evm_dlpack.cuh"
 
 namespace py = pybind11;
 
@@ -395,22 +396,54 @@ struct DeviceMemPool {
 };
 DeviceMemPool g_device_pool;
 
-// RAII device memory buffer. Holds a pool-backed region for the lifetime of
-// a pipeline call; the Python-facing DeviceBuffer class wraps this.
-// Dtor returns the block to g_device_pool (no cudaFree) so the next same-sized
-// allocation is O(1) host-side and reuses the same device pages.
-struct DeviceBuffer {
+// A pool-backed region of device memory. Its destructor returns the block to
+// g_device_pool (no cudaFree) so the next same-sized allocation is O(1)
+// host-side and reuses the same device pages.
+//
+// This is separated from DeviceBuffer, and owned through a shared_ptr, so that
+// ownership can be SHARED. That matters for zero-copy export: when a DLPack
+// consumer (PyTorch, CuPy) takes the raw address, it must keep the block alive
+// for as long as it holds that address. Without shared ownership the exporting
+// Python object's destructor would hand the block straight back to the pool,
+// the next allocation of the same size would receive that exact address, and
+// the consumer would silently read someone else's data.
+struct PooledBlock {
     void* ptr = nullptr;
     size_t nbytes = 0;
-    explicit DeviceBuffer(size_t n) : nbytes(n) {
+    explicit PooledBlock(size_t n) : nbytes(n) {
         ptr = g_device_pool.alloc(n);
     }
-    ~DeviceBuffer() {
+    ~PooledBlock() {
         g_device_pool.release(ptr, nbytes);
         ptr = nullptr;
     }
+    PooledBlock(const PooledBlock&) = delete;
+    PooledBlock& operator=(const PooledBlock&) = delete;
+};
+
+// RAII device memory buffer, held for the lifetime of a pipeline call; the
+// Python-facing DeviceBuffer class wraps this. `ptr` and `nbytes` are kept as
+// plain members so the several hundred existing call sites that read them
+// continue to compile unchanged; the block underneath is shared-owned.
+struct DeviceBuffer {
+    std::shared_ptr<PooledBlock> block;
+    void* ptr = nullptr;
+    size_t nbytes = 0;
+    explicit DeviceBuffer(size_t n)
+        : block(std::make_shared<PooledBlock>(n)),
+          ptr(block->ptr),
+          nbytes(n) {}
     DeviceBuffer(const DeviceBuffer&) = delete;
     DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+};
+
+// A window onto device memory owned by somebody else — a tensor imported from
+// another array library. It frees nothing: the producer's DLPack deleter is
+// what releases the memory, and this must not race it.
+struct BorrowedBuffer {
+    void* ptr = nullptr;
+    size_t nbytes = 0;
+    BorrowedBuffer(void* p, size_t n) : ptr(p), nbytes(n) {}
 };
 
 // Validate a numpy array is C-contiguous float32 with a trailing channel
@@ -912,7 +945,151 @@ PYBIND11_MODULE(_evm_cuda, m) {
         .def_readonly("nbytes", &DeviceBuffer::nbytes)
         .def_property_readonly("ptr", [](DeviceBuffer& self) {
             return reinterpret_cast<uintptr_t>(self.ptr);
+        })
+        // Hand out another owning reference to the same block. The Python
+        // DeviceArray uses this so a slice or a re-wrap cannot outlive the
+        // memory it points at.
+        .def("share", [](DeviceBuffer& self) {
+            auto out = std::make_unique<DeviceBuffer>(0);
+            out->block = self.block;
+            out->ptr = self.ptr;
+            out->nbytes = self.nbytes;
+            return out;
         });
+
+    // A non-owning window onto device memory this module did not allocate,
+    // used for tensors imported from another library. Ownership stays with
+    // that library's deleter; this only carries the address so the same
+    // download helpers work.
+    py::class_<BorrowedBuffer>(m, "DeviceBufferView")
+        .def(py::init([](uintptr_t address, size_t nbytes) {
+            return std::make_unique<BorrowedBuffer>(
+                reinterpret_cast<void*>(address), nbytes);
+        }), py::arg("address"), py::arg("nbytes"))
+        .def("download_f32", [](BorrowedBuffer& self, py::ssize_t count) {
+            carray_t<float> out(count);
+            auto o = out.request();
+            if (static_cast<size_t>(count) * sizeof(float) > self.nbytes)
+                throw std::runtime_error("DeviceBufferView.download_f32: too much");
+            CUDA_CHECK(cudaMemcpy(o.ptr, self.ptr, count * sizeof(float),
+                                  cudaMemcpyDeviceToHost));
+            return out;
+        }, py::arg("count"))
+        .def("download_u8", [](BorrowedBuffer& self, py::ssize_t count) {
+            carray_t<unsigned char> out(count);
+            auto o = out.request();
+            if (static_cast<size_t>(count) > self.nbytes)
+                throw std::runtime_error("DeviceBufferView.download_u8: too much");
+            CUDA_CHECK(cudaMemcpy(o.ptr, self.ptr, count, cudaMemcpyDeviceToHost));
+            return out;
+        }, py::arg("count"))
+        .def_readonly("nbytes", &BorrowedBuffer::nbytes)
+        .def_property_readonly("ptr", [](BorrowedBuffer& self) {
+            return reinterpret_cast<uintptr_t>(self.ptr);
+        });
+
+    // Copy float32 elements between two device allocations. The pyramid
+    // kernels write every level into one flat buffer; the public operations
+    // layer hands back a separate array per level, and this is how a level is
+    // lifted out of that buffer (and put back).
+    m.def("copy_f32", [](uintptr_t src, uintptr_t dst, size_t count,
+                         size_t src_offset, size_t dst_offset) {
+        const float* s = reinterpret_cast<const float*>(src) + src_offset;
+        float* d = reinterpret_cast<float*>(dst) + dst_offset;
+        CUDA_CHECK(cudaMemcpy(d, s, count * sizeof(float),
+                              cudaMemcpyDeviceToDevice));
+    }, py::arg("src"), py::arg("dst"), py::arg("count"),
+       py::arg("src_offset") = 0, py::arg("dst_offset") = 0);
+
+    m.def("current_device", []() {
+        int device_id = 0;
+        CUDA_CHECK(cudaGetDevice(&device_id));
+        return device_id;
+    }, "The CUDA device index this process is currently using.");
+
+    // =====================================================================
+    // DLPack: hand the device pointer to another array library without a copy
+    // =====================================================================
+
+    // Everything the capsule must keep alive, plus the shape it describes.
+    // Holding the shared_ptr here is what makes the export safe: the block
+    // cannot return to the pool while a consumer still has the address.
+    struct DlpackContext {
+        std::shared_ptr<PooledBlock> block;
+        std::vector<int64_t> shape;
+        DLManagedTensor managed;
+    };
+
+    m.def("dlpack_capsule", [](DeviceBuffer& buf, std::vector<int64_t> shape,
+                               int dtype_code, int dtype_bits) {
+        int device_id = 0;
+        CUDA_CHECK(cudaGetDevice(&device_id));
+
+        auto* ctx = new DlpackContext();
+        ctx->block = buf.block;
+        ctx->shape = std::move(shape);
+
+        ctx->managed.dl_tensor.data = buf.ptr;
+        ctx->managed.dl_tensor.device = DLDevice{kDLCUDA, device_id};
+        ctx->managed.dl_tensor.ndim = static_cast<int32_t>(ctx->shape.size());
+        ctx->managed.dl_tensor.dtype = DLDataType{
+            static_cast<uint8_t>(dtype_code), static_cast<uint8_t>(dtype_bits), 1};
+        ctx->managed.dl_tensor.shape = ctx->shape.data();
+        ctx->managed.dl_tensor.strides = nullptr;   // C-contiguous
+        ctx->managed.dl_tensor.byte_offset = 0;
+        ctx->managed.manager_ctx = ctx;
+        ctx->managed.deleter = [](DLManagedTensor* self) {
+            delete static_cast<DlpackContext*>(self->manager_ctx);
+        };
+
+        // The name "dltensor" is the protocol's; a consumer renames it to
+        // "used_dltensor" once it takes ownership, which is how double
+        // consumption is detected. If nobody consumes it, this destructor runs
+        // and releases our reference.
+        return py::capsule(&ctx->managed, "dltensor", [](PyObject* obj) {
+            if (PyCapsule_IsValid(obj, "dltensor")) {
+                auto* mt = static_cast<DLManagedTensor*>(
+                    PyCapsule_GetPointer(obj, "dltensor"));
+                if (mt && mt->deleter) mt->deleter(mt);
+            }
+        });
+    }, py::arg("buffer"), py::arg("shape"), py::arg("dtype_code"),
+       py::arg("dtype_bits"),
+       "Export a DeviceBuffer as a DLPack capsule sharing ownership of it.");
+
+    // Import: take ownership of a consumed capsule and report what it holds.
+    // Returns (address, shape, dtype_code, dtype_bits, device_type, device_id).
+    m.def("dlpack_import", [](py::capsule capsule) {
+        PyObject* obj = capsule.ptr();
+        if (!PyCapsule_IsValid(obj, "dltensor"))
+            throw std::runtime_error(
+                "dlpack_import: capsule is not an unconsumed DLPack tensor "
+                "(a capsule can only be consumed once)");
+        auto* mt = static_cast<DLManagedTensor*>(
+            PyCapsule_GetPointer(obj, "dltensor"));
+        if (!mt) throw std::runtime_error("dlpack_import: null tensor");
+
+        const DLTensor& t = mt->dl_tensor;
+        std::vector<int64_t> shape(t.shape, t.shape + t.ndim);
+        auto address = reinterpret_cast<uintptr_t>(t.data) + t.byte_offset;
+
+        // Mark consumed, per the protocol, so a second import fails instead of
+        // handing out a second owner of the same memory.
+        PyCapsule_SetName(obj, "used_dltensor");
+
+        return py::make_tuple(address, shape, int(t.dtype.code),
+                              int(t.dtype.bits), int(t.device.device_type),
+                              int(t.device.device_id),
+                              reinterpret_cast<uintptr_t>(mt));
+    }, py::arg("capsule"),
+       "Consume a DLPack capsule; returns its address, shape, dtype and device.");
+
+    // Release a tensor previously taken by dlpack_import. The importer owns it
+    // from that point, so this is how that ownership is given up.
+    m.def("dlpack_release", [](uintptr_t managed) {
+        auto* mt = reinterpret_cast<DLManagedTensor*>(managed);
+        if (mt && mt->deleter) mt->deleter(mt);
+    }, py::arg("managed"));
 
     // --- batched color_cvt: whole clip (T,H,W,3) at once -------------------
     // Per-pixel independent op; treat the clip as a (T*H, W, 3) image.
@@ -1640,6 +1817,21 @@ PYBIND11_MODULE(_evm_cuda, m) {
     // --- batched temporal filters on device pointers -----------------------
     // (N,T) row-major: legacy layout used by unit tests / probes.
     // (T,N) row-major: production path (coalesced); scale folds alpha.
+    // The device-pointer Butterworth launcher has existed since the kernels
+    // were written, but nothing ever exposed it to Python; the per-frame
+    // binding above copies through host memory instead. The public operations
+    // layer needs a device-resident version, so here it is.
+    m.def("batched_butter_bandpass",
+        [](uintptr_t d_in, uintptr_t d_out, int T, int N,
+           double b0_high, double b1_high, double a1_high,
+           double b0_low, double b1_low, double a1_low) {
+            evm::launch_butter_bandpass(
+                reinterpret_cast<float*>(d_in), reinterpret_cast<float*>(d_out),
+                T, N, b0_high, b1_high, a1_high, b0_low, b1_low, a1_low, 0);
+        }, py::arg("d_in"), py::arg("d_out"), py::arg("T"), py::arg("N"),
+           py::arg("b0_high"), py::arg("b1_high"), py::arg("a1_high"),
+           py::arg("b0_low"), py::arg("b1_low"), py::arg("a1_low"));
+
     m.def("batched_iir_bandpass",
         [](uintptr_t d_in, uintptr_t d_out, int T, int N, double r1, double r2) {
             evm::launch_iir_bandpass(

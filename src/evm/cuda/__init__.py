@@ -73,6 +73,11 @@ def __getattr__(name: str):
     if name in _PIPELINES:
         from . import pipelines
         return getattr(pipelines, name)
+    # The public array type, resolved lazily like everything else here so that
+    # importing evm.cuda on a machine without the extension still succeeds.
+    if name == "DeviceArray":
+        from .array import DeviceArray
+        return DeviceArray
     # Allow ``from evm.cuda import batched`` / ``import evm.cuda.benchmark`` to
     # work even though __getattr__ is defined (a module-level __getattr__ would
     # otherwise shadow the standard submodule-import fallback).
@@ -100,4 +105,13 @@ __all__ = [
     # Lower-precision variants; only these two pipelines have one.
     "color_gdown_ideal_fp16_core",
     "motion_lpyr_iir_fp16_core",
+    # The building blocks, for composing something this project does not
+    # provide. `ops` is the Ops protocol of plan section 3c; `DeviceArray` is
+    # the array type every one of them takes and returns.
+    "ops",
+    "DeviceArray",
 ]
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)
