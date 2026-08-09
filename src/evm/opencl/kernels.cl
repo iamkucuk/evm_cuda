@@ -337,3 +337,31 @@ __kernel void apply_gain(__global float* data, const int count,
     data[3 * i + 1] *= gi;
     data[3 * i + 2] *= gq;
 }
+
+// One step of the two running averages, and their difference.
+//
+// This exists so that magnifying a live feed does not have to copy every
+// pyramid band back to host memory between frames. Doing the update here keeps
+// the state on the device, where the rest of the work already is.
+//
+//   fast = fast * (1 - r1) + current * r1
+//   slow = slow * (1 - r2) + current * r2
+//   out  = fast - slow
+//
+// `fast` and `slow` are updated in place; they are the state carried from one
+// frame to the next.
+__kernel void iir_step(__global float* fast,
+                       __global float* slow,
+                       __global const float* current,
+                       __global float* out,
+                       const int count,
+                       const float r1, const float r2) {
+    int i = get_global_id(0);
+    if (i >= count) return;
+    float x = current[i];
+    float f = fast[i] * (1.0f - r1) + x * r1;
+    float s = slow[i] * (1.0f - r2) + x * r2;
+    fast[i] = f;
+    slow[i] = s;
+    out[i] = f - s;
+}

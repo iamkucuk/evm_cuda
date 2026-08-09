@@ -81,6 +81,7 @@ nav:
       - See a pulse: recipes/pulse.md
       - Measure vibration: recipes/vibration.md
       - Amplify motion: recipes/motion.md
+      - Magnify a live feed: recipes/streaming.md
       - Use the building blocks: recipes/building-blocks.md
   - Understanding:
       - How it works: concepts/how-it-works.md

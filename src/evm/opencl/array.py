@@ -79,6 +79,18 @@ class ClArray:
         runtime.queue().finish()
         return out
 
+    def copy(self) -> "ClArray":
+        """A duplicate, copied on the device.
+
+        Going via host memory would be far simpler to write and is what an
+        earlier version did; it cost more than the arithmetic it was protecting,
+        because every call moved the whole array across the bus twice.
+        """
+        import pyopencl as cl
+        out = ClArray.empty(self._shape, self._dtype)
+        cl.enqueue_copy(runtime.queue(), out.buffer, self.buffer)
+        return out
+
     def reshape(self, shape: tuple[int, ...]) -> "ClArray":
         """A view of the same memory with a different shape.
 

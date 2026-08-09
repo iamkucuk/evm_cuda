@@ -305,7 +305,9 @@ class OpenClOps:
         self, frames: ClArray, gain_y: float, gain_i: float, gain_q: float
     ) -> ClArray:
         count = frames.size // 3
-        out = ClArray.from_numpy(frames.numpy())
+        # Copied on the device: this is called once per pyramid band per
+        # frame, so a round trip through host memory here dominates.
+        out = frames.copy()
         self._k("apply_gain")(
             self._q,
             (count,),
@@ -338,3 +340,25 @@ def _band_projection_matrix(
     basis = np.fft.fft(np.eye(T), axis=0)
     basis[~keep, :] = 0.0
     return np.ascontiguousarray(np.real(np.fft.ifft(basis, axis=0)), dtype=np.float32)
+
+    # -- streaming ----------------------------------------------------------
+
+    def iir_step(self, fast: ClArray, slow: ClArray, current: ClArray,
+                 r1: float, r2: float) -> ClArray:
+        """Advance both running averages by one frame and return the difference.
+
+        Optional in the operations protocol. A backend without it still works —
+        :mod:`evm.stream` falls back to doing this arithmetic on the host — but
+        that fallback copies every pyramid band off the device and back on
+        every frame, which costs more than the magnification itself. This keeps
+        the state where the rest of the work already is.
+
+        ``fast`` and ``slow`` are updated in place.
+        """
+        count = fast.size
+        out = ClArray.empty(fast.shape, np.float32)
+        self._k("iir_step")(self._q, (count,), None,
+                            fast.buffer, slow.buffer, current.buffer,
+                            out.buffer, np.int32(count),
+                            np.float32(r1), np.float32(r2))
+        return out

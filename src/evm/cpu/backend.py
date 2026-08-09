@@ -100,6 +100,22 @@ class NumpyOps:
                    gain_q: float) -> np.ndarray:
         return frames * np.array([gain_y, gain_i, gain_q], dtype=np.float64)
 
+    # -- streaming ----------------------------------------------------------
+
+    def iir_step(self, fast: np.ndarray, slow: np.ndarray,
+                 current: np.ndarray, r1: float, r2: float) -> np.ndarray:
+        """Advance both running averages by one frame; return the difference.
+
+        Updates ``fast`` and ``slow`` in place, matching what the device
+        backends do, so that streaming behaves the same way whichever is in
+        use.
+        """
+        fast *= (1.0 - r1)
+        fast += current * r1
+        slow *= (1.0 - r2)
+        slow += current * r2
+        return fast - slow
+
 
 #: The single instance backends and tests share. These operations hold no
 #: state, so there is no reason for a caller to build another one.

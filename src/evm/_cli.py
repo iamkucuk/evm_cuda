@@ -279,6 +279,53 @@ def _add_bench(sub: argparse._SubParsersAction) -> None:
     )
     b.set_defaults(func=_cmd_bench, parser=b)
 
+    s = sub.add_parser(
+        "stream",
+        help="Magnify a camera, file or network stream as it arrives.",
+        description=(
+            "Amplify motion frame by frame, using only what has already been "
+            "seen. The result is identical to magnifying the whole clip at "
+            "once; the difference is that this needs no future frames, so it "
+            "can run on a live feed. Only the motion pipeline can work this "
+            "way: selecting frequencies with a Fourier transform needs all of "
+            "time at once."
+        ),
+    )
+    s.add_argument(
+        "source",
+        help="Camera index (e.g. 0), a video file, or a stream address.",
+    )
+    s.add_argument(
+        "--out", help="Write the magnified frames here as a video file."
+    )
+    s.add_argument(
+        "--display",
+        action="store_true",
+        help="Show the result in a window. Press q to stop.",
+    )
+    s.add_argument("--alpha", type=float, default=10.0,
+                   help="How much to amplify. Default: 10.")
+    s.add_argument("--lambda-c", type=float, default=16.0, dest="lambda_c",
+                   help="Spatial cutoff in pixels; raise if the output "
+                        "shimmers. Default: 16.")
+    s.add_argument("--r1", type=float, default=0.4,
+                   help="Faster decay rate. Default: 0.4.")
+    s.add_argument("--r2", type=float, default=0.05,
+                   help="Slower decay rate. Default: 0.05.")
+    s.add_argument("--chrom-attenuation", type=float, default=0.1,
+                   dest="chrom_attenuation",
+                   help="How much colour to amplify relative to brightness. "
+                        "Default: 0.1.")
+    s.add_argument("--backend", default="cpu",
+                   help="Which backend to use. Default: cpu, which is measured "
+                        "to be fastest for one frame at a time — the graphics "
+                        "backends pay a launch cost per frame that does not "
+                        "shrink with the frame size, and they win on whole "
+                        "clips rather than live feeds.")
+    s.add_argument("--max-frames", type=int, default=None, dest="max_frames",
+                   help="Stop after this many frames.")
+    s.set_defaults(func=_cmd_stream, parser=s)
+
 
 # ---------------------------------------------------------------------------
 # magnify
@@ -458,6 +505,77 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+
+def _cmd_stream(args: argparse.Namespace) -> int:
+    """Magnify a live source frame by frame, reporting how fast it kept up."""
+    import time
+
+    from .io.capture import open_source
+    from .stream import MotionStream
+
+    source = open_source(args.source)
+    height, width = source.size
+    if height <= 0 or width <= 0:
+        source.close()
+        raise SystemExit(
+            f"error: {source.description} did not report a frame size; it may "
+            f"not be delivering video"
+        )
+
+    stream = MotionStream(
+        height, width, alpha=args.alpha, lambda_c=args.lambda_c,
+        r1=args.r1, r2=args.r2, chrom_attenuation=args.chrom_attenuation,
+        backend=args.backend,
+    )
+    print(f"[evm] {source.description}: {width}x{height} at "
+          f"{source.fps:g} frames/s, backend={stream.backend_name}")
+
+    writer = None
+    durations: list[float] = []
+    try:
+        for index, frame in enumerate(source.frames()):
+            if args.max_frames is not None and index >= args.max_frames:
+                break
+            started = time.perf_counter()
+            magnified = stream.push(frame)
+            durations.append(time.perf_counter() - started)
+
+            if args.out:
+                if writer is None:
+                    import cv2
+                    writer = cv2.VideoWriter(
+                        # Spelled through VideoWriter because the
+                        # module-level alias is absent from OpenCV's
+                        # type information.
+                        args.out, cv2.VideoWriter.fourcc(*"mp4v"),
+                        source.fps, (width, height))
+                writer.write(magnified)
+            if args.display:
+                import cv2
+                cv2.imshow("evm", magnified)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+    except KeyboardInterrupt:
+        print()
+    finally:
+        source.close()
+        if writer is not None:
+            writer.release()
+        if args.display:
+            import cv2
+            cv2.destroyAllWindows()
+
+    if durations:
+        ordered = sorted(durations)
+        median = ordered[len(ordered) // 2] * 1000
+        worst = ordered[int(len(ordered) * 0.95)] * 1000
+        # Both numbers, because an average hides the stalls that are what a
+        # viewer actually notices on a live feed.
+        print(f"[evm] {len(durations)} frames: {median:.1f} ms typical, "
+              f"{worst:.1f} ms at the 95th percentile "
+              f"({1000 / median:.1f} frames/s sustained)")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

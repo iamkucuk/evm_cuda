@@ -47,6 +47,10 @@ EXPECTED_ROOT = {
     # a smaller promise than pretending the module is private while leaving it
     # perfectly reachable.
     "backend", "cpu", "io", "cuda", "opencl", "api",
+    # Live magnification. Bound as an attribute once anything imports it, and
+    # documented as `from evm.stream import MotionStream`, so it is a path
+    # callers may rely on.
+    "stream",
     # Metadata.
     "__version__",
 }
