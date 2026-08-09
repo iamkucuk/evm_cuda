@@ -46,7 +46,7 @@ EXPECTED_ROOT = {
     # because that makes `evm.api.magnify` a path callers can rely on, which is
     # a smaller promise than pretending the module is private while leaving it
     # perfectly reachable.
-    "backend", "cpu", "io", "cuda", "api",
+    "backend", "cpu", "io", "cuda", "opencl", "api",
     # Metadata.
     "__version__",
 }

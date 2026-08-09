@@ -75,6 +75,13 @@ cuda-build = [
     "ninja",
     "pybind11>=2.10",
 ]
+# The portable backend. pyopencl is the Python binding; the OpenCL driver
+# itself comes from the operating system or the graphics vendor, so installing
+# this extra is necessary but not always sufficient — evm.opencl.runtime says
+# which of the two is missing.
+opencl = [
+    "pyopencl>=2024.1",
+]
 dev = [
     "pytest>=7.0",
 ]

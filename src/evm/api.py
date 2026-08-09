@@ -293,6 +293,35 @@ def _register_builtin_backends() -> None:
             dtypes=("float32", "float16"), fft=True, streaming=False
         ),
     )
+    _backend.register(
+        "opencl",
+        # Only the primitive operations are written for OpenCL; the four
+        # pipelines come from evm.backend.generic, which is the arrangement
+        # that makes supporting new hardware a bounded job.
+        load=_load_opencl,
+        probe=_probe_opencl,
+        # Single precision throughout. The ideal filter is done as a matrix
+        # multiply rather than a Fourier transform, so no vendor maths library
+        # is needed and the answer is the same; `fft` describes the capability,
+        # not the method.
+        capabilities=Capabilities(
+            dtypes=("float32",), fft=True, streaming=False
+        ),
+    )
+
+
+def _probe_opencl() -> str | None:
+    try:
+        from .opencl import runtime as _cl_runtime
+    except ImportError as exc:
+        return f"evm.opencl could not be imported: {exc!r}"
+    return _cl_runtime.unavailable_reason()
+
+
+def _load_opencl() -> Any:
+    from .backend import generic
+    from .opencl.ops import OpenClOps
+    return generic.bind(OpenClOps())
 
 
 _register_builtin_backends()

@@ -154,9 +154,9 @@ def test_an_unknown_backend_exits_naming_the_registered_ones(capsys):
     """Not through the recorder: this is the real registry answering."""
     with pytest.raises(SystemExit) as exc:
         run(["magnify", "in.mp4", "out.mp4", "--preset", "pulse",
-             "--backend", "opencl"])
+             "--backend", "vulkan"])
     msg = str(exc.value)
-    assert "opencl" in msg and "cpu" in msg and "cuda" in msg
+    assert "vulkan" in msg and "cpu" in msg and "cuda" in msg and "opencl" in msg
 
 
 def test_the_chosen_backend_is_always_announced(recorder, capsys):

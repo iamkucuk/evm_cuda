@@ -352,13 +352,18 @@ def test_an_unknown_precision_is_refused(frames, no_video_decode):
 # ---------------------------------------------------------------------------
 
 
-def test_importing_evm_registers_both_built_in_backends():
+def test_importing_evm_registers_the_built_in_backends():
     names = [info.name for info in backend.list_backends()]
-    assert names == ["cuda", "cpu"], names  # preference order, not registration order
+    # Preference order, not registration order: the hand-written CUDA code
+    # first, then the portable OpenCL kernels, then the NumPy reference.
+    assert names == ["cuda", "opencl", "cpu"], names
     caps = {info.name: info.capabilities for info in backend.list_backends()}
     assert caps["cpu"].dtypes == ("float64",)      # the oracle's working dtype
     assert caps["cuda"].dtypes == ("float32", "float16")
-    assert not caps["cpu"].streaming and not caps["cuda"].streaming  # Phase 7
+    assert caps["opencl"].dtypes == ("float32",)   # the portable kernels
+    # None of them can stream yet; that is a later phase, and claiming it
+    # before it exists would be a lie a caller could act on.
+    assert not any(c.streaming for c in caps.values())
 
 
 def test_the_cpu_backend_is_always_available():
@@ -399,8 +404,9 @@ def test_asking_for_cuda_is_answered_honestly(frames, no_video_decode, caplog):
 
 def test_an_unknown_backend_name_lists_the_registered_ones(frames, no_video_decode):
     with pytest.raises(backend.UnknownBackendError) as exc:
-        evm.magnify(frames, preset="motion", backend="opencl")
-    assert "cpu" in str(exc.value) and "cuda" in str(exc.value)
+        evm.magnify(frames, preset="motion", backend="vulkan")
+    message = str(exc.value)
+    assert "cpu" in message and "cuda" in message and "opencl" in message
 
 
 def test_the_backend_actually_used_is_reported(frames, no_video_decode, caplog):
