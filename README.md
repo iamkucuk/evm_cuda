@@ -1,21 +1,39 @@
-# Eulerian Video Magnification (CUDA)
+# Eulerian Video Magnification
 
-[![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](#)
+[![Documentation](https://img.shields.io/badge/documentation-read-blue)](https://iamkucuk.github.io/eulerian-video-magnification-cuda/)
+[![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)](#)
 [![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia&logoColor=white)](#)
+[![OpenCL](https://img.shields.io/badge/OpenCL-Apple%20%7C%20AMD%20%7C%20Intel-orange)](#)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
-[![Tests](https://img.shields.io/badge/tests-92%20passed-brightgreen)](#)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/colab/evm_cuda_benchmark.ipynb)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
-**A CUDA-accelerated implementation of [Eulerian Video Magnification](http://people.csail.mit.edu/mrub/vidmag/) (EVM) that
-reveals invisible temporal changes in video by amplifying sub-pixel color and
-motion variations that the eye cannot detect.**
+**Amplify changes in video that are too small to see: the flush of blood
+through a face with each heartbeat, the millimetre rise of a sleeping child's
+chest, the vibration of a guitar string.** An implementation of
+[Eulerian Video Magnification](http://people.csail.mit.edu/mrub/vidmag/),
+checked against the original authors' published output, running on the
+processor, on NVIDIA hardware through hand-written CUDA, and on Apple, AMD and
+Intel hardware through OpenCL.
+
+```bash
+pip install evm-cuda
+```
+
+```python
+import evm
+evm.magnify("face.mp4", preset="pulse", out="pulse.mp4")
+```
+
+**[Documentation](https://iamkucuk.github.io/eulerian-video-magnification-cuda/)**
+— installing, worked examples for pulse, vibration and motion, what each
+parameter does, and what to do when the output looks identical to the input.
 
 This project ports the MIT SIGGRAPH 2012 reference (Wu, Rubinstein, Freeman,
-Durand, Guttag) from MATLAB to raw CUDA C++. On a consumer RTX 3090 it reaches
-about 730x compute-only speedup on motion (FP16) and about 1,470x on color
-(FP16) over the Python/NumPy baseline, while matching that baseline within
-end-to-end RMSE < 0.01.
+Durand, Guttag) from MATLAB to raw CUDA C++, and adds a portable OpenCL
+implementation for hardware CUDA cannot reach. Both are compared against the
+NumPy implementation, which is itself compared against the original authors'
+published output.
 
 ---
 
@@ -41,10 +59,16 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 ## Performance
 
-Measured on a consumer RTX 3090 24GB vs the Python/NumPy CPU baseline. Each
+Measured on a consumer RTX 3090 24GB against the NumPy implementation. Each
 stage, including every H2D/D2H transfer, is timed with `cudaDeviceSynchronize`
 (harness: `evm.cuda.benchmark`, 1 warmup, median of 7). We report the speedup
-at three inclusion levels because they answer different questions:
+at three inclusion levels because they answer different questions.
+
+**Read the ratios with the reference in mind.** The "Python CPU" column below
+was measured on the machine that produced these numbers, and every ratio is
+relative to it. The same GPU timings against an Apple M2 Max — 6,347 ms colour
+and 28,303 ms motion for the same clips — give roughly 730x and 360x rather
+than 1,470x and 730x. The GPU side does not change; the comparison does.
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
 |----------|-----------:|---------------:|--------------------:|---------------------:|
@@ -97,7 +121,21 @@ configs. Per-stage breakdown and multi-GPU numbers (A100 / H100 / P100) live in
 scratch, free-list pool, smem downsample) is in
 [blog_further_optimizations.md](docs/blog_further_optimizations.md).
 
-### Other GPUs (compute only)
+### On hardware that is not NVIDIA
+
+The portable OpenCL backend, on an Apple M2 Max, against the same machine's
+processor cores. This hardware previously had no acceleration at all.
+
+| Pipeline | Clip | Processor | Apple GPU | Ratio |
+|---|---|---:|---:|---:|
+| Colour | `face.mp4`, 301 frames | 6,347 ms | 222 ms | 28.6x |
+| Motion | `baby.mp4`, 301 frames | 28,303 ms | 1,504 ms | 18.8x |
+
+Details in `benches/apple_m2_max_opencl_2026-08-10.md`. AMD and Intel hardware
+should work through the same kernels, but nobody has run it there, so no result
+is claimed.
+
+### Other NVIDIA GPUs (compute only)
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|

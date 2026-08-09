@@ -55,6 +55,12 @@ plugins:
             members_order: source
 
 markdown_extensions:
+  # Lets a page include a file from the repository root, so the changelog and
+  # the contributing guide appear on the site without a second copy that would
+  # drift out of step with the one people actually edit.
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
   - admonition
   - attr_list
   - md_in_html
@@ -89,6 +95,9 @@ nav:
   - Compared with other implementations: comparison.md
   - Project:
       - Licence and citation: licence.md
+      - What will not break: stability.md
+      - Changelog: changelog.md
+      - Contributing: contributing.md
       - Internals: internals/design.md
       - Speedup write-up: internals/blog_speedup.md
       - Further optimisation write-up: internals/blog_further_optimizations.md

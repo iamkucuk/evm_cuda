@@ -1,0 +1,74 @@
+# Publishing a release.
+#
+# Runs when a version tag is pushed. It builds a source distribution, checks
+# that distribution actually installs and passes its tests in a clean
+# environment, and only then publishes.
+#
+# There are no compiled wheels here on purpose. The CUDA extension has to be
+# compiled against the toolkit and graphics architecture of the machine that
+# will run it, so a wheel would have to be built for every combination of the
+# two. Installing from source is the honest option for this project's audience,
+# and it is what the install page documents.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build the source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install --upgrade build
+          python -m build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  verify:
+    name: the distribution installs and passes its tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # From the archive alone, in a directory that is not the repository. This
+      # is what catches a file missing from the distribution, which installing
+      # from a checkout cannot.
+      - name: Install from the archive and run its tests
+        run: |
+          python -m pip install "$(ls dist/*.tar.gz)[dev]"
+          mkdir -p /tmp/elsewhere && cd /tmp/elsewhere
+          tar -xzf "$OLDPWD/$(ls dist/*.tar.gz)" --strip-components=1
+          python -m pytest tests/ -q
+
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write        # for trusted publishing; no stored token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

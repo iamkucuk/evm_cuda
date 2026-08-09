@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+title: "Eulerian Video Magnification on CUDA"
+message: >-
+  If you use this software in work you publish, please cite both this
+  implementation and the original method it implements.
+type: software
+authors:
+  - family-names: Kucuk
+    given-names: Furkan
+repository-code: "https://github.com/iamkucuk/eulerian-video-magnification-cuda"
+url: "https://iamkucuk.github.io/eulerian-video-magnification-cuda/"
+abstract: >-
+  An implementation of Eulerian Video Magnification that amplifies colour and
+  motion changes in video too small to see. Includes a NumPy implementation
+  checked against the original authors' published output, a hand-written CUDA
+  version for NVIDIA hardware, and a portable OpenCL version for Apple, AMD and
+  Intel hardware, each compared against the NumPy reference by an automated
+  test suite.
+keywords:
+  - eulerian video magnification
+  - motion magnification
+  - video processing
+  - computer vision
+license: LicenseRef-BSD-3-Clause-NonCommercial
+version: 0.1.0
+references:
+  - type: article
+    title: >-
+      Eulerian Video Magnification for Revealing Subtle Changes in the World
+    authors:
+      - family-names: Wu
+        given-names: Hao-Yu
+      - family-names: Rubinstein
+        given-names: Michael
+      - family-names: Shih
+        given-names: Eugene
+      - family-names: Guttag
+        given-names: John
+      - family-names: Durand
+        given-names: Frédo
+      - family-names: Freeman
+        given-names: William
+    journal: "ACM Transactions on Graphics (Proc. SIGGRAPH)"
+    volume: 31
+    issue: 4
+    year: 2012
