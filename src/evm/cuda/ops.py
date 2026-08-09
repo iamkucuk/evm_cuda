@@ -33,20 +33,24 @@ __all__ = [
     "ideal_bandpass",
     "butter_bandpass",
     "iir_bandpass",
-    "apply_channel_gain",
+    "apply_gain",
     "upsample_add_quantize",
     "add_and_quantize",
     "level_sizes",
 ]
 
 
-def _check(arr: DeviceArray, *, ndim: int | None = None,
-           dtype: str | None = None, name: str = "input") -> None:
+def _check(
+    arr: DeviceArray,
+    *,
+    ndim: int | None = None,
+    dtype: str | None = None,
+    name: str = "input",
+) -> None:
     if not isinstance(arr, DeviceArray):
         raise TypeError(f"{name}: expected a DeviceArray, got {type(arr).__name__}")
     if ndim is not None and len(arr.shape) != ndim:
-        raise ValueError(
-            f"{name}: expected {ndim} dimensions, got shape {arr.shape}")
+        raise ValueError(f"{name}: expected {ndim} dimensions, got shape {arr.shape}")
     if dtype is not None and arr.dtype != np.dtype(dtype):
         raise TypeError(f"{name}: expected dtype {dtype}, got {arr.dtype}")
 
@@ -63,6 +67,7 @@ def level_sizes(height: int, width: int, levels: int) -> list[tuple[int, int]]:
 # ---------------------------------------------------------------------------
 # Colour
 # ---------------------------------------------------------------------------
+
 
 def bgr_u8_to_ntsc(frames: DeviceArray) -> DeviceArray:
     """Convert (T, H, W, 3) 8-bit blue-green-red frames to NTSC, float32.
@@ -81,6 +86,7 @@ def bgr_u8_to_ntsc(frames: DeviceArray) -> DeviceArray:
 # Spatial
 # ---------------------------------------------------------------------------
 
+
 def blur_dn(frames: DeviceArray, levels: int) -> DeviceArray:
     """Blur and halve the resolution, ``levels`` times.
 
@@ -98,12 +104,12 @@ def blur_dn(frames: DeviceArray, levels: int) -> DeviceArray:
     _evm_cuda.batched_to_planar_3ch(frames.ptr, planar.ptr, T, H, W)
 
     small_planar = DeviceArray.empty((T * 3, hl, wl), np.float32)
-    _evm_cuda.batched_blur_dn_color(planar.ptr, small_planar.ptr, T * 3,
-                                    H, W, levels, _d_binom5_sum1(), 5)
+    _evm_cuda.batched_blur_dn_color(
+        planar.ptr, small_planar.ptr, T * 3, H, W, levels, _d_binom5_sum1(), 5
+    )
 
     out = DeviceArray.empty((T, hl, wl, 3), np.float32)
-    _evm_cuda.batched_planar_to_interleaved_3ch(small_planar.ptr, out.ptr,
-                                                T, hl, wl)
+    _evm_cuda.batched_planar_to_interleaved_3ch(small_planar.ptr, out.ptr, T, hl, wl)
     return out
 
 
@@ -127,8 +133,7 @@ def build_lpyr(frames: DeviceArray, levels: int) -> list[DeviceArray]:
 
     total = sum(h * w for h, w in sizes) * T * 3
     flat = DeviceArray.empty((total,), np.float32)
-    _evm_cuda.batched_lpyr_build(planar.ptr, flat.ptr, T, H, W, levels,
-                                 _d_binom5(), 5)
+    _evm_cuda.batched_lpyr_build(planar.ptr, flat.ptr, T, H, W, levels, _d_binom5(), 5)
 
     bands, offset = [], 0
     for h, w in sizes:
@@ -157,14 +162,16 @@ def recon_lpyr(bands: list[DeviceArray], height: int, width: int) -> DeviceArray
         offset += count
 
     out = DeviceArray.empty((T * 3, height, width), np.float32)
-    _evm_cuda.batched_lpyr_recon(flat.ptr, out.ptr, T, height, width,
-                                 len(bands), _d_binom5(), 5)
+    _evm_cuda.batched_lpyr_recon(
+        flat.ptr, out.ptr, T, height, width, len(bands), _d_binom5(), 5
+    )
     return out
 
 
 # ---------------------------------------------------------------------------
 # Temporal
 # ---------------------------------------------------------------------------
+
 
 def _to_signal(frames: DeviceArray) -> tuple[DeviceArray, int, int]:
     """Rearrange frames to the (pixels, time) layout the filters read."""
@@ -183,8 +190,9 @@ def _to_frames(sig: DeviceArray, shape: tuple[int, ...]) -> DeviceArray:
     return out
 
 
-def ideal_bandpass(frames: DeviceArray, fl: float, fh: float,
-                   sampling_rate: float) -> DeviceArray:
+def ideal_bandpass(
+    frames: DeviceArray, fl: float, fh: float, sampling_rate: float
+) -> DeviceArray:
     """Keep only frequencies strictly between ``fl`` and ``fh``.
 
     Computed with a Fourier transform over time, so it needs the whole clip and
@@ -197,13 +205,13 @@ def ideal_bandpass(frames: DeviceArray, fl: float, fh: float,
     """
     sig, T, N = _to_signal(frames)
     filtered = DeviceArray.empty((N, T), np.float32)
-    _evm_cuda.batched_ideal_bandpass(sig.ptr, filtered.ptr, T, N,
-                                     fl, fh, sampling_rate)
+    _evm_cuda.batched_ideal_bandpass(sig.ptr, filtered.ptr, T, N, fl, fh, sampling_rate)
     return _to_frames(filtered, frames.shape)
 
 
-def butter_bandpass(frames: DeviceArray, fl: float, fh: float,
-                    sampling_rate: float, order: int = 1) -> DeviceArray:
+def butter_bandpass(
+    frames: DeviceArray, fl: float, fh: float, sampling_rate: float, order: int = 1
+) -> DeviceArray:
     """First-order Butterworth bandpass, applied along time.
 
     Runs forward in time only, so unlike :func:`ideal_bandpass` it can be used
@@ -212,9 +220,9 @@ def butter_bandpass(frames: DeviceArray, fl: float, fh: float,
     sig, T, N = _to_signal(frames)
     high, low = butter_bandpass_coeffs(fl, fh, sampling_rate, order)
     filtered = DeviceArray.empty((N, T), np.float32)
-    _evm_cuda.batched_butter_bandpass(sig.ptr, filtered.ptr, T, N,
-                                      high[0], high[1], high[2],
-                                      low[0], low[1], low[2])
+    _evm_cuda.batched_butter_bandpass(
+        sig.ptr, filtered.ptr, T, N, high[0], high[1], high[2], low[0], low[1], low[2]
+    )
     return _to_frames(filtered, frames.shape)
 
 
@@ -235,8 +243,10 @@ def iir_bandpass(frames: DeviceArray, r1: float, r2: float) -> DeviceArray:
 # Amplification and rendering
 # ---------------------------------------------------------------------------
 
-def apply_channel_gain(frames: DeviceArray, gain_y: float, gain_i: float,
-                       gain_q: float) -> DeviceArray:
+
+def apply_gain(
+    frames: DeviceArray, gain_y: float, gain_i: float, gain_q: float
+) -> DeviceArray:
     """Scale the three NTSC channels independently, in place.
 
     Returns the array it was given: the multiply happens on the existing
@@ -244,13 +254,13 @@ def apply_channel_gain(frames: DeviceArray, gain_y: float, gain_i: float,
     """
     _check(frames, ndim=4, dtype="float32", name="frames")
     T, H, W, _ = frames.shape
-    _evm_cuda.batched_apply_channel_gain(frames.ptr, T, H, W,
-                                         gain_y, gain_i, gain_q)
+    _evm_cuda.batched_apply_channel_gain(frames.ptr, T, H, W, gain_y, gain_i, gain_q)
     return frames
 
 
-def upsample_add_quantize(ntsc: DeviceArray, small: DeviceArray,
-                          chrom_attenuation: float = 1.0) -> DeviceArray:
+def upsample_add_quantize(
+    ntsc: DeviceArray, small: DeviceArray, chrom_attenuation: float = 1.0
+) -> DeviceArray:
     """Scale the amplified signal back up, add it, and convert to 8-bit.
 
     This is the colour pipeline's final step: ``small`` holds the amplified
@@ -261,13 +271,15 @@ def upsample_add_quantize(ntsc: DeviceArray, small: DeviceArray,
     T, H, W, _ = ntsc.shape
     _, hl, wl, _ = small.shape
     out = DeviceArray.empty((T, H, W, 3), np.uint8)
-    _evm_cuda.batched_upsample_add_quantize(ntsc.ptr, small.ptr, out.ptr,
-                                            T, hl, wl, H, W, chrom_attenuation)
+    _evm_cuda.batched_upsample_add_quantize(
+        ntsc.ptr, small.ptr, out.ptr, T, hl, wl, H, W, chrom_attenuation
+    )
     return out
 
 
-def add_and_quantize(ntsc: DeviceArray, delta_planar: DeviceArray,
-                     chrom_attenuation: float = 1.0) -> DeviceArray:
+def add_and_quantize(
+    ntsc: DeviceArray, delta_planar: DeviceArray, chrom_attenuation: float = 1.0
+) -> DeviceArray:
     """Add a full-resolution amplified signal and convert to 8-bit.
 
     This is the motion pipeline's final step. ``delta_planar`` is the
@@ -277,6 +289,7 @@ def add_and_quantize(ntsc: DeviceArray, delta_planar: DeviceArray,
     _check(delta_planar, ndim=3, dtype="float32", name="delta_planar")
     T, H, W, _ = ntsc.shape
     out = DeviceArray.empty((T, H, W, 3), np.uint8)
-    _evm_cuda.batched_add_planar_quantize(ntsc.ptr, delta_planar.ptr, out.ptr,
-                                          T, H, W, chrom_attenuation)
+    _evm_cuda.batched_add_planar_quantize(
+        ntsc.ptr, delta_planar.ptr, out.ptr, T, H, W, chrom_attenuation
+    )
     return out

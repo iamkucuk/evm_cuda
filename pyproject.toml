@@ -82,6 +82,13 @@ cuda-build = [
 opencl = [
     "pyopencl>=2024.1",
 ]
+# Building the documentation site. mkdocstrings reads docstrings out of the
+# installed package, so the API reference cannot be built without the project
+# itself installed alongside these.
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+]
 dev = [
     "pytest>=7.0",
 ]

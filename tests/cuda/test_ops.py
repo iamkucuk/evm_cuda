@@ -68,8 +68,7 @@ def test_blur_and_downsample_matches_the_reference(levels):
 def test_pyramid_bands_match_the_reference(levels):
     host = _frames_f32()
     expected = cpu_ops.build_lpyr(host, levels)
-    got = [b.numpy() for b in gpu_ops.build_lpyr(DeviceArray.from_numpy(host),
-                                                 levels)]
+    got = [b.numpy() for b in gpu_ops.build_lpyr(DeviceArray.from_numpy(host), levels)]
     assert len(got) == len(expected)
     for i, (g, e) in enumerate(zip(got, expected)):
         _not_degenerate(e, f"pyramid band {i}")
@@ -108,7 +107,7 @@ def test_pyramid_round_trip_returns_the_original():
     # recon returns one plane per channel: (channel*time, H, W).
     rebuilt = np.empty_like(host)
     for c in range(3):
-        rebuilt[..., c] = back[c * T:(c + 1) * T]
+        rebuilt[..., c] = back[c * T : (c + 1) * T]
     assert abs_err(rebuilt, host) < TOL["lpyr_roundtrip"]
 
 
@@ -117,8 +116,7 @@ def test_ideal_bandpass_matches_the_reference():
     host = _frames_f32()
     # 30 frames at 30 fps resolve 1 Hz steps; this band keeps several bins.
     expected = cpu_ops.ideal_bandpass(host.astype(np.float64), 0.5, 3.0, 30.0)
-    got = gpu_ops.ideal_bandpass(DeviceArray.from_numpy(host),
-                                 0.5, 3.0, 30.0).numpy()
+    got = gpu_ops.ideal_bandpass(DeviceArray.from_numpy(host), 0.5, 3.0, 30.0).numpy()
     _not_degenerate(expected, "ideal_bandpass")
     assert abs_err(got, expected) < TOL["ideal"]
 
@@ -133,8 +131,7 @@ def test_butterworth_bandpass_matches_the_reference():
     """
     host = _frames_f32()
     expected = cpu_ops.butter_bandpass(host.astype(np.float64), 0.5, 3.0, 30.0)
-    got = gpu_ops.butter_bandpass(DeviceArray.from_numpy(host),
-                                  0.5, 3.0, 30.0).numpy()
+    got = gpu_ops.butter_bandpass(DeviceArray.from_numpy(host), 0.5, 3.0, 30.0).numpy()
     _not_degenerate(expected, "butter_bandpass")
     assert abs_err(got, expected) < TOL["butter"]
 
@@ -151,9 +148,8 @@ def test_recursive_bandpass_matches_the_reference():
 @skip_no_cuda
 def test_channel_gain_matches_the_reference():
     host = _frames_f32()
-    expected = cpu_ops.apply_channel_gain(host.astype(np.float64), 50.0, 5.0, 5.0)
-    got = gpu_ops.apply_channel_gain(DeviceArray.from_numpy(host),
-                                     50.0, 5.0, 5.0).numpy()
+    expected = cpu_ops.apply_gain(host.astype(np.float64), 50.0, 5.0, 5.0)
+    got = gpu_ops.apply_gain(DeviceArray.from_numpy(host), 50.0, 5.0, 5.0).numpy()
     # A relative comparison, not the absolute tolerances used above. Those are
     # calibrated for values of order one; multiplying by a gain of 50 scales the
     # absolute error with it, while the accuracy of the multiply itself is
@@ -168,9 +164,10 @@ def test_channel_gain_matches_the_reference():
 # The checking the raw bindings do not do
 # ---------------------------------------------------------------------------
 
+
 @skip_no_cuda
 def test_operations_reject_a_wrong_dtype_instead_of_reading_raw_bytes():
-    wrong = DeviceArray.from_numpy(_frames_u8())          # uint8, not float32
+    wrong = DeviceArray.from_numpy(_frames_u8())  # uint8, not float32
     with pytest.raises(TypeError, match="dtype"):
         gpu_ops.blur_dn(wrong, 1)
 
@@ -196,7 +193,7 @@ def test_a_chain_of_operations_stays_on_the_device():
     ntsc = gpu_ops.bgr_u8_to_ntsc(DeviceArray.from_numpy(host))
     small = gpu_ops.blur_dn(ntsc, 2)
     band = gpu_ops.iir_bandpass(small, 0.4, 0.05)
-    amplified = gpu_ops.apply_channel_gain(band, 10.0, 1.0, 1.0)
+    amplified = gpu_ops.apply_gain(band, 10.0, 1.0, 1.0)
     assert amplified.device == "cuda"
     assert amplified.shape == small.shape
     _not_degenerate(amplified.numpy(), "chained operations")

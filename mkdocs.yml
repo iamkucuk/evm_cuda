@@ -1,0 +1,102 @@
+# The documentation site, published to GitHub Pages.
+#
+# Pages are organised by what a reader is trying to do, not by which module a
+# function happens to live in: get something working, do a specific job, look
+# something up, understand why it behaves as it does.
+site_name: Eulerian Video Magnification
+site_description: >-
+  Reveal colour and motion changes in video that are too small to see, on
+  processors and on graphics hardware from any vendor.
+site_url: https://iamkucuk.github.io/eulerian-video-magnification-cuda/
+repo_url: https://github.com/iamkucuk/eulerian-video-magnification-cuda
+repo_name: iamkucuk/eulerian-video-magnification-cuda
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+# Working documents for whoever is developing this, not pages for readers of
+# the site. They stay in the repository, where they are read next to the code.
+exclude_docs: |
+  dev/
+
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            members_order: source
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - tables
+
+nav:
+  - Home: index.md
+  - Start here:
+      - Installing: getting-started/install.md
+      - First result: getting-started/first-result.md
+  - How to:
+      - See a pulse: recipes/pulse.md
+      - Measure vibration: recipes/vibration.md
+      - Amplify motion: recipes/motion.md
+      - Use the building blocks: recipes/building-blocks.md
+  - Understanding:
+      - How it works: concepts/how-it-works.md
+      - Choosing parameters: concepts/parameters.md
+      - What can go wrong: concepts/pitfalls.md
+      - Backends and hardware: concepts/backends.md
+  - Reference:
+      - Entry point: reference/api.md
+      - Building blocks: reference/ops.md
+      - Command line: reference/cli.md
+  - Performance: performance.md
+  - Compared with other implementations: comparison.md
+  - Project:
+      - Licence and citation: licence.md
+      - Internals: internals/design.md
+      - Speedup write-up: internals/blog_speedup.md
+      - Further optimisation write-up: internals/blog_further_optimizations.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/iamkucuk/eulerian-video-magnification-cuda
+
+# Fail on a broken internal link rather than publishing one.
+strict: true

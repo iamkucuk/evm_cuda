@@ -31,7 +31,7 @@ __all__ = [
     "ideal_bandpass",
     "butter_bandpass",
     "iir_bandpass",
-    "apply_channel_gain",
+    "apply_gain",
     "level_sizes",
 ]
 
@@ -53,8 +53,7 @@ def bgr_u8_to_ntsc(frames: np.ndarray) -> np.ndarray:
     """
     if frames.dtype != np.uint8:
         raise TypeError(f"bgr_u8_to_ntsc: expected uint8, got {frames.dtype}")
-    return np.stack([_rgb_frame_to_ntsc(f) for f in frames],
-                    axis=0).astype(np.float32)
+    return np.stack([_rgb_frame_to_ntsc(f) for f in frames], axis=0).astype(np.float32)
 
 
 def ntsc_to_bgr_u8(frames: np.ndarray) -> np.ndarray:
@@ -76,13 +75,11 @@ def build_lpyr(frames: np.ndarray, levels: int) -> list[np.ndarray]:
     # The per-frame helper returns (levels, pind); each entry of `levels` is
     # one pyramid band shaped (height, width, channel), so the channel axis has
     # to be moved to the front to match the GPU's plane-per-channel layout.
-    per_frame = [_pyramids.laplacian_pyramid_channels(f, levels)[0]
-                 for f in frames]
+    per_frame = [_pyramids.laplacian_pyramid_channels(f, levels)[0] for f in frames]
     bands = []
     for level in range(levels):
         stacked = np.stack([per_frame[t][level] for t in range(len(frames))])
-        bands.append(np.ascontiguousarray(np.moveaxis(stacked, 3, 0),
-                                          dtype=np.float32))
+        bands.append(np.ascontiguousarray(np.moveaxis(stacked, 3, 0), dtype=np.float32))
     return bands
 
 
@@ -105,17 +102,18 @@ def recon_lpyr(bands: list[np.ndarray], height: int, width: int) -> np.ndarray:
     return out
 
 
-def ideal_bandpass(frames: np.ndarray, fl: float, fh: float,
-                   sampling_rate: float) -> np.ndarray:
+def ideal_bandpass(
+    frames: np.ndarray, fl: float, fh: float, sampling_rate: float
+) -> np.ndarray:
     """Keep only frequencies strictly between ``fl`` and ``fh``, along time."""
     return _filters.ideal_bandpass(frames, fl, fh, sampling_rate, axis=0)
 
 
-def butter_bandpass(frames: np.ndarray, fl: float, fh: float,
-                    sampling_rate: float, order: int = 1) -> np.ndarray:
+def butter_bandpass(
+    frames: np.ndarray, fl: float, fh: float, sampling_rate: float, order: int = 1
+) -> np.ndarray:
     """First-order Butterworth bandpass, along time."""
-    return _filters.butter_bandpass(frames, fl, fh, sampling_rate,
-                                    order=order, axis=0)
+    return _filters.butter_bandpass(frames, fl, fh, sampling_rate, order=order, axis=0)
 
 
 def iir_bandpass(frames: np.ndarray, r1: float, r2: float) -> np.ndarray:
@@ -123,7 +121,8 @@ def iir_bandpass(frames: np.ndarray, r1: float, r2: float) -> np.ndarray:
     return _filters.iir_bandpass(frames, r1, r2, axis=0)
 
 
-def apply_channel_gain(frames: np.ndarray, gain_y: float, gain_i: float,
-                       gain_q: float) -> np.ndarray:
+def apply_gain(
+    frames: np.ndarray, gain_y: float, gain_i: float, gain_q: float
+) -> np.ndarray:
     """Scale the three NTSC channels independently."""
     return frames * np.array([gain_y, gain_i, gain_q], dtype=frames.dtype)

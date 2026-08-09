@@ -40,3 +40,7 @@ docs/video/promo_15s.mp4
 kaggle/baseline_kernel/
 kaggle/tests_kernel/
 *.npy
+
+# The generated documentation site. Built by `mkdocs build`, published by
+# .github/workflows/deploy-pages.yml; never committed.
+site/
