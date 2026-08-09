@@ -56,7 +56,7 @@ Or on frames you already have, with no file involved:
 import numpy as np
 import evm
 
-frames = np.zeros((90, 64, 64, 3), dtype=np.uint8)   # your frames, 8-bit BGR
+frames = np.zeros((90, 64, 64, 3), dtype=np.uint8)  # your frames, 8-bit BGR
 amplified = evm.magnify(frames, preset="motion")
 print(amplified.shape, amplified.dtype)
 ```

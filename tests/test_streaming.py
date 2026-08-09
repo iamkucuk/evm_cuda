@@ -19,8 +19,7 @@ from evm.cpu import magnify as direct
 from evm.stream import MotionStream
 
 FPS = 30.0
-PARAMS = dict(alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05,
-              chrom_attenuation=0.1)
+PARAMS = dict(alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05, chrom_attenuation=0.1)
 
 
 def _clip(seed: int = 5, frames: int = 24, size: int = 32) -> np.ndarray:
@@ -40,8 +39,9 @@ def _clip(seed: int = 5, frames: int = 24, size: int = 32) -> np.ndarray:
         sy, sx = ys + 2.0 + shift, xs + 2.0
         y0, x0 = np.floor(sy).astype(int), np.floor(sx).astype(int)
         wy = (sy - y0)[..., None]
-        out[t] = np.clip(base[y0, x0] * (1 - wy) + base[y0 + 1, x0] * wy,
-                         0, 255).astype(np.uint8)
+        out[t] = np.clip(
+            base[y0, x0] * (1 - wy) + base[y0 + 1, x0] * wy, 0, 255
+        ).astype(np.uint8)
     return out
 
 

@@ -12,14 +12,21 @@ import functools
 from pathlib import Path
 from typing import Any
 
-__all__ = ["available", "unavailable_reason", "context", "queue", "program",
-           "device_name"]
+__all__ = [
+    "available",
+    "unavailable_reason",
+    "context",
+    "queue",
+    "program",
+    "device_name",
+]
 
 _KERNEL_SOURCE = Path(__file__).with_name("kernels.cl")
 
 
 def _import_pyopencl() -> Any:
     import pyopencl
+
     return pyopencl
 
 
@@ -34,14 +41,18 @@ def unavailable_reason() -> str | None:
     try:
         cl = _import_pyopencl()
     except ImportError:
-        return ("pyopencl is not installed; install this project's 'opencl' "
-                "extra (pip install evm-cuda[opencl])")
+        return (
+            "pyopencl is not installed; install this project's 'opencl' "
+            "extra (pip install evm-cuda[opencl])"
+        )
     try:
         platforms = cl.get_platforms()
-    except Exception as exc:            # driver missing or refusing to load
-        return (f"no OpenCL driver found ({type(exc).__name__}: {exc}); a "
-                f"driver is provided by the operating system or the graphics "
-                f"vendor, not by this project")
+    except Exception as exc:  # driver missing or refusing to load
+        return (
+            f"no OpenCL driver found ({type(exc).__name__}: {exc}); a "
+            f"driver is provided by the operating system or the graphics "
+            f"vendor, not by this project"
+        )
     for platform in platforms:
         if platform.get_devices():
             return None
@@ -108,8 +119,7 @@ def _colour_matrix_defines() -> str:
     for prefix, matrix in (("FWD", forward), ("INV", inverse)):
         for row in range(3):
             for col in range(3):
-                parts.append(
-                    f"-D {prefix}{row}{col}={float(matrix[row, col]):.10e}f")
+                parts.append(f"-D {prefix}{row}{col}={float(matrix[row, col]):.10e}f")
     return " ".join(parts)
 
 
@@ -122,6 +132,7 @@ def kernel(name: str) -> Any:
     levels, so the cost is paid repeatedly; caching removes it.
     """
     import pyopencl as cl
+
     return cl.Kernel(program(), name)
 
 
@@ -131,10 +142,8 @@ def program() -> Any:
     cl = _import_pyopencl()
     source = _KERNEL_SOURCE.read_text()
     try:
-        return cl.Program(context(), source).build(
-            options=_colour_matrix_defines())
+        return cl.Program(context(), source).build(options=_colour_matrix_defines())
     except Exception as exc:
         raise RuntimeError(
-            f"the OpenCL kernels failed to compile on "
-            f"{device_name()!r}: {exc}"
+            f"the OpenCL kernels failed to compile on {device_name()!r}: {exc}"
         ) from exc

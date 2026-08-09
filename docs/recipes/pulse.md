@@ -62,7 +62,7 @@ patch = amplified[:, 100:200, 100:200, :].mean(axis=(1, 2, 3))
 fps = 30.0
 spectrum = np.abs(np.fft.rfft(patch - patch.mean()))
 freqs = np.fft.rfftfreq(len(patch), 1 / fps)
-band = (freqs > 0.7) & (freqs < 3.0)          # 42 to 180 beats per minute
+band = (freqs > 0.7) & (freqs < 3.0)  # 42 to 180 beats per minute
 print(f"{freqs[band][spectrum[band].argmax()] * 60:.0f} beats per minute")
 ```
 

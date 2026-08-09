@@ -35,6 +35,7 @@ class FrameSource:
         result quietly.
         """
         import cv2
+
         rate = float(self._capture.get(cv2.CAP_PROP_FPS) or 0.0)
         return rate if rate > 0 else 30.0
 
@@ -42,8 +43,11 @@ class FrameSource:
     def size(self) -> tuple[int, int]:
         """(height, width) of the frames this source produces."""
         import cv2
-        return (int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+
+        return (
+            int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        )
 
     def frames(self) -> Iterator[np.ndarray]:
         """Yield frames until the source ends or is interrupted."""
@@ -88,6 +92,11 @@ def open_source(source: str | int) -> FrameSource:
             f"that nothing else is using it; for a file, check the path; for a "
             f"network stream, check the address and that it is reachable."
         )
-    kind = ("camera" if isinstance(target, int)
-            else "stream" if "://" in str(target) else "file")
+    kind = (
+        "camera"
+        if isinstance(target, int)
+        else "stream"
+        if "://" in str(target)
+        else "file"
+    )
     return FrameSource(capture, f"{kind} {source!r}")

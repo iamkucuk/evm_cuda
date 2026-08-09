@@ -24,7 +24,7 @@ be true, so it holds together at amplifications where the original breaks.
 import numpy as np
 import evm
 
-frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)     # your frames
+frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)  # your frames
 out = evm.magnify(frames, preset="motion_phase", backend="cpu", fps=30.0)
 ```
 
@@ -35,8 +35,7 @@ import numpy as np
 from evm.cpu.phase_magnify import phase_magnify
 
 frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)
-out = phase_magnify(frames, 30.0, alpha=15, fl=0.5, fh=1.5,
-                    scales=3, orientations=4)
+out = phase_magnify(frames, 30.0, alpha=15, fl=0.5, fh=1.5, scales=3, orientations=4)
 ```
 
 ## When to choose it

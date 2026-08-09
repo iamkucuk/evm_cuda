@@ -58,6 +58,7 @@ could not run. Ask it why:
 
 ```python
 from evm.backend import registry
+
 for info in registry.list_backends():
     print(info.name, info.unavailable_reason or "available")
 ```

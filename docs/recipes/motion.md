@@ -37,7 +37,7 @@ breaks, and where the sensor noise is. Raising it reduces artefacts and
 amplifies less; lowering it does the reverse.
 
 ```python
-gentle = evm.magnify("clip.mp4", preset="motion", alpha=5,  lambda_c=32)
+gentle = evm.magnify("clip.mp4", preset="motion", alpha=5, lambda_c=32)
 strong = evm.magnify("clip.mp4", preset="motion", alpha=25, lambda_c=8)
 ```
 
@@ -66,7 +66,7 @@ frames = np.clip(np.rint(video * 255), 0, 255).astype(np.uint8)
 
 chunk, overlap, pieces = 300, 30, []
 for start in range(0, len(frames), chunk):
-    block = frames[max(0, start - overlap):start + chunk]
+    block = frames[max(0, start - overlap) : start + chunk]
     out = evm.magnify(block, preset="motion", fps=info.fps)
     pieces.append(out[overlap:] if start else out)
 

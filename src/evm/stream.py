@@ -94,7 +94,11 @@ class MotionStream:
 
         self.levels = max_pyr_ht((self.height, self.width), len(BINOM5)) + 1
         self.schedule = figure6_alpha_schedule(
-            self.levels, alpha, lambda_c, self.height, self.width,
+            self.levels,
+            alpha,
+            lambda_c,
+            self.height,
+            self.width,
             exaggeration_factor=exaggeration_factor,
         )
 
@@ -146,8 +150,9 @@ class MotionStream:
 
         delta = ops.recon_lpyr(amplified)
         if self.chrom_attenuation != 1.0:
-            delta = ops.apply_gain(delta, 1.0, self.chrom_attenuation,
-                                   self.chrom_attenuation)
+            delta = ops.apply_gain(
+                delta, 1.0, self.chrom_attenuation, self.chrom_attenuation
+            )
         out = ops.to_numpy(ops.add_and_quantize(ntsc, delta))
         self.frames_seen += 1
         return np.asarray(out[0])
@@ -168,8 +173,7 @@ class MotionStream:
         )
         step = getattr(self._ops, "iir_step", None)
         if step is not None:
-            return step(self._fast[index], self._slow[index], band,
-                        self.r1, self.r2)
+            return step(self._fast[index], self._slow[index], band, self.r1, self.r2)
 
         fast = _blend(self._ops, self._fast[index], band, self.r1)
         slow = _blend(self._ops, self._slow[index], band, self.r2)
@@ -184,9 +188,11 @@ class MotionStream:
         self.frames_seen = 0
 
     def __repr__(self) -> str:
-        return (f"MotionStream({self.height}x{self.width}, "
-                f"backend={self.backend_name!r}, levels={self.levels}, "
-                f"frames_seen={self.frames_seen})")
+        return (
+            f"MotionStream({self.height}x{self.width}, "
+            f"backend={self.backend_name!r}, levels={self.levels}, "
+            f"frames_seen={self.frames_seen})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +239,7 @@ def _operations_for(name: str, impl: Any) -> Any:
         return impl.ops
     if name == "cpu":
         from .cpu.backend import OPS
+
         return OPS
     raise NotImplementedError(
         f"the {name!r} backend does not expose the primitive operations that "

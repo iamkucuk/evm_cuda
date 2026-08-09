@@ -65,9 +65,9 @@ def color_gdown_ideal_core(
     ntsc = ops.bgr_u8_to_ntsc(frames)
     small = ops.blur_dn(ntsc, level)
     filtered = ops.ideal_bandpass(small, fl, fh, rate)
-    amplified = ops.apply_gain(filtered, alpha,
-                               alpha * chrom_attenuation,
-                               alpha * chrom_attenuation)
+    amplified = ops.apply_gain(
+        filtered, alpha, alpha * chrom_attenuation, alpha * chrom_attenuation
+    )
 
     _, height, width, _ = ntsc.shape
     delta = ops.upsample_bilinear(amplified, height, width)
@@ -108,15 +108,20 @@ def _motion_core(
     bands = ops.build_lpyr(ntsc, levels)
 
     schedule = figure6_alpha_schedule(
-        levels, alpha, lambda_c, height, width,
+        levels,
+        alpha,
+        lambda_c,
+        height,
+        width,
         exaggeration_factor=exaggeration_factor,
     )
 
     amplified = []
     for band, level_alpha in zip(bands, schedule):
         filtered = filter_band(band)
-        amplified.append(ops.apply_gain(filtered, level_alpha, level_alpha,
-                                        level_alpha))
+        amplified.append(
+            ops.apply_gain(filtered, level_alpha, level_alpha, level_alpha)
+        )
 
     delta = ops.recon_lpyr(amplified)
     if chrom_attenuation != 1.0:
@@ -144,7 +149,11 @@ def motion_lpyr_ideal_core(
     """
     rate = _resolve_rate(fps, sampling_rate)
     return _motion_core(
-        ops, frames_bgr_u8, fps, alpha=alpha, lambda_c=lambda_c,
+        ops,
+        frames_bgr_u8,
+        fps,
+        alpha=alpha,
+        lambda_c=lambda_c,
         chrom_attenuation=chrom_attenuation,
         exaggeration_factor=exaggeration_factor,
         filter_band=lambda band: ops.ideal_bandpass(band, fl, fh, rate),
@@ -171,7 +180,11 @@ def motion_lpyr_butter_core(
     """
     rate = _resolve_rate(fps, sampling_rate)
     return _motion_core(
-        ops, frames_bgr_u8, fps, alpha=alpha, lambda_c=lambda_c,
+        ops,
+        frames_bgr_u8,
+        fps,
+        alpha=alpha,
+        lambda_c=lambda_c,
         chrom_attenuation=chrom_attenuation,
         exaggeration_factor=exaggeration_factor,
         filter_band=lambda band: ops.butter_bandpass(band, fl, fh, rate, order),
@@ -196,7 +209,11 @@ def motion_lpyr_iir_core(
     previous frame, which is what makes it the one a live stream can use.
     """
     return _motion_core(
-        ops, frames_bgr_u8, fps, alpha=alpha, lambda_c=lambda_c,
+        ops,
+        frames_bgr_u8,
+        fps,
+        alpha=alpha,
+        lambda_c=lambda_c,
         chrom_attenuation=chrom_attenuation,
         exaggeration_factor=exaggeration_factor,
         filter_band=lambda band: ops.iir_bandpass(band, r1, r2),
@@ -219,21 +236,22 @@ class _BoundPipelines:
     clear error into a wrong answer.
     """
 
-    __slots__ = ("ops", "name", "color_gdown_ideal_core",
-                 "motion_lpyr_ideal_core", "motion_lpyr_butter_core",
-                 "motion_lpyr_iir_core")
+    __slots__ = (
+        "ops",
+        "name",
+        "color_gdown_ideal_core",
+        "motion_lpyr_ideal_core",
+        "motion_lpyr_butter_core",
+        "motion_lpyr_iir_core",
+    )
 
     def __init__(self, ops: Any) -> None:
         self.ops = ops
         self.name = getattr(ops, "name", type(ops).__name__)
-        self.color_gdown_ideal_core = functools.partial(
-            color_gdown_ideal_core, ops)
-        self.motion_lpyr_ideal_core = functools.partial(
-            motion_lpyr_ideal_core, ops)
-        self.motion_lpyr_butter_core = functools.partial(
-            motion_lpyr_butter_core, ops)
-        self.motion_lpyr_iir_core = functools.partial(
-            motion_lpyr_iir_core, ops)
+        self.color_gdown_ideal_core = functools.partial(color_gdown_ideal_core, ops)
+        self.motion_lpyr_ideal_core = functools.partial(motion_lpyr_ideal_core, ops)
+        self.motion_lpyr_butter_core = functools.partial(motion_lpyr_butter_core, ops)
+        self.motion_lpyr_iir_core = functools.partial(motion_lpyr_iir_core, ops)
 
     def __repr__(self) -> str:
         return f"<pipelines derived from {self.name!r} operations>"

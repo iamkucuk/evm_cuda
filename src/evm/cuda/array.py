@@ -26,9 +26,9 @@ __all__ = ["DeviceArray"]
 # float64 is deliberately absent: no kernel takes it, and quietly narrowing a
 # user's float64 to float32 would lose precision without saying so.
 _DTYPE_TO_DLPACK: dict[np.dtype, tuple[int, int]] = {
-    np.dtype("float32"): (2, 32),   # kDLFloat
+    np.dtype("float32"): (2, 32),  # kDLFloat
     np.dtype("float16"): (2, 16),
-    np.dtype("uint8"): (1, 8),      # kDLUInt
+    np.dtype("uint8"): (1, 8),  # kDLUInt
 }
 _DLPACK_TO_DTYPE: dict[tuple[int, int], np.dtype] = {
     v: k for k, v in _DTYPE_TO_DLPACK.items()
@@ -48,8 +48,9 @@ class DeviceArray:
 
     __slots__ = ("_buf", "_shape", "_dtype", "_keepalive")
 
-    def __init__(self, buf: Any, shape: tuple[int, ...], dtype: np.dtype,
-                 _keepalive: Any = None) -> None:
+    def __init__(
+        self, buf: Any, shape: tuple[int, ...], dtype: np.dtype, _keepalive: Any = None
+    ) -> None:
         self._buf = buf
         self._shape = tuple(int(s) for s in shape)
         self._dtype = np.dtype(dtype)
@@ -121,8 +122,10 @@ class DeviceArray:
         return self._shape[0]
 
     def __repr__(self) -> str:
-        return (f"DeviceArray(shape={self._shape}, dtype={self._dtype.name}, "
-                f"device='cuda', ptr=0x{self.ptr:x})")
+        return (
+            f"DeviceArray(shape={self._shape}, dtype={self._dtype.name}, "
+            f"device='cuda', ptr=0x{self.ptr:x})"
+        )
 
     # -- transfer -----------------------------------------------------------
 
@@ -170,8 +173,9 @@ class DeviceArray:
         tensor) or a capsule directly.
         """
         capsule = source.__dlpack__() if hasattr(source, "__dlpack__") else source
-        (address, shape, code, bits,
-         device_type, _device_id, managed) = _evm_cuda.dlpack_import(capsule)
+        (address, shape, code, bits, device_type, _device_id, managed) = (
+            _evm_cuda.dlpack_import(capsule)
+        )
 
         if device_type != _KDLCUDA:
             _evm_cuda.dlpack_release(managed)
@@ -183,14 +187,11 @@ class DeviceArray:
         if key not in _DLPACK_TO_DTYPE:
             _evm_cuda.dlpack_release(managed)
             raise TypeError(
-                f"DeviceArray.from_dlpack: unsupported dtype code={code} "
-                f"bits={bits}"
+                f"DeviceArray.from_dlpack: unsupported dtype code={code} bits={bits}"
             )
         dtype = _DLPACK_TO_DTYPE[key]
-        view = _evm_cuda.DeviceBufferView(address, int(np.prod(shape)) *
-                                          dtype.itemsize)
-        return cls(view, tuple(shape), dtype,
-                   _keepalive=_ImportedTensor(managed))
+        view = _evm_cuda.DeviceBufferView(address, int(np.prod(shape)) * dtype.itemsize)
+        return cls(view, tuple(shape), dtype, _keepalive=_ImportedTensor(managed))
 
 
 class _ImportedTensor:

@@ -44,6 +44,7 @@ TOL = 5e-6
 @pytest.fixture(scope="module")
 def ops():
     from evm.opencl.ops import OpenClOps
+
     return OpenClOps()
 
 
@@ -78,8 +79,11 @@ def _f32(seed: int = 3, frames: int = 40) -> np.ndarray:
 
 
 def _err(got, expected) -> float:
-    return float(np.abs(np.asarray(got, dtype=np.float64)
-                        - np.asarray(expected, dtype=np.float64)).max())
+    return float(
+        np.abs(
+            np.asarray(got, dtype=np.float64) - np.asarray(expected, dtype=np.float64)
+        ).max()
+    )
 
 
 def _not_degenerate(a, what: str) -> None:
@@ -89,6 +93,7 @@ def _not_degenerate(a, what: str) -> None:
 # ---------------------------------------------------------------------------
 # Availability is reported honestly
 # ---------------------------------------------------------------------------
+
 
 def test_unavailable_reason_names_what_is_missing():
     """A backend that cannot run must say which of two things to install."""
@@ -109,6 +114,7 @@ def test_the_device_identifies_itself(ops):
 # ---------------------------------------------------------------------------
 # Each operation against the reference
 # ---------------------------------------------------------------------------
+
 
 @skip_no_opencl
 def test_colour_conversion(ops):
@@ -201,20 +207,37 @@ def test_upsampling(ops):
 # The pipelines, end to end
 # ---------------------------------------------------------------------------
 
+
 @skip_no_opencl
-@pytest.mark.parametrize("name,core,reference,params", [
-    ("colour", generic.color_gdown_ideal_core, direct.color_gdown_ideal_core,
-     dict(alpha=20.0, level=2, fl=0.5, fh=1.5, chrom_attenuation=1.0)),
-    ("motion recursive", generic.motion_lpyr_iir_core,
-     direct.motion_lpyr_iir_core,
-     dict(alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05, chrom_attenuation=0.1)),
-    ("motion Fourier", generic.motion_lpyr_ideal_core,
-     direct.motion_lpyr_ideal_core,
-     dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5, chrom_attenuation=0.0)),
-    ("motion Butterworth", generic.motion_lpyr_butter_core,
-     direct.motion_lpyr_butter_core,
-     dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5, chrom_attenuation=0.0)),
-])
+@pytest.mark.parametrize(
+    "name,core,reference,params",
+    [
+        (
+            "colour",
+            generic.color_gdown_ideal_core,
+            direct.color_gdown_ideal_core,
+            dict(alpha=20.0, level=2, fl=0.5, fh=1.5, chrom_attenuation=1.0),
+        ),
+        (
+            "motion recursive",
+            generic.motion_lpyr_iir_core,
+            direct.motion_lpyr_iir_core,
+            dict(alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05, chrom_attenuation=0.1),
+        ),
+        (
+            "motion Fourier",
+            generic.motion_lpyr_ideal_core,
+            direct.motion_lpyr_ideal_core,
+            dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5, chrom_attenuation=0.0),
+        ),
+        (
+            "motion Butterworth",
+            generic.motion_lpyr_butter_core,
+            direct.motion_lpyr_butter_core,
+            dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5, chrom_attenuation=0.0),
+        ),
+    ],
+)
 def test_whole_pipeline_matches_the_reference(ops, name, core, reference, params):
     """The output a user actually gets, compared frame by frame.
 

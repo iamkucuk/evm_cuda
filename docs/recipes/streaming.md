@@ -18,7 +18,7 @@ import numpy as np
 from evm.stream import MotionStream
 
 stream = MotionStream(height=240, width=320, alpha=10, lambda_c=16)
-for _ in range(3):                       # your camera loop here
+for _ in range(3):  # your camera loop here
     frame = np.zeros((240, 320, 3), dtype=np.uint8)
     magnified = stream.push(frame)
 ```
@@ -77,7 +77,7 @@ from evm.stream import MotionStream
 
 small = (320, 240)
 stream = MotionStream(height=small[1], width=small[0])
-frame = np.zeros((480, 640, 3), dtype=np.uint8)      # from your camera
+frame = np.zeros((480, 640, 3), dtype=np.uint8)  # from your camera
 magnified = stream.push(cv2.resize(frame, small))
 ```
 

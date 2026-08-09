@@ -13,16 +13,17 @@ from __future__ import annotations
 
 from .runtime import available, device_name, unavailable_reason
 
-__all__ = ["available", "unavailable_reason", "device_name", "OpenClOps",
-           "ClArray"]
+__all__ = ["available", "unavailable_reason", "device_name", "OpenClOps", "ClArray"]
 
 
 def __getattr__(name: str):
     # Deferred so that importing this package does not require pyopencl.
     if name == "OpenClOps":
         from .ops import OpenClOps
+
         return OpenClOps
     if name == "ClArray":
         from .array import ClArray
+
         return ClArray
     raise AttributeError(name)

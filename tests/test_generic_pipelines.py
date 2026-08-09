@@ -51,8 +51,9 @@ def _clip(seed: int = 11, frames: int = 40, size: int = 32) -> np.ndarray:
     return out
 
 
-def _assert_reference_did_something(expected: np.ndarray,
-                                    clip: np.ndarray, what: str) -> None:
+def _assert_reference_did_something(
+    expected: np.ndarray, clip: np.ndarray, what: str
+) -> None:
     """Guard against comparing two copies of the input.
 
     If the reference returns its input unchanged, the comparison below holds
@@ -89,8 +90,7 @@ def test_colour_pipeline_matches_the_direct_implementation():
 
 def test_recursive_motion_pipeline_matches_the_direct_implementation():
     clip = _clip()
-    params = dict(alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05,
-                  chrom_attenuation=0.1)
+    params = dict(alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05, chrom_attenuation=0.1)
     got = generic.motion_lpyr_iir_core(OPS, clip, FPS, **params)
     expected = direct.motion_lpyr_iir_core(clip, FPS, **params)
     _assert_reference_did_something(expected, clip, "recursive motion pipeline")
@@ -99,8 +99,7 @@ def test_recursive_motion_pipeline_matches_the_direct_implementation():
 
 def test_fourier_motion_pipeline_matches_the_direct_implementation():
     clip = _clip()
-    params = dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5,
-                  chrom_attenuation=0.0)
+    params = dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5, chrom_attenuation=0.0)
     got = generic.motion_lpyr_ideal_core(OPS, clip, FPS, **params)
     expected = direct.motion_lpyr_ideal_core(clip, FPS, **params)
     _assert_reference_did_something(expected, clip, "Fourier motion pipeline")
@@ -109,19 +108,30 @@ def test_fourier_motion_pipeline_matches_the_direct_implementation():
 
 def test_butterworth_motion_pipeline_matches_the_direct_implementation():
     clip = _clip()
-    params = dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5,
-                  chrom_attenuation=0.0)
+    params = dict(alpha=10.0, lambda_c=16.0, fl=0.5, fh=1.5, chrom_attenuation=0.0)
     got = generic.motion_lpyr_butter_core(OPS, clip, FPS, **params)
     expected = direct.motion_lpyr_butter_core(clip, FPS, **params)
     _assert_reference_did_something(expected, clip, "Butterworth motion pipeline")
     _assert_matches(got, expected, "Butterworth motion pipeline")
 
 
-@pytest.mark.parametrize("operation", [
-    "from_numpy", "to_numpy", "bgr_u8_to_ntsc", "add_and_quantize", "blur_dn",
-    "build_lpyr", "recon_lpyr", "upsample_bilinear", "ideal_bandpass",
-    "butter_bandpass", "iir_bandpass", "apply_gain",
-])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "from_numpy",
+        "to_numpy",
+        "bgr_u8_to_ntsc",
+        "add_and_quantize",
+        "blur_dn",
+        "build_lpyr",
+        "recon_lpyr",
+        "upsample_bilinear",
+        "ideal_bandpass",
+        "butter_bandpass",
+        "iir_bandpass",
+        "apply_gain",
+    ],
+)
 def test_the_numpy_backend_provides_every_operation(operation):
     """The list a new backend has to implement, written down and checked."""
     assert callable(getattr(OPS, operation, None)), (

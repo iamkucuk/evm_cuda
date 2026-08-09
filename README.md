@@ -22,6 +22,7 @@ pip install evm-cuda
 
 ```python
 import evm
+
 evm.magnify("face.mp4", preset="pulse", out="pulse.mp4")
 ```
 

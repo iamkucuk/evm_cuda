@@ -33,6 +33,7 @@ BAND = (0.5, 1.5)
 # The decomposition
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("scales,orientations", [(2, 4), (3, 4), (3, 2)])
 def test_the_pyramid_rebuilds_its_input_exactly(scales, orientations):
     """Nothing built on a decomposition that loses information can be trusted."""
@@ -67,8 +68,10 @@ def test_asking_for_more_scales_than_the_image_allows_is_refused():
 # The magnification, against known movement
 # ---------------------------------------------------------------------------
 
-def _moving_clip(frames: int = 32, size: int = 64,
-                 amplitude: float = 0.5) -> np.ndarray:
+
+def _moving_clip(
+    frames: int = 32, size: int = 64, amplitude: float = 0.5
+) -> np.ndarray:
     """A textured image sliding up and down by a fraction of a pixel."""
     rng = np.random.default_rng(0)
     base = np.clip(rng.random((size + 8, size + 8)) * 120 + 60, 0, 255)
@@ -81,10 +84,10 @@ def _moving_clip(frames: int = 32, size: int = 64,
         rows = ys + 4 + shift
         row0 = np.floor(rows).astype(int)
         weight = rows - row0
-        value = (base[row0, columns] * (1 - weight)
-                 + base[row0 + 1, columns] * weight)
-        out[t] = np.repeat(np.clip(value, 0, 255).astype(np.uint8)[:, :, None],
-                           3, axis=2)
+        value = base[row0, columns] * (1 - weight) + base[row0 + 1, columns] * weight
+        out[t] = np.repeat(
+            np.clip(value, 0, 255).astype(np.uint8)[:, :, None], 3, axis=2
+        )
     return out
 
 
@@ -102,11 +105,13 @@ def _vertical_shift(clip: np.ndarray) -> np.ndarray:
     for frame in clip:
         current = frame[:, :, 0].astype(float)
         current -= current.mean()
-        scores = np.array([np.sum(np.roll(reference, k, axis=0) * current)
-                           for k in (-1, 0, 1)])
+        scores = np.array(
+            [np.sum(np.roll(reference, k, axis=0) * current) for k in (-1, 0, 1)]
+        )
         denominator = scores[0] - 2 * scores[1] + scores[2]
-        shifts.append(0.0 if denominator == 0
-                      else 0.5 * (scores[0] - scores[2]) / denominator)
+        shifts.append(
+            0.0 if denominator == 0 else 0.5 * (scores[0] - scores[2]) / denominator
+        )
     return np.array(shifts)
 
 
@@ -122,7 +127,7 @@ def _filter_gain() -> float:
     time = np.arange(64)
     signal = np.sin(2 * np.pi * MOTION_HZ * time / FPS)[:, None]
     filtered = butter_bandpass(signal, BAND[0], BAND[1], FPS, order=1, axis=0)
-    half = len(time) // 2                       # skip the filter starting up
+    half = len(time) // 2  # skip the filter starting up
     return float(np.abs(filtered[half:]).max() / np.abs(signal[half:]).max())
 
 
@@ -133,8 +138,9 @@ def test_no_amplification_leaves_the_clip_alone():
     anywhere in that chain shows up here, with nothing to hide behind.
     """
     clip = _moving_clip()
-    out = phase_magnify(clip, FPS, alpha=0.0, fl=BAND[0], fh=BAND[1],
-                        scales=3, orientations=4)
+    out = phase_magnify(
+        clip, FPS, alpha=0.0, fl=BAND[0], fh=BAND[1], scales=3, orientations=4
+    )
     before = np.abs(_vertical_shift(clip)).max()
     after = np.abs(_vertical_shift(out)).max()
     assert abs(after - before) < 0.01, (
@@ -151,8 +157,9 @@ def test_movement_grows_by_the_predicted_amount(alpha):
     changes the picture.
     """
     clip = _moving_clip()
-    out = phase_magnify(clip, FPS, alpha=alpha, fl=BAND[0], fh=BAND[1],
-                        scales=3, orientations=4)
+    out = phase_magnify(
+        clip, FPS, alpha=alpha, fl=BAND[0], fh=BAND[1], scales=3, orientations=4
+    )
 
     before = np.abs(_vertical_shift(clip)).max()
     after = np.abs(_vertical_shift(out)).max()
@@ -174,8 +181,9 @@ def test_more_amplification_moves_things_further():
     clip = _moving_clip()
     ratios = []
     for alpha in (0.0, 2.0, 4.0):
-        out = phase_magnify(clip, FPS, alpha=alpha, fl=BAND[0], fh=BAND[1],
-                            scales=3, orientations=4)
+        out = phase_magnify(
+            clip, FPS, alpha=alpha, fl=BAND[0], fh=BAND[1], scales=3, orientations=4
+        )
         ratios.append(np.abs(_vertical_shift(out)).max())
     assert ratios[0] < ratios[1] < ratios[2], (
         f"amplification is not monotonic: {ratios}"
@@ -184,10 +192,12 @@ def test_more_amplification_moves_things_further():
 
 def test_the_two_ways_of_choosing_a_band_are_both_accepted():
     clip = _moving_clip(frames=24)
-    by_band = phase_magnify(clip, FPS, alpha=2.0, fl=BAND[0], fh=BAND[1],
-                            scales=2, orientations=2)
-    by_rates = phase_magnify(clip, FPS, alpha=2.0, r1=0.4, r2=0.05,
-                             scales=2, orientations=2)
+    by_band = phase_magnify(
+        clip, FPS, alpha=2.0, fl=BAND[0], fh=BAND[1], scales=2, orientations=2
+    )
+    by_rates = phase_magnify(
+        clip, FPS, alpha=2.0, r1=0.4, r2=0.05, scales=2, orientations=2
+    )
     assert by_band.shape == clip.shape
     assert by_rates.shape == clip.shape
     assert not np.array_equal(by_band, by_rates), (
@@ -209,7 +219,8 @@ def test_colour_is_carried_through_rather_than_amplified():
     coloured = clip.copy()
     coloured[..., 2] = np.clip(coloured[..., 2].astype(int) + 40, 0, 255)
 
-    out = phase_magnify(coloured, FPS, alpha=2.0, fl=BAND[0], fh=BAND[1],
-                        scales=2, orientations=2)
+    out = phase_magnify(
+        coloured, FPS, alpha=2.0, fl=BAND[0], fh=BAND[1], scales=2, orientations=2
+    )
     assert out.shape == coloured.shape
     assert out.dtype == np.uint8

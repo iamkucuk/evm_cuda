@@ -29,6 +29,7 @@ if have_cuda:
 # Shape and dtype
 # ---------------------------------------------------------------------------
 
+
 @skip_no_cuda
 @pytest.mark.parametrize("dtype", ["float32", "float16", "uint8"])
 def test_round_trip_preserves_values_shape_and_dtype(dtype):
@@ -54,7 +55,7 @@ def test_wrong_dtype_is_rejected_rather_than_reinterpreted():
 
 @skip_no_cuda
 def test_non_contiguous_input_is_rejected_not_silently_copied_wrong():
-    host = np.zeros((4, 6), dtype=np.float32)[:, ::2]   # strided view
+    host = np.zeros((4, 6), dtype=np.float32)[:, ::2]  # strided view
     assert not host.flags["C_CONTIGUOUS"]
     with pytest.raises((ValueError, RuntimeError), match="contiguous"):
         DeviceArray.from_numpy(host)
@@ -63,6 +64,7 @@ def test_non_contiguous_input_is_rejected_not_silently_copied_wrong():
 # ---------------------------------------------------------------------------
 # Zero-copy export
 # ---------------------------------------------------------------------------
+
 
 @skip_no_cuda
 def test_dlpack_export_reports_a_cuda_device_and_the_same_address():
@@ -93,7 +95,7 @@ def test_the_pool_really_does_recycle_addresses():
     """
     a = DeviceArray.from_numpy(np.arange(4096, dtype=np.float32))
     address = a.ptr
-    del a                        # nothing holds this block now
+    del a  # nothing holds this block now
     b = DeviceArray.from_numpy(np.full(4096, -7.0, dtype=np.float32))
     assert b.ptr == address, (
         "the pool no longer reuses a freed block for the next same-sized "
@@ -116,12 +118,13 @@ def test_exported_memory_survives_its_python_owner():
     borrowed = DeviceArray.from_dlpack(dev.__dlpack__())
     address = dev.ptr
 
-    del dev            # the only Python reference to the original owner
+    del dev  # the only Python reference to the original owner
 
     # Same-sized allocations are exactly what the pool would hand the old block
     # to. Fill each with a value that is not in the original data.
-    decoys = [DeviceArray.from_numpy(np.full(4096, -7.0, dtype=np.float32))
-              for _ in range(8)]
+    decoys = [
+        DeviceArray.from_numpy(np.full(4096, -7.0, dtype=np.float32)) for _ in range(8)
+    ]
 
     assert np.array_equal(borrowed.numpy(), host), (
         "exported memory was recycled while still referenced"

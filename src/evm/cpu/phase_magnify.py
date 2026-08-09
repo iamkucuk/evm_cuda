@@ -41,8 +41,9 @@ def _wrap(phase: np.ndarray) -> np.ndarray:
     return np.mod(phase + np.pi, 2 * np.pi) - np.pi
 
 
-def _amplitude_weighted_blur(phase: np.ndarray, amplitude: np.ndarray,
-                             sigma: float) -> np.ndarray:
+def _amplitude_weighted_blur(
+    phase: np.ndarray, amplitude: np.ndarray, sigma: float
+) -> np.ndarray:
     """Smooth the phase spatially, weighting by how strong the signal is.
 
     Phase is meaningless where there is nothing to have a phase — a flat patch
@@ -109,8 +110,7 @@ def phase_magnify(
     """
     frames = np.asarray(frames_bgr_u8)
     if frames.ndim != 4 or frames.shape[3] != 3:
-        raise ValueError(
-            f"frames must be (T, H, W, 3); got {frames.shape}")
+        raise ValueError(f"frames must be (T, H, W, 3); got {frames.shape}")
     if frames.dtype != np.uint8:
         raise TypeError(f"frames must be uint8, got {frames.dtype}")
 
@@ -123,8 +123,7 @@ def phase_magnify(
         )
 
     count, height, width, _ = frames.shape
-    pyramid = SteerablePyramid(height, width, scales=scales,
-                               orientations=orientations)
+    pyramid = SteerablePyramid(height, width, scales=scales, orientations=orientations)
 
     # Brightness only. The two colour channels are put back untouched at the
     # end, so the result keeps its colour without it being amplified.
@@ -141,7 +140,8 @@ def phase_magnify(
     for scale in range(scales):
         for direction in range(orientations):
             series = np.stack(
-                [decomposed[t].bands[scale][direction] for t in range(count)])
+                [decomposed[t].bands[scale][direction] for t in range(count)]
+            )
             amplitude = np.abs(series)
             phase = np.angle(series)
 
@@ -157,8 +157,7 @@ def phase_magnify(
                 relative[t] = running
 
             if fl is not None and fh is not None:
-                filtered = butter_bandpass(relative, fl, fh, fps,
-                                           order=1, axis=0)
+                filtered = butter_bandpass(relative, fl, fh, fps, order=1, axis=0)
             else:
                 # The check at the top of this function has already established
                 # that exactly one pair was given, so these cannot be absent.
@@ -172,8 +171,9 @@ def phase_magnify(
                 # Keep only what the filter selected: rebuild the coefficient
                 # from the filtered phase alone rather than adding to what was
                 # already there.
-                new_series = amplitude * np.exp(1j * (phase - relative
-                                                      + (1 + alpha) * filtered))
+                new_series = amplitude * np.exp(
+                    1j * (phase - relative + (1 + alpha) * filtered)
+                )
             else:
                 new_series = series * shift
 
@@ -197,11 +197,13 @@ def phase_magnify(
 
 def _bgr_to_yiq(frame: np.ndarray) -> np.ndarray:
     from ..io.video import rgb_to_yiq
+
     rgb = frame[:, :, ::-1].astype(np.float64) / 255.0
     return rgb_to_yiq(rgb)
 
 
 def _yiq_to_bgr_u8(frame_yiq: np.ndarray) -> np.ndarray:
     from ..io.video import yiq_to_rgb
+
     rgb = np.clip(yiq_to_rgb(frame_yiq), 0.0, 1.0)
     return np.round(rgb[:, :, ::-1] * 255.0).astype(np.uint8)

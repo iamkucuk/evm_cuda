@@ -24,7 +24,7 @@ are built from.
 import numpy as np
 from evm.cpu import ops
 
-frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)     # your frames, 8-bit BGR
+frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)  # your frames, 8-bit BGR
 
 ntsc = ops.bgr_u8_to_ntsc(frames)
 small = ops.blur_dn(ntsc, 2)
@@ -48,7 +48,7 @@ frames = DeviceArray.from_numpy(np.zeros((60, 64, 64, 3), dtype=np.uint8))
 ntsc = ops.bgr_u8_to_ntsc(frames)
 small = ops.blur_dn(ntsc, 2)
 band = ops.iir_bandpass(small, 0.4, 0.05)
-result = band.numpy()                 # the one copy back
+result = band.numpy()  # the one copy back
 ```
 
 ## Handing the result to PyTorch without copying
@@ -58,9 +58,10 @@ a result can go straight into a tensor. No copy happens, and the two then refer
 to the same memory:
 
 ```python
-import torch                                  # doctest: +SKIP
-tensor = torch.from_dlpack(band)              # doctest: +SKIP
-assert tensor.data_ptr() == band.ptr          # doctest: +SKIP
+import torch  # doctest: +SKIP
+
+tensor = torch.from_dlpack(band)  # doctest: +SKIP
+assert tensor.data_ptr() == band.ptr  # doctest: +SKIP
 ```
 
 This is what makes the library usable as one stage inside a larger pipeline
@@ -76,12 +77,13 @@ wherever the library does:
 import numpy as np
 from evm.backend import registry
 
-frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)     # your frames, 8-bit BGR
+frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)  # your frames, 8-bit BGR
 
 name, impl = registry.select("auto")
 print("running on", name)
-out = impl.motion_lpyr_iir_core(frames, 30.0, alpha=10.0, lambda_c=16.0,
-                                r1=0.4, r2=0.05)
+out = impl.motion_lpyr_iir_core(
+    frames, 30.0, alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05
+)
 print(out.shape)
 ```
 
@@ -92,7 +94,7 @@ Implement the operations listed above for whatever the hardware is, then:
 ```python
 from evm.backend import generic, registry
 
-backend = generic.bind(my_operations)     # all four pipelines, derived
+backend = generic.bind(my_operations)  # all four pipelines, derived
 ```
 
 That is the whole job. The pipelines come from the operations, and the

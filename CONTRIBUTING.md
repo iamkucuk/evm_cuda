@@ -29,12 +29,16 @@ For the portable backend add `.[opencl]`; for the documentation site add
 
 ```bash
 python -m pytest tests/ -q      # tests
-ruff check . && ruff format --check .
-mypy
+ruff check .                    # the linter
+ruff format --check .           # the formatter, which also checks the code
+                                # blocks inside the documentation
+mypy                            # types
 mkdocs build --strict           # if you touched the documentation
 ```
 
-All four are enforced automatically.
+All five are enforced automatically. Run the formatter check as well as the
+linter: they are separate commands and pass independently, and it is easy to
+satisfy one while failing the other.
 
 ## What is expected of a change
 

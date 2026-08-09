@@ -31,7 +31,7 @@ Frames already in memory work too, with no file involved:
 import numpy as np
 import evm
 
-frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)   # your frames here
+frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)  # your frames here
 amplified = evm.magnify(frames, preset="motion")
 ```
 

@@ -76,13 +76,13 @@ class SteerablePyramid:
             more gives finer angular selectivity at proportional cost.
     """
 
-    def __init__(self, height: int, width: int, *, scales: int = 4,
-                 orientations: int = 4) -> None:
+    def __init__(
+        self, height: int, width: int, *, scales: int = 4, orientations: int = 4
+    ) -> None:
         if scales < 1:
             raise ValueError(f"scales must be at least 1, got {scales}")
         if orientations < 1:
-            raise ValueError(
-                f"orientations must be at least 1, got {orientations}")
+            raise ValueError(f"orientations must be at least 1, got {orientations}")
 
         limit = int(np.floor(np.log2(min(height, width)))) - 2
         if scales > limit:
@@ -104,9 +104,10 @@ class SteerablePyramid:
         rows = np.fft.fftshift(np.fft.fftfreq(self.height)) * 2.0
         cols = np.fft.fftshift(np.fft.fftfreq(self.width)) * 2.0
         y, x = np.meshgrid(rows, cols, indexing="ij")
-        radius = np.sqrt(x ** 2 + y ** 2)
+        radius = np.sqrt(x**2 + y**2)
         radius[self.height // 2, self.width // 2] = radius[
-            self.height // 2, max(self.width // 2 - 1, 0)]
+            self.height // 2, max(self.width // 2 - 1, 0)
+        ]
         angle = np.arctan2(y, x)
         return radius, angle
 
@@ -144,8 +145,9 @@ class SteerablePyramid:
         probe = np.linspace(0, np.pi, 4096, endpoint=False)
         total = np.zeros_like(probe)
         for k in range(orientations):
-            offset = np.mod(probe - np.pi * k / orientations + np.pi / 2,
-                            np.pi) - np.pi / 2
+            offset = (
+                np.mod(probe - np.pi * k / orientations + np.pi / 2, np.pi) - np.pi / 2
+            )
             total += np.cos(offset) ** (2 * (orientations - 1))
         return window / np.sqrt(float(total[0]))
 
@@ -167,17 +169,16 @@ class SteerablePyramid:
         radius, angle = self._polar_grid()
 
         # Octave-spaced centres, finest first.
-        centres = [0.5 / (2 ** scale) for scale in range(self.scales)]
+        centres = [0.5 / (2**scale) for scale in range(self.scales)]
         radial = [self._radial_window(radius, c) for c in centres]
-        angular = [self._angular_window(angle, k)
-                   for k in range(self.orientations)]
+        angular = [self._angular_window(angle, k) for k in range(self.orientations)]
 
         # The angular set sums to one, so the oriented bands together cover
         # exactly the sum of the squared radial windows. Whatever is left is
         # split into what is finer than the finest band and what is coarser
         # than the coarsest, so that everything together covers the plane
         # exactly once.
-        covered = np.clip(sum(r ** 2 for r in radial), 0.0, 1.0)
+        covered = np.clip(sum(r**2 for r in radial), 0.0, 1.0)
         residual = np.clip(1.0 - covered, 0.0, None)
         finest = centres[0]
         highpass = np.sqrt(np.where(radius > finest, residual, 0.0))
@@ -223,22 +224,24 @@ class SteerablePyramid:
         that cannot be inverted cannot be used to modify anything.
         """
         f = self._filters
-        residuals = (np.fft.fftshift(np.fft.fft2(pyramid.highpass)) * f["highpass"]
-                     + np.fft.fftshift(np.fft.fft2(pyramid.lowpass)) * f["lowpass"])
+        residuals = (
+            np.fft.fftshift(np.fft.fft2(pyramid.highpass)) * f["highpass"]
+            + np.fft.fftshift(np.fft.fft2(pyramid.lowpass)) * f["lowpass"]
+        )
 
         oriented = np.zeros_like(residuals)
         for radial, per_direction in zip(f["radial"], pyramid.bands):
             for angular, band in zip(f["angular"], per_direction):
-                oriented = oriented + (np.fft.fftshift(np.fft.fft2(band))
-                                       * radial * angular * f["half"])
+                oriented = oriented + (
+                    np.fft.fftshift(np.fft.fft2(band)) * radial * angular * f["half"]
+                )
 
         # The oriented bands only ever covered half the plane. A real image's
         # spectrum is symmetric about the origin — each frequency's mirror is
         # its complex conjugate — so the discarded half is recovered rather
         # than needing to have been stored.
         mirrored = np.conj(_mirror(oriented))
-        return np.real(np.fft.ifft2(np.fft.ifftshift(residuals + oriented
-                                                     + mirrored)))
+        return np.real(np.fft.ifft2(np.fft.ifftshift(residuals + oriented + mirrored)))
 
 
 def _mirror(spectrum: np.ndarray) -> np.ndarray:

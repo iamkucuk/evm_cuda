@@ -32,6 +32,7 @@ Check what you got:
 
 ```python
 import evm.cuda
+
 print(evm.cuda.have_cuda)
 ```
 
@@ -49,6 +50,7 @@ package. To find out whether both halves are present:
 
 ```python
 from evm.opencl import runtime
+
 print(runtime.unavailable_reason() or f"ready: {runtime.device_name()}")
 ```
 
@@ -64,6 +66,7 @@ ask before running:
 
 ```python
 from evm import backend
+
 name, _ = backend.select("auto")
 print(name)
 ```

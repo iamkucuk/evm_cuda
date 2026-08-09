@@ -343,8 +343,9 @@ def _band_projection_matrix(
 
     # -- streaming ----------------------------------------------------------
 
-    def iir_step(self, fast: ClArray, slow: ClArray, current: ClArray,
-                 r1: float, r2: float) -> ClArray:
+    def iir_step(
+        self, fast: ClArray, slow: ClArray, current: ClArray, r1: float, r2: float
+    ) -> ClArray:
         """Advance both running averages by one frame and return the difference.
 
         Optional in the operations protocol. A backend without it still works —
@@ -357,8 +358,16 @@ def _band_projection_matrix(
         """
         count = fast.size
         out = ClArray.empty(fast.shape, np.float32)
-        self._k("iir_step")(self._q, (count,), None,
-                            fast.buffer, slow.buffer, current.buffer,
-                            out.buffer, np.int32(count),
-                            np.float32(r1), np.float32(r2))
+        self._k("iir_step")(
+            self._q,
+            (count,),
+            None,
+            fast.buffer,
+            slow.buffer,
+            current.buffer,
+            out.buffer,
+            np.int32(count),
+            np.float32(r1),
+            np.float32(r2),
+        )
         return out

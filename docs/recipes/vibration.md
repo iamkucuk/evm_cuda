@@ -42,8 +42,9 @@ import numpy as np
 import evm
 
 fps = 240.0
-amplified = evm.magnify("machine.mp4", preset="motion", fps=fps,
-                        alpha=25, lambda_c=16, r1=0.4, r2=0.05)
+amplified = evm.magnify(
+    "machine.mp4", preset="motion", fps=fps, alpha=25, lambda_c=16, r1=0.4, r2=0.05
+)
 
 # One number per frame, from a patch on the moving part.
 signal = amplified[:, 200:260, 300:360, :].mean(axis=(1, 2, 3))

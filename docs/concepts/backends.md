@@ -17,6 +17,7 @@ for in advance:
 
 ```python
 from evm import backend
+
 name, _ = backend.select("auto")
 print(name)
 ```
@@ -28,6 +29,7 @@ to happen by accident.
 
 ```python
 from evm.backend import registry
+
 for info in registry.list_backends():
     print(f"{info.name:8} {info.unavailable_reason or 'available'}")
 ```
@@ -53,6 +55,7 @@ Implement about a dozen primitive operations for the new device, then:
 
 ```python
 from evm.backend import generic
+
 backend = generic.bind(my_operations)
 ```
 
