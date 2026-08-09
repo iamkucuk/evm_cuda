@@ -17,6 +17,19 @@ The per-frame path here allocates/frees device memory per call, which is why
 motion-ideal/butter modes and as a correctness cross-check (its outputs must
 match ``batched`` within tolerance — see ``tests/cuda/test_pipelines.py``).
 
+Two layers, as in ``evm.cpu.magnify`` and ``evm.cuda.batched``
+--------------------------------------------------------------
+Each pipeline is an **array core** (``color_gdown_ideal_core``,
+``motion_lpyr_ideal_core``, ``motion_lpyr_butter_core``,
+``motion_lpyr_iir_core``) taking ``(T, H, W, 3)`` uint8 BGR frames already in
+memory and returning the same shape and dtype, plus a **path wrapper**
+(``magnify_*``) that decodes, drops the last ``drop_last`` frames, calls the
+core and writes the file. ``motion_lpyr_ideal_core`` and
+``motion_lpyr_butter_core`` are the only CUDA implementations of those two
+variants, so they are what ``evm.cuda`` contributes to the Pipelines protocol
+for them; the other two cores here are cross-checks for the faster fused
+versions in ``batched``.
+
 Strategy
 --------
 The host-side bookkeeping — frame reading, the Figure-6 alpha schedule,
@@ -44,6 +57,9 @@ import numpy as np
 from . import _evm_cuda
 from .runtime import butter_bandpass_coeffs
 from ._common import figure6_alpha_schedule, read_frames as _read_frames
+# Same validator as the CPU oracle and evm.cuda.batched: one set of messages for
+# a wrong shape or dtype, whichever backend the user picked.
+from ..cpu.magnify import _as_frames
 
 DROP_LAST = _evm_cuda.drop_last
 EXAGGERATION_FACTOR = _evm_cuda.exaggeration_factor
@@ -76,9 +92,9 @@ def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
 # Color pipeline (Gaussian-downsampled stack + ideal bandpass)
 # ---------------------------------------------------------------------------
 
-def magnify_color_gdown_ideal(
-    vid_path: str | Path,
-    out_path: str | Path,
+def color_gdown_ideal_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
     *,
     alpha: float,
     level: int,
@@ -87,14 +103,18 @@ def magnify_color_gdown_ideal(
     chrom_attenuation: float = 1.0,
     sampling_rate: float | None = None,
 ) -> np.ndarray:
-    """``evm.magnify_color_gdown_ideal``, GPU-accelerated.
+    """``evm.cpu.magnify.color_gdown_ideal_core``, GPU-accelerated per frame.
 
-    Pipeline: read+drop-last -> per-frame bgr_u8->ntsc on GPU -> per-frame
-    blur_dn on GPU (sum-normalized binom5) -> stack along time -> transpose
-    to (N,T) -> ideal_bandpass via cuFFT -> per-channel gain -> per-frame
-    bilinear upsample (cv2) -> add to ntsc frame -> ntsc->bgr u8 on GPU.
+    Pipeline: per-frame bgr_u8->ntsc on GPU -> per-frame blur_dn on GPU
+    (sum-normalized binom5) -> stack along time -> transpose to (N,T) ->
+    ideal_bandpass via cuFFT -> per-channel gain -> per-frame bilinear upsample
+    (cv2) -> add to ntsc frame -> ntsc->bgr u8 on GPU.
+
+    ``frames_bgr_u8`` is ``(T, H, W, 3)`` uint8 BGR and so is the result.
+    Superseded for speed by ``evm.cuda.batched.color_gdown_ideal_core``; kept as
+    the per-frame cross-check (``tests/cuda/test_pipelines.py``).
     """
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     if sampling_rate is None:
         sampling_rate = fps
     n = len(frames)
@@ -148,6 +168,32 @@ def magnify_color_gdown_ideal(
         rendered = ntsc_frame + upsampled
         out[i] = _ntsc_f32_to_bgr_u8(rendered)
 
+    return out
+
+
+def magnify_color_gdown_ideal(
+    vid_path: str | Path,
+    out_path: str | Path,
+    *,
+    alpha: float,
+    level: int,
+    fl: float,
+    fh: float,
+    chrom_attenuation: float = 1.0,
+    sampling_rate: float | None = None,
+) -> np.ndarray:
+    """Run :func:`color_gdown_ideal_core` on ``vid_path``, write ``out_path``.
+
+    Reads the clip (dropping the last ``_evm_cuda.drop_last`` frames, as the
+    MATLAB reference does) and returns float32 in [0, 1].
+    """
+    frames, fps = _read_frames(vid_path)
+    out = color_gdown_ideal_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, level=level, fl=fl, fh=fh,
+        chrom_attenuation=chrom_attenuation,
+        sampling_rate=sampling_rate,
+    )
     _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
 
@@ -156,9 +202,9 @@ def magnify_color_gdown_ideal(
 # Motion pipelines (Laplacian pyramid + temporal bandpass)
 # ---------------------------------------------------------------------------
 
-def _motion_lpyr(
-    vid_path: str | Path,
-    out_path: str | Path,
+def _motion_lpyr_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
     *,
     alpha: float,
     lambda_c: float,
@@ -171,10 +217,10 @@ def _motion_lpyr(
     r2: float | None = None,
     exaggeration_factor: float = EXAGGERATION_FACTOR,
 ) -> np.ndarray:
-    """Shared body for the three motion pipelines. Picks the temporal filter
-    based on ``filter_kind``; the spatial Laplacian pyramid build/reconstruct
-    and the Figure-6 schedule are common."""
-    frames, fps = _read_frames(vid_path)
+    """Shared body for the three motion cores, array in / array out. Picks the
+    temporal filter based on ``filter_kind``; the spatial Laplacian pyramid
+    build/reconstruct and the Figure-6 schedule are common."""
+    frames = _as_frames(frames_bgr_u8)
     if sampling_rate is None and filter_kind in ("ideal", "butter"):
         sampling_rate = fps
     n = len(frames)
@@ -262,9 +308,68 @@ def _motion_lpyr(
             np.ascontiguousarray(delta, dtype=np.float32), chrom_attenuation)
         out[i] = _evm_cuda.add_and_quantize(ntsc_frames[i], delta)
 
-    _write(out_path, out, fps)
-    return out.astype(np.float32) / 255.0
+    return out
 
+
+# --- Array cores: the Pipelines protocol, one per filter --------------------
+
+def motion_lpyr_ideal_core(
+    frames_bgr_u8, fps, *, alpha, lambda_c, fl, fh,
+    chrom_attenuation=0.0, sampling_rate=None,
+    exaggeration_factor=EXAGGERATION_FACTOR,
+):
+    """Laplacian pyramid + ideal bandpass, array in / array out (uint8 BGR)."""
+    return _motion_lpyr_core(
+        frames_bgr_u8, fps, alpha=alpha, lambda_c=lambda_c,
+        chrom_attenuation=chrom_attenuation, filter_kind="ideal",
+        fl=fl, fh=fh, sampling_rate=sampling_rate,
+        exaggeration_factor=exaggeration_factor,
+    )
+
+
+def motion_lpyr_butter_core(
+    frames_bgr_u8, fps, *, alpha, lambda_c, fl, fh,
+    chrom_attenuation=0.0, sampling_rate=None, order=1,
+    exaggeration_factor=EXAGGERATION_FACTOR,
+):
+    """Laplacian pyramid + 1st-order Butterworth, array in / array out.
+
+    ``order`` exists for signature parity with the CPU core; the CUDA kernel
+    takes the six coefficients of a first-order bandpass, so anything else is
+    refused rather than silently computed at order 1.
+    """
+    if order != 1:
+        raise ValueError(
+            f"the CUDA Butterworth kernel implements order=1 only; got "
+            f"order={order!r}. Use backend='cpu' for higher orders."
+        )
+    return _motion_lpyr_core(
+        frames_bgr_u8, fps, alpha=alpha, lambda_c=lambda_c,
+        chrom_attenuation=chrom_attenuation, filter_kind="butter",
+        fl=fl, fh=fh, sampling_rate=sampling_rate,
+        exaggeration_factor=exaggeration_factor,
+    )
+
+
+def motion_lpyr_iir_core(
+    frames_bgr_u8, fps, *, alpha, lambda_c, r1, r2,
+    chrom_attenuation=0.1,
+    exaggeration_factor=EXAGGERATION_FACTOR,
+):
+    """Laplacian pyramid + direct r1/r2 IIR, array in / array out.
+
+    ``fps`` is accepted and ignored (the recursion runs on frame index).
+    Superseded for speed by ``evm.cuda.batched.motion_lpyr_iir_core``.
+    """
+    return _motion_lpyr_core(
+        frames_bgr_u8, fps, alpha=alpha, lambda_c=lambda_c,
+        chrom_attenuation=chrom_attenuation, filter_kind="iir",
+        r1=r1, r2=r2,
+        exaggeration_factor=exaggeration_factor,
+    )
+
+
+# --- Path wrappers: decode, call the core, write ----------------------------
 
 def magnify_motion_lpyr_ideal(
     vid_path, out_path, *, alpha, lambda_c, fl, fh,
@@ -272,12 +377,15 @@ def magnify_motion_lpyr_ideal(
     exaggeration_factor=EXAGGERATION_FACTOR,
 ):
     """``evm.magnify_motion_lpyr_ideal`` (Laplacian + ideal bandpass)."""
-    return _motion_lpyr(
-        vid_path, out_path, alpha=alpha, lambda_c=lambda_c,
-        chrom_attenuation=chrom_attenuation, filter_kind="ideal",
-        fl=fl, fh=fh, sampling_rate=sampling_rate,
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_ideal_core(
+        np.stack(frames, axis=0), fps, alpha=alpha, lambda_c=lambda_c,
+        fl=fl, fh=fh, chrom_attenuation=chrom_attenuation,
+        sampling_rate=sampling_rate,
         exaggeration_factor=exaggeration_factor,
     )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
 
 
 def magnify_motion_lpyr_butter(
@@ -286,12 +394,15 @@ def magnify_motion_lpyr_butter(
     exaggeration_factor=EXAGGERATION_FACTOR,
 ):
     """``evm.magnify_motion_lpyr_butter`` (Laplacian + 1st-order Butterworth)."""
-    return _motion_lpyr(
-        vid_path, out_path, alpha=alpha, lambda_c=lambda_c,
-        chrom_attenuation=chrom_attenuation, filter_kind="butter",
-        fl=fl, fh=fh, sampling_rate=sampling_rate,
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_butter_core(
+        np.stack(frames, axis=0), fps, alpha=alpha, lambda_c=lambda_c,
+        fl=fl, fh=fh, chrom_attenuation=chrom_attenuation,
+        sampling_rate=sampling_rate,
         exaggeration_factor=exaggeration_factor,
     )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
 
 
 def magnify_motion_lpyr_iir(
@@ -300,9 +411,11 @@ def magnify_motion_lpyr_iir(
     exaggeration_factor=EXAGGERATION_FACTOR,
 ):
     """``evm.magnify_motion_lpyr_iir`` (Laplacian + direct r1/r2 IIR)."""
-    return _motion_lpyr(
-        vid_path, out_path, alpha=alpha, lambda_c=lambda_c,
-        chrom_attenuation=chrom_attenuation, filter_kind="iir",
-        r1=r1, r2=r2,
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_iir_core(
+        np.stack(frames, axis=0), fps, alpha=alpha, lambda_c=lambda_c,
+        r1=r1, r2=r2, chrom_attenuation=chrom_attenuation,
         exaggeration_factor=exaggeration_factor,
     )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0

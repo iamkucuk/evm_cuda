@@ -12,6 +12,8 @@ Three filters, each tested with an in-band and out-of-band pure sinusoid:
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -72,3 +74,28 @@ def test_iir_dc_input_goes_to_zero() -> None:
     dc = np.ones(T)
     out = iir_bandpass(dc, 0.4, 0.05)
     assert np.abs(out[T // 2 :]).max() < 1e-9
+
+
+def test_ideal_bandpass_warns_when_the_band_selects_no_bins():
+    """A band narrower than the frequency resolution silently returns zeros.
+
+    A short clip resolves frequencies only in steps of ``sampling_rate / n``, so
+    a narrow band can fall entirely between two bins. The filter is then a
+    correct no-op, the pipeline hands back its input unamplified, and nothing
+    looks wrong. That is the failure this warning exists to make visible: the
+    shipped ``pulse`` preset (0.833-1.0 Hz) selects nothing at all below roughly
+    181 frames at 30 fps, which is most short test clips.
+    """
+    sig = np.random.default_rng(0).standard_normal((90, 4)).astype(np.float64)
+
+    with pytest.warns(RuntimeWarning, match="selected no frequency bins"):
+        out = ideal_bandpass(sig, 50 / 60, 1.0, 30.0)
+    assert np.array_equal(out, np.zeros_like(out)), "no bins kept must give zeros"
+
+    # The same band over a long enough signal keeps at least one bin and must
+    # not warn.
+    long_sig = np.random.default_rng(0).standard_normal((300, 4)).astype(np.float64)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        kept = ideal_bandpass(long_sig, 50 / 60, 1.0, 30.0)
+    assert np.abs(kept).max() > 0.0, "a band with bins in it must pass signal"

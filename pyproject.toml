@@ -79,6 +79,12 @@ dev = [
     "pytest>=7.0",
 ]
 
+# The console command. `evm` alone was rejected (plan decision D5): it collides
+# with Ethereum tooling, which already owns that name on PATH for a lot of
+# people. Subcommands: magnify / download / bench.
+[project.scripts]
+evm-magnify = "evm._cli:main"
+
 [project.urls]
 Homepage = "https://iamkucuk.github.io/eulerian-video-magnification-cuda/"
 Repository = "https://github.com/iamkucuk/eulerian-video-magnification-cuda"

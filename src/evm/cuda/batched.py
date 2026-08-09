@@ -20,6 +20,27 @@ these pipelines do ~15 batched calls with zero per-call transfers.
 The spatial kernels (blur_dn, lpyr_build/recon) use batched variants that
 process all n*3 slices per launch via grid.z = M, collapsing ~35k launches
 into ~50. See bindings.cpp batched_lpyr_build / batched_blur_dn_color.
+
+Two layers, as in ``evm.cpu.magnify``
+-------------------------------------
+* the **array cores** — ``color_gdown_ideal_core``, ``motion_lpyr_iir_core``
+  and their ``_fp16_`` twins — take decoded frames already in memory,
+  ``(T, H, W, 3)`` uint8 BGR, and return the magnified frames in the same shape
+  and dtype. They touch no files. These are this backend's *override* of the
+  Pipelines protocol (`docs/dev/PLAN.md` section 3c): the whole point of the
+  module is that the stages are fused and device-resident, which op-by-op
+  execution through the Ops protocol would throw away.
+* the **path wrappers** — ``magnify_color_gdown_ideal`` and friends — decode
+  (dropping the last ``_evm_cuda.drop_last`` frames, as the MATLAB reference
+  does), call the core, write the output file when ``out_path`` is non-empty,
+  and return float32 in [0, 1]. Signatures unchanged by the split.
+
+The ``on_stage`` profiling hook belongs to the core, because the stages it
+names are the core's. ``evm.cuda.benchmark`` still drives it through the path
+wrapper, so nothing about the measured code path moved.
+
+FP32 and FP16 bodies stay duplicated on purpose (section 3d rule 4): merging
+them risks numeric drift, and README.md's accuracy figures are load-bearing.
 """
 
 from __future__ import annotations
@@ -31,6 +52,10 @@ import numpy as np
 
 from . import _evm_cuda
 from ._common import figure6_alpha_schedule, read_frames as _read_frames
+# One frame validator for every backend: a wrong shape or dtype must produce the
+# same message whether the user picked "cpu" or "cuda", so the CPU oracle's
+# checker is imported rather than reimplemented.
+from ..cpu.magnify import _as_frames
 
 
 class DeviceBuffer:
@@ -142,9 +167,9 @@ def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
 # The Stage 2b host round-trip is the remaining transfer bottleneck — a
 # device-resident ideal_bandpass would eliminate it.
 
-def magnify_color_gdown_ideal(
-    vid_path: str | Path,
-    out_path: str | Path,
+def color_gdown_ideal_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
     *,
     alpha: float,
     level: int,
@@ -154,16 +179,23 @@ def magnify_color_gdown_ideal(
     sampling_rate: float | None = None,
     on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
+    """``amplify_spatial_Gdown_temporal_ideal.m``, array in / array out, fused.
+
+    ``frames_bgr_u8`` is ``(T, H, W, 3)`` uint8 BGR and so is the result. One
+    H2D at entry, one D2H at exit; every stage in between is device-resident.
+    ``sampling_rate`` defaults to ``fps``.
+    """
     def _stage(name, body):
         return body() if on_stage is None else on_stage(name, body)
 
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     if sampling_rate is None:
         sampling_rate = fps
     n = len(frames)
     h, w = frames[0].shape[:2]
 
-    clip_u8 = np.stack(frames, axis=0)  # (n, h, w, 3) uint8 BGR, C-contiguous
+    # (n, h, w, 3) uint8 BGR — the upload needs it C-contiguous.
+    clip_u8 = np.ascontiguousarray(frames)
 
     _warmup_gpu_pool()  # first cudaMalloc is ~1s without this; ~0s with
 
@@ -227,12 +259,10 @@ def magnify_color_gdown_ideal(
         lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3),
     )
 
-    if out_path:
-        _write(out_path, out, fps)
-    return out.astype(np.float32) / 255.0
+    return out
 
 
-def magnify_color_gdown_ideal_fp16(
+def magnify_color_gdown_ideal(
     vid_path: str | Path,
     out_path: str | Path,
     *,
@@ -244,7 +274,38 @@ def magnify_color_gdown_ideal_fp16(
     sampling_rate: float | None = None,
     on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
-    """Color pipeline with FP16 NTSC storage.
+    """Run :func:`color_gdown_ideal_core` on ``vid_path``, write ``out_path``.
+
+    Reads the clip (dropping the last ``_evm_cuda.drop_last`` frames, as the
+    MATLAB reference does) and returns the magnified frames as float32 in
+    [0, 1]. An empty ``out_path`` skips the file write.
+    """
+    frames, fps = _read_frames(vid_path)
+    out = color_gdown_ideal_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, level=level, fl=fl, fh=fh,
+        chrom_attenuation=chrom_attenuation,
+        sampling_rate=sampling_rate,
+        on_stage=on_stage,
+    )
+    if out_path:
+        _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
+
+
+def color_gdown_ideal_fp16_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
+    *,
+    alpha: float,
+    level: int,
+    fl: float,
+    fh: float,
+    chrom_attenuation: float = 1.0,
+    sampling_rate: float | None = None,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
+) -> np.ndarray:
+    """Color pipeline with FP16 NTSC storage, array in / array out.
 
     NTSC (the dominant persistent buffer, read by render) is stored as __half.
     All other buffers keep the FP32 layout of the FP32 pipeline: the Gaussian
@@ -252,17 +313,20 @@ def magnify_color_gdown_ideal_fp16(
     (FFT output) stays FP32. Only the NTSC buffer read by the fused render
     kernel is halved, which is where the bandwidth win lands (render is ~73%
     of GPU time in the FP32 color pipeline).
+
+    Deliberately a separate body from :func:`color_gdown_ideal_core` rather
+    than a ``dtype`` parameter over one body — see the module docstring.
     """
     def _stage(name, body):
         return body() if on_stage is None else on_stage(name, body)
 
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     if sampling_rate is None:
         sampling_rate = fps
     n = len(frames)
     h, w = frames[0].shape[:2]
 
-    clip_u8 = np.stack(frames, axis=0)
+    clip_u8 = np.ascontiguousarray(frames)
 
     _warmup_gpu_pool()
 
@@ -328,6 +392,30 @@ def magnify_color_gdown_ideal_fp16(
         lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3),
     )
 
+    return out
+
+
+def magnify_color_gdown_ideal_fp16(
+    vid_path: str | Path,
+    out_path: str | Path,
+    *,
+    alpha: float,
+    level: int,
+    fl: float,
+    fh: float,
+    chrom_attenuation: float = 1.0,
+    sampling_rate: float | None = None,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
+) -> np.ndarray:
+    """Run :func:`color_gdown_ideal_fp16_core` on ``vid_path``, write ``out_path``."""
+    frames, fps = _read_frames(vid_path)
+    out = color_gdown_ideal_fp16_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, level=level, fl=fl, fh=fh,
+        chrom_attenuation=chrom_attenuation,
+        sampling_rate=sampling_rate,
+        on_stage=on_stage,
+    )
     if out_path:
         _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0
@@ -337,9 +425,9 @@ def magnify_color_gdown_ideal_fp16(
 # Motion pipeline (Laplacian pyramid + IIR bandpass)
 # ---------------------------------------------------------------------------
 
-def magnify_motion_lpyr_iir(
-    vid_path: str | Path,
-    out_path: str | Path,
+def motion_lpyr_iir_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
     *,
     alpha: float,
     lambda_c: float,
@@ -349,10 +437,19 @@ def magnify_motion_lpyr_iir(
     exaggeration_factor: float = _evm_cuda.exaggeration_factor,
     on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
+    """``amplify_spatial_lpyr_temporal_iir.m``, array in / array out, fused.
+
+    ``frames_bgr_u8`` is ``(T, H, W, 3)`` uint8 BGR and so is the result.
+
+    ``fps`` is accepted and ignored, exactly as in the CPU core
+    (``evm/cpu/magnify.py:431``): the r1/r2 IIR is a recursion on frame index
+    with no sampling rate in it. It stays in the signature so all four cores
+    share one call shape.
+    """
     def _stage(name, body):
         return body() if on_stage is None else on_stage(name, body)
 
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     n = len(frames)
     h, w = frames[0].shape[:2]
 
@@ -370,7 +467,7 @@ def magnify_motion_lpyr_iir(
         level_sizes.append((ch, cw))
         ch = (ch + 1) // 2; cw = (cw + 1) // 2
 
-    clip_u8 = np.stack(frames, axis=0)
+    clip_u8 = np.ascontiguousarray(frames)
 
     _warmup_gpu_pool_motion(n, h, w, levels)  # motion uses larger buffers
 
@@ -445,12 +542,10 @@ def magnify_motion_lpyr_iir(
     out = _stage("D2H) output",
                  lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3))
 
-    if out_path:
-        _write(out_path, out, fps)
-    return out.astype(np.float32) / 255.0
+    return out
 
 
-def magnify_motion_lpyr_iir_fp16(
+def magnify_motion_lpyr_iir(
     vid_path: str | Path,
     out_path: str | Path,
     *,
@@ -462,7 +557,37 @@ def magnify_motion_lpyr_iir_fp16(
     exaggeration_factor: float = _evm_cuda.exaggeration_factor,
     on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
 ) -> np.ndarray:
-    """Motion pipeline with FP16 storage for large intermediates.
+    """Run :func:`motion_lpyr_iir_core` on ``vid_path``, write ``out_path``.
+
+    Reads the clip (dropping the last ``_evm_cuda.drop_last`` frames) and
+    returns float32 in [0, 1]. An empty ``out_path`` skips the file write.
+    """
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_iir_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, lambda_c=lambda_c, r1=r1, r2=r2,
+        chrom_attenuation=chrom_attenuation,
+        exaggeration_factor=exaggeration_factor,
+        on_stage=on_stage,
+    )
+    if out_path:
+        _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
+
+
+def motion_lpyr_iir_fp16_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
+    *,
+    alpha: float,
+    lambda_c: float,
+    r1: float,
+    r2: float,
+    chrom_attenuation: float = 0.1,
+    exaggeration_factor: float = _evm_cuda.exaggeration_factor,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
+) -> np.ndarray:
+    """Motion pipeline with FP16 storage for large intermediates, array in/out.
 
     NTSC, planar, Laplacian bands, filtered bands, and delta use ``__half``.
     Spatial: half storage, float accumulate (cvt_in/out). IIR: TN + FP64 state.
@@ -472,11 +597,14 @@ def magnify_motion_lpyr_iir_fp16(
     Peak VRAM is lower than FP32: measured 8.4 GB on baby.mp4 (301 frames,
     544x960) against 16.3 GB for the FP32 path, so this one fits a 16 GB card
     and FP32 motion does not.
+
+    ``fps`` is accepted and ignored (see :func:`motion_lpyr_iir_core`).
+    Deliberately a separate body from the FP32 core — see the module docstring.
     """
     def _stage(name, body):
         return body() if on_stage is None else on_stage(name, body)
 
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     n = len(frames)
     h, w = frames[0].shape[:2]
 
@@ -494,7 +622,7 @@ def magnify_motion_lpyr_iir_fp16(
         level_sizes.append((ch, cw))
         ch = (ch + 1) // 2; cw = (cw + 1) // 2
 
-    clip_u8 = np.stack(frames, axis=0)
+    clip_u8 = np.ascontiguousarray(frames)
     _warmup_gpu_pool_motion(n, h, w, levels)
 
     ntsc_floats = n * h * w * 3
@@ -566,6 +694,30 @@ def magnify_motion_lpyr_iir_fp16(
         lambda: d_out_u8.download_u8(n * h * w * 3).reshape(n, h, w, 3),
     )
 
+    return out
+
+
+def magnify_motion_lpyr_iir_fp16(
+    vid_path: str | Path,
+    out_path: str | Path,
+    *,
+    alpha: float,
+    lambda_c: float,
+    r1: float,
+    r2: float,
+    chrom_attenuation: float = 0.1,
+    exaggeration_factor: float = _evm_cuda.exaggeration_factor,
+    on_stage: "Callable[[str, Callable[[], object]], object] | None" = None,
+) -> np.ndarray:
+    """Run :func:`motion_lpyr_iir_fp16_core` on ``vid_path``, write ``out_path``."""
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_iir_fp16_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, lambda_c=lambda_c, r1=r1, r2=r2,
+        chrom_attenuation=chrom_attenuation,
+        exaggeration_factor=exaggeration_factor,
+        on_stage=on_stage,
+    )
     if out_path:
         _write(out_path, out, fps)
     return out.astype(np.float32) / 255.0

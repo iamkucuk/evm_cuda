@@ -93,7 +93,13 @@ def test_device_resident_bandpass_matches_per_channel_host():
     """
     rng = np.random.default_rng(33)
     n, hl, wl = 40, 12, 10
-    fl, fh, sampling_rate = 0.83, 1.0, 30.0
+    # Band [0.5, 2.0] rather than [0.83, 1.0]. With 40 frames at 30 fps the
+    # frequency bins sit 0.75 Hz apart, so the narrow band fell between two of
+    # them: the filter kept nothing and BOTH sides of this comparison were
+    # all-zero arrays. The assertion held no matter what the device did. The
+    # wider band keeps the bins at 0.75 and 1.5 Hz, so the two sides now carry
+    # real signal and the comparison means something.
+    fl, fh, sampling_rate = 0.5, 2.0, 30.0
 
     # Start from the same planar layout the pipeline hands us post-blur_dn.
     planar = rng.random((n * 3, hl, wl)).astype(np.float32)
@@ -104,13 +110,25 @@ def test_device_resident_bandpass_matches_per_channel_host():
     ref = np.empty_like(gdown)
     for c in range(3):
         sig = np.ascontiguousarray(gdown[..., c].reshape(n, hl * wl).T)  # (N,T)
-        out = ideal_bandpass(sig.astype(np.float64), fl, fh, sampling_rate)
+        # axis=1 is the time axis of this (pixels, frames) layout, and time is
+        # what the device kernel filters. The default axis=0 filtered across
+        # pixels instead; that went unnoticed only because the old band made
+        # both sides zero.
+        out = ideal_bandpass(sig.astype(np.float64), fl, fh, sampling_rate, axis=1)
         ref[..., c] = np.ascontiguousarray(out.T).reshape(n, hl, wl)
 
     alpha, chrom_att = 50.0, 1.0
     gain = np.array([alpha, alpha * chrom_att, alpha * chrom_att],
                     dtype=np.float32)
     ref = ref * gain
+
+    # Guard against this comparison quietly becoming vacuous again. If the band
+    # and the clip length ever stop overlapping a frequency bin, the reference
+    # collapses to zeros and the assertion below would pass against anything.
+    assert np.abs(ref).max() > 1e-3, (
+        "reference is all zeros: the band selects no frequency bins for this "
+        "clip length, so this test would pass no matter what the device did"
+    )
 
     # --- Device-resident sequence (the NEW code path) ---
     N = hl * wl * 3  # unified batch over all 3 channels

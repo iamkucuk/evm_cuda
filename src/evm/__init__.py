@@ -13,11 +13,24 @@ Butterworth / direct r1-r2 IIR) kernels reproduce matlabPyrTools and the
 reference bandpassing bit-for-bit, so this package is the correctness oracle
 for the CUDA port.
 
+For a one-liner, :func:`evm.magnify` takes a path, an array, or any iterable of
+frames, a preset name, and picks a backend::
+
+    out = evm.magnify(frames, preset="motion", fps=30)   # numpy in, numpy out
+    evm.magnify("baby.mp4", preset="motion", out="magnified.mp4")
+
+It differs from the four functions above in three documented ways (dtype,
+``drop_last``, backend selection) — see :func:`evm.api.magnify`.
+
 Subpackages:
 
 * :mod:`evm.cpu` — the NumPy baseline above (``pyramids``, ``filters``,
   ``magnify``). Everything it exports is re-exported here.
 * :mod:`evm.io` — video decode/encode and the RGB<->YIQ conversions.
+* :mod:`evm.presets` — the frozen preset table :data:`evm.PRESETS`.
+* :mod:`evm.backend` — the backend protocols and registry. ``"cpu"`` and
+  ``"cuda"`` are registered by importing this package;
+  ``evm.backend.list_backends()`` says which can run here and why not.
 * :mod:`evm.cuda` — the CUDA port. **Resolved lazily**: importing ``evm`` on a
   machine with no GPU and no compiled extension never touches it. Ask for
   ``evm.cuda`` (or ``import evm.cuda``) and you get the wrapper package, whose
@@ -51,6 +64,11 @@ from .cpu import (
     DROP_LAST,
     EXAGGERATION_FACTOR,
 )
+# Imported last: evm.api registers the built-in backends and needs evm.cpu.
+# Importing it also makes ``evm.backend`` and ``evm.presets`` reachable as
+# attributes of this package.
+from .api import magnify
+from .presets import PRESETS, Preset
 
 try:
     __version__ = _version("evm-cuda")
@@ -76,6 +94,11 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "magnify",
+    "PRESETS",
+    "Preset",
+    "backend",
+    "presets",
     "load_video",
     "save_video",
     "VideoInfo",

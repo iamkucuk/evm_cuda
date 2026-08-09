@@ -92,9 +92,15 @@ def test_figure6_small_lambda_c_gives_negative_alpha() -> None:
 def test_color_flat_input_unchanged(tmp_path: Path) -> None:
     src = tmp_path / "flat.mp4"
     dst = tmp_path / "out.mp4"
+    # Band [0.5, 1.5] rather than [0.83, 0.99]: with 30 retained frames at
+    # 30 fps the bins sit 1 Hz apart, so the narrower band falls between two of
+    # them and the filter zeroes everything regardless of the input. This test
+    # would then pass even if the pipeline were broken. The wider band keeps the
+    # 1 Hz bin, so an unchanged output really does mean "flat input carries no
+    # temporal variation to amplify". Matches test_color_amplifies_pulse below.
     _write_synth_video(src, _flat_clip())
     out = magnify_color_gdown_ideal(
-        str(src), str(dst), alpha=50, level=2, fl=0.83, fh=0.99, chrom_attenuation=1.0
+        str(src), str(dst), alpha=50, level=2, fl=0.5, fh=1.5, chrom_attenuation=1.0
     )
     assert out.shape == (30, 32, 32, 3)  # 40 frames - 10 dropped
     # A flat image has no temporal variation to amplify.

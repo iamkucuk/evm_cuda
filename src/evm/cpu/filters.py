@@ -22,6 +22,8 @@ All three operate along ``axis=0`` of an arbitrary-trailing-shape array.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from scipy.signal import butter, lfilter
 
@@ -42,7 +44,27 @@ def ideal_bandpass(
     """
     n = signal.shape[axis]
     freqs = np.arange(n) / n * sampling_rate
-    mask = ((freqs > wl) & (freqs < wh)).astype(signal.dtype)
+    keep = (freqs > wl) & (freqs < wh)
+
+    # A short clip has coarse frequency resolution (sampling_rate / n), so a
+    # narrow band can fall entirely between two bins and select nothing. The
+    # filter then returns zeros and the pipeline hands back its input
+    # unamplified. That is correct arithmetic but looks like the code did
+    # nothing, so say it out loud rather than let it pass silently.
+    if not keep.any():
+        needed = int(np.ceil(sampling_rate / (wh - wl))) if wh > wl else 0
+        warnings.warn(
+            f"ideal_bandpass selected no frequency bins: the band "
+            f"({wl:.4g}, {wh:.4g}) Hz falls between the bins of a "
+            f"{n}-frame signal at {sampling_rate:g} fps, whose resolution is "
+            f"{sampling_rate / n:.4g} Hz. The result is all zeros, so the "
+            f"magnified output will equal the input. Use at least ~{needed} "
+            f"frames, or widen the band.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    mask = keep.astype(signal.dtype)
 
     spectrum = np.fft.fft(signal, axis=axis)
     shape = [1] * signal.ndim

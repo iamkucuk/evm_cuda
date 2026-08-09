@@ -47,8 +47,21 @@ def __getattr__(name: str):
     # launch-collapsed implementation. The two rarer motion variants
     # (lpyr+ideal, lpyr+butter) resolve to the per-frame path (pipelines.py),
     # which is the only place they're implemented.
-    _BATCHED = {"magnify_color_gdown_ideal", "magnify_motion_lpyr_iir"}
-    _PIPELINES = {"magnify_motion_lpyr_ideal", "magnify_motion_lpyr_butter"}
+    #
+    # The ``*_core`` names route the same way. That routing is what makes this
+    # module the CUDA backend's Pipelines implementation (plan section 3c):
+    # ``evm.backend.select("cuda")`` returns this package, and the facade calls
+    # ``<stem>_core`` on it, so "fastest available CUDA implementation of this
+    # pipeline" is decided in exactly one place — here.
+    _BATCHED = {
+        "magnify_color_gdown_ideal", "magnify_motion_lpyr_iir",
+        "color_gdown_ideal_core", "motion_lpyr_iir_core",
+        "color_gdown_ideal_fp16_core", "motion_lpyr_iir_fp16_core",
+    }
+    _PIPELINES = {
+        "magnify_motion_lpyr_ideal", "magnify_motion_lpyr_butter",
+        "motion_lpyr_ideal_core", "motion_lpyr_butter_core",
+    }
     if name in _BATCHED:
         from . import batched
         return getattr(batched, name)
@@ -74,4 +87,12 @@ __all__ = [
     "magnify_motion_lpyr_ideal",
     "magnify_motion_lpyr_butter",
     "magnify_motion_lpyr_iir",
+    # The Pipelines protocol (plan section 3c): array in, array out.
+    "color_gdown_ideal_core",
+    "motion_lpyr_ideal_core",
+    "motion_lpyr_butter_core",
+    "motion_lpyr_iir_core",
+    # Lower-precision variants; only these two pipelines have one.
+    "color_gdown_ideal_fp16_core",
+    "motion_lpyr_iir_fp16_core",
 ]

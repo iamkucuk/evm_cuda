@@ -11,10 +11,19 @@ Three entry points mirroring the three reference amplification functions:
 * :func:`magnify_motion_lpyr_iir`     — ``amplify_spatial_lpyr_temporal_iir.m``
   Laplacian pyramid + direct r1/r2 IIR bandpass (streaming).
 
-Each function takes the *input video path* (not a preloaded array) so it can
-stream frames one at a time exactly as the MATLAB code does, drop the last 10
-frames, build per-frame pyramids, and write the output. They return the output
-array too, for testing.
+Each pipeline exists in two layers:
+
+* an **array core** — ``color_gdown_ideal_core``, ``motion_lpyr_ideal_core``,
+  ``motion_lpyr_butter_core``, ``motion_lpyr_iir_core`` — taking decoded frames
+  already in memory and returning the magnified frames, touching no files. All
+  four share one call shape, ``core(frames_bgr_u8, fps, *, ...) -> ndarray``;
+  they are the reference implementation of the Pipelines protocol in
+  ``docs/dev/PLAN.md`` section 3c, which every backend either inherits
+  generically or overrides with a fused version.
+* the **path wrapper** — ``magnify_color_gdown_ideal`` and friends — which
+  decodes the input video (dropping the last :data:`DROP_LAST` frames exactly
+  as the MATLAB code does), calls the core, writes the output file, and returns
+  the frames as float32 in [0, 1] for testing.
 
 Parameters and the per-level alpha schedule (Figure 6 of the paper) match the
 reference bit-for-bit.
@@ -118,8 +127,15 @@ def _ntsc_to_bgr_uint8(ntsc: np.ndarray) -> np.ndarray:
     return np.round(bgr * 255.0).astype(np.uint8)
 
 
-def _read_frames(path: str | Path) -> tuple[list[np.ndarray], float]:
-    """Read all frames as BGR uint8 + fps. Drops the last ``DROP_LAST``."""
+def _read_frames(
+    path: str | Path, *, drop_last: int = DROP_LAST
+) -> tuple[list[np.ndarray], float]:
+    """Read all frames as BGR uint8 + fps, dropping the last ``drop_last``.
+
+    The default is :data:`DROP_LAST`, which is what the four public path
+    functions want (the MATLAB reference drops ten). :func:`evm.magnify` passes
+    its own count — plan decision D8 — and drops nothing by default.
+    """
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise FileNotFoundError(f"could not open video: {path!r}")
@@ -131,19 +147,50 @@ def _read_frames(path: str | Path) -> tuple[list[np.ndarray], float]:
             break
         frames.append(fr)
     cap.release()
-    if len(frames) > DROP_LAST:
-        frames = frames[: len(frames) - DROP_LAST]
+    if drop_last and len(frames) > drop_last:
+        frames = frames[: len(frames) - drop_last]
     return frames, float(fps)
 
 
+def _as_frames(frames_bgr_u8: np.ndarray) -> np.ndarray:
+    """Validate decoded frames for the array cores: ``(T, H, W, 3)`` uint8 BGR.
+
+    The cores are the array-in/array-out boundary, so a wrong shape or dtype
+    has to be caught here. It raises rather than coercing: silently casting
+    float frames to uint8, or accepting a ``(H, W, 3, T)`` stack, would render
+    a plausible-looking wrong video instead of an error.
+    """
+    frames = np.asarray(frames_bgr_u8)
+    if frames.ndim != 4 or frames.shape[-1] != 3:
+        raise ValueError(
+            f"frames must have shape (T, H, W, 3) BGR; got {frames.shape}"
+        )
+    if frames.dtype != np.uint8:
+        raise TypeError(
+            f"frames must be uint8 BGR in [0, 255]; got dtype {frames.dtype}"
+        )
+    if frames.shape[0] == 0:
+        raise ValueError("frames is empty: nothing to magnify")
+    return frames
+
+
 # ---------------------------------------------------------------------------
-# Public pipelines
+# Array cores — the Pipelines protocol (plan section 3c)
+#
+# One call shape for all four: ``(frames_bgr_u8, fps, *, <params>) -> ndarray``
+# with ``(T, H, W, 3)`` uint8 BGR in and out. Keyword order is fixed across the
+# four: required magnification parameters first (``alpha``, then the spatial
+# selector ``level``/``lambda_c``, then the temporal band ``fl``/``fh`` or
+# ``r1``/``r2``), then the optional ones in the order ``chrom_attenuation``,
+# ``sampling_rate``, ``order``, ``exaggeration_factor``. That is exactly the
+# order the public path functions already used, so each wrapper is a
+# pass-through with no re-ordering to get wrong.
 # ---------------------------------------------------------------------------
 
 
-def magnify_color_gdown_ideal(
-    vid_path: str | Path,
-    out_path: str | Path,
+def color_gdown_ideal_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
     *,
     alpha: float,
     level: int,
@@ -152,7 +199,7 @@ def magnify_color_gdown_ideal(
     chrom_attenuation: float = 1.0,
     sampling_rate: float | None = None,
 ) -> np.ndarray:
-    """``amplify_spatial_Gdown_temporal_ideal.m``.
+    """``amplify_spatial_Gdown_temporal_ideal.m``, array in / array out.
 
     Builds a Gaussian-downsampled NTSC stack (``build_GDown_stack`` via
     :func:`blur_dn_clr` at ``level``), applies the ideal bandpass, scales the
@@ -160,8 +207,12 @@ def magnify_color_gdown_ideal(
     ``alpha * chrom_attenuation``, then renders each frame by upsampling
     (``imresize``) the magnified signal back to full resolution and adding to
     the original NTSC frame.
+
+    ``frames_bgr_u8`` is ``(T, H, W, 3)`` uint8 BGR — OpenCV's decode order —
+    and the result has the same shape and dtype. ``sampling_rate`` defaults to
+    ``fps``; pass it to filter at a rate other than the clip's own.
     """
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     if sampling_rate is None:
         sampling_rate = fps
     n = len(frames)
@@ -194,8 +245,7 @@ def magnify_color_gdown_ideal(
         rendered = ntsc_frame + upsampled
         out[i] = _ntsc_to_bgr_uint8(rendered)
 
-    _write(out_path, out, fps)
-    return out.astype(np.float32) / 255.0
+    return out
 
 
 def _amplify_lpyr_stack(
@@ -214,9 +264,9 @@ def _amplify_lpyr_stack(
     return out
 
 
-def magnify_motion_lpyr_ideal(
-    vid_path: str | Path,
-    out_path: str | Path,
+def motion_lpyr_ideal_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
     *,
     alpha: float,
     lambda_c: float,
@@ -226,13 +276,15 @@ def magnify_motion_lpyr_ideal(
     sampling_rate: float | None = None,
     exaggeration_factor: float = EXAGGERATION_FACTOR,
 ) -> np.ndarray:
-    """``amplify_spatial_lpyr_temporal_ideal.m``.
+    """``amplify_spatial_lpyr_temporal_ideal.m``, array in / array out.
 
     Builds a per-frame Laplacian pyramid (auto height), stacks each band along
     time, applies the ideal bandpass per band, scales each band by the
     Figure-6 alpha schedule, reconstructs, attenuates chrominance, and renders.
+
+    ``frames_bgr_u8`` is ``(T, H, W, 3)`` uint8 BGR and so is the result.
     """
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     if sampling_rate is None:
         sampling_rate = fps
     n = len(frames)
@@ -270,14 +322,11 @@ def magnify_motion_lpyr_ideal(
         ntsc_frames, filtered_per_frame, pind, chrom_attenuation
     )
 
-    out = np.stack([_ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
-    _write(out_path, out, fps)
-    return out.astype(np.float32) / 255.0
+    return np.stack([_ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
 
 
 def _streaming_lpyr_motion(
-    vid_path: str | Path,
-    out_path: str | Path,
+    frames_bgr_u8: np.ndarray,
     *,
     alpha: float,
     lambda_c: float,
@@ -285,15 +334,18 @@ def _streaming_lpyr_motion(
     filter_fn,
     exaggeration_factor: float = EXAGGERATION_FACTOR,
 ) -> np.ndarray:
-    """Shared body of the butter / iir streaming motion pipelines.
+    """Shared body of the butter / iir streaming motion cores.
 
     ``filter_fn(pyr_time_series)`` must take an array of shape (T, n_coeffs)
     (one pyramid flattened per frame, all 3 channels concatenated) and return
     the temporally-filtered series of the same shape. This matches the
     reference, which filters the *entire* pyramid coefficient vector as one
     temporal signal per pixel.
+
+    Takes no sampling rate: the two callers have already baked theirs into
+    ``filter_fn`` (Butterworth) or do not need one at all (the r1/r2 IIR).
     """
-    frames, fps = _read_frames(vid_path)
+    frames = _as_frames(frames_bgr_u8)
     n = len(frames)
     h, w = frames[0].shape[:2]
 
@@ -335,15 +387,137 @@ def _streaming_lpyr_motion(
     rendered_ntsc = _amplify_lpyr_stack(
         ntsc_frames, filtered_per_frame, pind, chrom_attenuation
     )
-    out = np.stack([_ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
-    _write(out_path, out, fps)
-    return out.astype(np.float32) / 255.0
+    return np.stack([_ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
 
 
 def _level_slice(level: int, pind: np.ndarray) -> slice:
     start = sum(int(pind[l, 0] * pind[l, 1]) for l in range(level))
     length = int(pind[level, 0] * pind[level, 1])
     return slice(start, start + length)
+
+
+def motion_lpyr_butter_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
+    *,
+    alpha: float,
+    lambda_c: float,
+    fl: float,
+    fh: float,
+    chrom_attenuation: float = 0.0,
+    sampling_rate: float | None = None,
+    order: int = 1,
+    exaggeration_factor: float = EXAGGERATION_FACTOR,
+) -> np.ndarray:
+    """``amplify_spatial_lpyr_temporal_butter.m``, array in / array out.
+
+    ``frames_bgr_u8`` is ``(T, H, W, 3)`` uint8 BGR and so is the result.
+    ``sampling_rate`` defaults to ``fps``, which is what sets the cutoffs.
+    """
+    sr = float(fps if sampling_rate is None else sampling_rate)
+
+    def filt(s):
+        return butter_bandpass(s, fl, fh, sr, order=order, axis=0)
+
+    return _streaming_lpyr_motion(
+        frames_bgr_u8,
+        alpha=alpha, lambda_c=lambda_c,
+        chrom_attenuation=chrom_attenuation,
+        filter_fn=filt,
+        exaggeration_factor=exaggeration_factor,
+    )
+
+
+def motion_lpyr_iir_core(
+    frames_bgr_u8: np.ndarray,
+    fps: float,
+    *,
+    alpha: float,
+    lambda_c: float,
+    r1: float,
+    r2: float,
+    chrom_attenuation: float = 0.1,
+    exaggeration_factor: float = EXAGGERATION_FACTOR,
+) -> np.ndarray:
+    """``amplify_spatial_lpyr_temporal_iir.m``, array in / array out.
+
+    ``frames_bgr_u8`` is ``(T, H, W, 3)`` uint8 BGR and so is the result.
+
+    ``fps`` is accepted and ignored: the r1/r2 IIR is a direct recursion on
+    frame index with no sampling rate anywhere in it (that is exactly why the
+    reference exposes r1/r2 rather than fl/fh here). It stays in the signature
+    so all four cores share one call shape and the facade can dispatch to any
+    of them without special-casing.
+    """
+    def filt(s):
+        return iir_bandpass(s, r1, r2, axis=0)
+
+    return _streaming_lpyr_motion(
+        frames_bgr_u8,
+        alpha=alpha, lambda_c=lambda_c,
+        chrom_attenuation=chrom_attenuation,
+        filter_fn=filt,
+        exaggeration_factor=exaggeration_factor,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public path pipelines — decode, call the core, write. Signatures and returned
+# values are unchanged from before the core split; tests/test_golden.py holds
+# their byte-level output fixed.
+# ---------------------------------------------------------------------------
+
+
+def magnify_color_gdown_ideal(
+    vid_path: str | Path,
+    out_path: str | Path,
+    *,
+    alpha: float,
+    level: int,
+    fl: float,
+    fh: float,
+    chrom_attenuation: float = 1.0,
+    sampling_rate: float | None = None,
+) -> np.ndarray:
+    """Run :func:`color_gdown_ideal_core` on ``vid_path``, write ``out_path``.
+
+    Reads the clip (dropping the last :data:`DROP_LAST` frames, as the MATLAB
+    reference does) and returns the magnified frames as float32 in [0, 1].
+    """
+    frames, fps = _read_frames(vid_path)
+    out = color_gdown_ideal_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, level=level, fl=fl, fh=fh,
+        chrom_attenuation=chrom_attenuation,
+        sampling_rate=sampling_rate,
+    )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
+
+
+def magnify_motion_lpyr_ideal(
+    vid_path: str | Path,
+    out_path: str | Path,
+    *,
+    alpha: float,
+    lambda_c: float,
+    fl: float,
+    fh: float,
+    chrom_attenuation: float = 0.0,
+    sampling_rate: float | None = None,
+    exaggeration_factor: float = EXAGGERATION_FACTOR,
+) -> np.ndarray:
+    """Run :func:`motion_lpyr_ideal_core` on ``vid_path``, write ``out_path``."""
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_ideal_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, lambda_c=lambda_c, fl=fl, fh=fh,
+        chrom_attenuation=chrom_attenuation,
+        sampling_rate=sampling_rate,
+        exaggeration_factor=exaggeration_factor,
+    )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
 
 
 def magnify_motion_lpyr_butter(
@@ -359,24 +533,18 @@ def magnify_motion_lpyr_butter(
     order: int = 1,
     exaggeration_factor: float = EXAGGERATION_FACTOR,
 ) -> np.ndarray:
-    """``amplify_spatial_lpyr_temporal_butter.m``."""
-    if sampling_rate is None:
-        # need fps to set cutoffs; peek
-        cap = cv2.VideoCapture(str(vid_path))
-        sampling_rate = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        cap.release()
-    sr = float(sampling_rate)
-
-    def filt(s):
-        return butter_bandpass(s, fl, fh, sr, order=order, axis=0)
-
-    return _streaming_lpyr_motion(
-        vid_path, out_path,
-        alpha=alpha, lambda_c=lambda_c,
+    """Run :func:`motion_lpyr_butter_core` on ``vid_path``, write ``out_path``."""
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_butter_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, lambda_c=lambda_c, fl=fl, fh=fh,
         chrom_attenuation=chrom_attenuation,
-        filter_fn=filt,
+        sampling_rate=sampling_rate,
+        order=order,
         exaggeration_factor=exaggeration_factor,
     )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
 
 
 def magnify_motion_lpyr_iir(
@@ -390,17 +558,16 @@ def magnify_motion_lpyr_iir(
     chrom_attenuation: float = 0.1,
     exaggeration_factor: float = EXAGGERATION_FACTOR,
 ) -> np.ndarray:
-    """``amplify_spatial_lpyr_temporal_iir.m``."""
-    def filt(s):
-        return iir_bandpass(s, r1, r2, axis=0)
-
-    return _streaming_lpyr_motion(
-        vid_path, out_path,
-        alpha=alpha, lambda_c=lambda_c,
+    """Run :func:`motion_lpyr_iir_core` on ``vid_path``, write ``out_path``."""
+    frames, fps = _read_frames(vid_path)
+    out = motion_lpyr_iir_core(
+        np.stack(frames, axis=0), fps,
+        alpha=alpha, lambda_c=lambda_c, r1=r1, r2=r2,
         chrom_attenuation=chrom_attenuation,
-        filter_fn=filt,
         exaggeration_factor=exaggeration_factor,
     )
+    _write(out_path, out, fps)
+    return out.astype(np.float32) / 255.0
 
 
 # ---------------------------------------------------------------------------
