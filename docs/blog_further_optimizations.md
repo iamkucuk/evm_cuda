@@ -2,6 +2,12 @@
 
 A follow-up to [Implementing Eulerian Video Magnification on CUDA](blog_speedup.md).
 
+> **Note on module paths (added 2026-08-09).** This post names modules as they
+> were when the measurements were taken. The 2026-08 library restructure moved
+> the GPU package without changing its code, so the benchmark harness named
+> `evm_cuda.benchmark` below is imported today as `evm.cuda.benchmark`. Nothing
+> else here has been edited.
+
 The first writeup covered the stack that made a correct CUDA port fast:
 device-resident pipelines, batched spatial launches, cuFFT plan caching,
 multi-element render, and FP16 storage. After that work, motion on an H100

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GPU profiler: color+motion × FP32+FP16 on Kaggle (P100 or T4).
 
-Uses the same ``evm_cuda.benchmark.run`` harness as local/H100:
+Uses the same ``evm.cuda.benchmark.run`` harness as local/H100:
 1 untimed warmup + median of ``N_ITER`` timed runs, sync per stage.
 
 Push:
@@ -14,6 +14,7 @@ Pull:
 from __future__ import annotations
 
 import gc
+import importlib
 import json
 import os
 import shutil
@@ -105,58 +106,20 @@ def main():
     )
     os.chdir(REPO_DIR)
 
-    run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "-q",
-            "cmake",
-            "ninja",
-            "pybind11",
-            "numpy",
-            "scipy",
-            "opencv-python",
-            "requests",
-            "av",
-        ]
-    )
-    r = subprocess.run(
-        [sys.executable, "-c", "import pybind11; print(pybind11.get_cmake_dir())"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    os.environ["pybind11_DIR"] = r.stdout.strip()
-
-    build_dir = Path("cuda/build")
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
-    build_dir.mkdir(parents=True)
-    sm = cuda_arch.replace(".", "")
-    run(
-        [
-            "cmake",
-            "-S",
-            "cuda",
-            "-B",
-            str(build_dir),
-            "-DCMAKE_BUILD_TYPE=Release",
-            f"-DCMAKE_CUDA_ARCHITECTURES={sm}",
-            "-G",
-            "Ninja",
-        ]
-    )
-    run(["cmake", "--build", str(build_dir), "--config", "Release", "-j"])
+    # One command installs the runtime dependencies and compiles the CUDA
+    # extension for this GPU: the build defaults to
+    # CMAKE_CUDA_ARCHITECTURES=native, and pip fetches the build backend plus
+    # cmake/ninja itself, so no toolchain has to be provisioned first.
+    run([sys.executable, "-m", "pip", "install", "-q", "."])
     print("Build complete.\n", flush=True)
 
     run([sys.executable, "scripts/download_samples.py", "face", "baby"])
-    # Repo root for shared.h264 encode path; cuda/ for _evm_cuda package.
-    sys.path.insert(0, str(Path(".").resolve()))
-    sys.path.insert(0, str(Path("cuda").resolve()))
 
-    from evm_cuda import benchmark
+    # The package was installed after this interpreter started, so the import
+    # system's cached listing of site-packages has to be dropped before `evm`
+    # can be found.
+    importlib.invalidate_caches()
+    from evm.cuda import benchmark
 
     os.makedirs("output", exist_ok=True)
     results = []

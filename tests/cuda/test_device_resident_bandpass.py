@@ -16,24 +16,15 @@ The whole sequence must match the per-channel host reference within
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
-
-ROOT = Path(__file__).resolve().parents[2]
-CUDA_DIR = ROOT / "cuda"
-for p in (str(ROOT), str(CUDA_DIR), str(Path(__file__).resolve().parent)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
 
 from conftest import TOL, abs_err, have_cuda, skip_no_cuda  # noqa: E402
 
 if have_cuda:
-    from evm_cuda import _evm_cuda  # noqa: E402
-    from evm_cuda.batched import DeviceBuffer  # noqa: E402
-    from evm.filters import ideal_bandpass  # noqa: E402
+    from evm.cuda import _evm_cuda  # noqa: E402
+    from evm.cuda.batched import DeviceBuffer  # noqa: E402
+    from evm.cpu.filters import ideal_bandpass  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

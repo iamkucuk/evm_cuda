@@ -4,31 +4,19 @@ Every test module in tests/cuda/ is gated on the ``have_cuda`` marker: if
 the compiled extension isn't importable (e.g. on the Mac dev host, or on a
 build without nvcc), the whole suite skips cleanly. When the extension IS
 present (i.e. after `make build`), the tests run and
-compare each kernel's output to the Python baseline ``evm/`` within the
+compare each kernel's output to the Python baseline ``evm.cpu`` within the
 tolerances documented in DESIGN.md.
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-# Make both the evm/ baseline and the cuda/evm_cuda/ wrapper importable
-# regardless of pytest's invocation directory.
-ROOT = Path(__file__).resolve().parents[2]
-CUDA_DIR = ROOT / "cuda"
-for p in (str(ROOT), str(CUDA_DIR)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-import evm  # noqa: E402  (Python baseline — the oracle)
+import evm  # Python baseline — the oracle
 
 try:
-    import evm_cuda  # noqa: E402
-    from evm_cuda import _evm_cuda  # noqa: E402
+    from evm.cuda import _evm_cuda
     have_cuda = True
     cuda_import_error: Exception | None = None
 except Exception as e:  # pragma: no cover - exercised on Mac dev host
@@ -38,7 +26,7 @@ except Exception as e:  # pragma: no cover - exercised on Mac dev host
 # Skip marker usable as @pytest.mark.skipif(not have_cuda, ...).
 skip_no_cuda = pytest.mark.skipif(
     not have_cuda,
-    reason=f"evm_cuda._evm_cuda not built ({cuda_import_error!r})",
+    reason=f"evm.cuda._evm_cuda not built ({cuda_import_error!r})",
 )
 
 # Per-stage tolerances (see DESIGN.md). Centralized so tests stay DRY.

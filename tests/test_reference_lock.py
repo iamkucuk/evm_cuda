@@ -8,9 +8,9 @@ shifting the oracle the rest of the suite is measured against.
 
 Covered:
 
-* :data:`evm.magnify.DROP_LAST` and :data:`evm.magnify.EXAGGERATION_FACTOR`
+* :data:`evm.cpu.magnify.DROP_LAST` and :data:`evm.cpu.magnify.EXAGGERATION_FACTOR`
   — the two magic numbers hardcoded in the four MATLAB amplification scripts.
-* :data:`evm.pyramids.BINOM5` / :data:`evm.pyramids.BINOM5_SUM1` — the
+* :data:`evm.cpu.pyramids.BINOM5` / :data:`evm.cpu.pyramids.BINOM5_SUM1` — the
   matlabPyrTools binom5 filter in both of its normalizations, element by
   element plus the two documented sum properties.
 * ``TOL`` from ``tests/cuda/conftest.py`` — the per-stage CPU-vs-CUDA
@@ -25,8 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
-from evm.magnify import DROP_LAST, EXAGGERATION_FACTOR
-from evm.pyramids import BINOM5, BINOM5_SUM1
+from evm.cpu.magnify import DROP_LAST, EXAGGERATION_FACTOR
+from evm.cpu.pyramids import BINOM5, BINOM5_SUM1
 
 CUDA_CONFTEST = Path(__file__).resolve().parent / "cuda" / "conftest.py"
 
@@ -41,8 +41,9 @@ def _read_tol_from_conftest() -> dict[str, float]:
 
     Parsed rather than imported: ``tests/cuda/conftest.py`` is a pytest
     conftest, so importing it here would execute it a second time under a
-    different module name (it does ``sys.path`` surgery and attempts to import
-    the compiled ``evm_cuda`` extension). ``ast`` reads the same live source
+    different module name (it attempts to import the compiled
+    ``evm.cuda._evm_cuda`` extension and builds pytest markers from the
+    result). ``ast`` reads the same live source
     with none of those side effects, and works no matter which directory
     pytest was invoked from. A ``TOL`` that stopped being a literal dict would
     raise here — deliberately, since this lock can only guard literals.

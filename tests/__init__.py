@@ -1,21 +1,16 @@
 """Shared pytest fixtures for the EVM baseline tests.
 
-Makes the repo root importable so ``import evm`` works when running pytest
-from any directory, and provides small synthetic signals we can verify the
-filters against analytically.
+Small synthetic signals we can verify the filters against analytically.
+``import evm`` resolves through the installed distribution — there is no
+``sys.path`` bridge and no repository-root ``conftest.py`` any more, so a
+checkout with nothing installed fails collection on purpose. Run
+``make install-dev`` (or ``pip install -e ".[dev]"``) first.
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 
 @pytest.fixture

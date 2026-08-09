@@ -43,7 +43,7 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 Measured on a consumer RTX 3090 24GB vs the Python/NumPy CPU baseline. Each
 stage, including every H2D/D2H transfer, is timed with `cudaDeviceSynchronize`
-(harness: `evm_cuda.benchmark`, 1 warmup, median of 7). We report the speedup
+(harness: `evm.cuda.benchmark`, 1 warmup, median of 7). We report the speedup
 at three inclusion levels because they answer different questions:
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
@@ -156,12 +156,13 @@ See [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel-by-kernel mapping and
 ## Quick start
 
 ```bash
-# Setup
+# Setup — installs evm-cuda and its dev/build tooling into the venv.
+# Works with or without nvcc; without it you get the CPU-only package.
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+make install-dev
 make download          # fetch MIT sample videos
 
-# Build (needs CUDA toolkit + nvcc)
+# Rebuild after editing cuda/ (compiles the GPU kernels when nvcc is present)
 make build
 
 # Run
@@ -207,11 +208,16 @@ No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++.
 
 ```
 evm_cuda/
-├── evm/                  # Python baseline (the correctness oracle)
-├── cuda/                 # CUDA port
+├── src/evm/              # the installed package (`import evm`)
+│   ├── cpu/              # NumPy baseline (the correctness oracle)
+│   ├── io/               # video decode/encode + the shared H.264 writer
+│   └── cuda/             # GPU wrapper: batched, pipelines, benchmark
+│                         #   (CMake writes _evm_cuda*.so in here)
+├── src/evm_cuda/         # deprecated shim, forwards to evm.cuda
+├── cuda/                 # CUDA sources
 │   ├── kernels/          # .cu files (color, spatial, lpyr, iir, render...)
-│   ├── evm_cuda/         # Python package: batched.py, pipelines, benchmark
 │   ├── bindings.cpp      # pybind11 + DeviceMemPool + sticky scratch
+│   ├── CMakeLists.txt    # CUDA-optional, driven by scikit-build-core
 │   └── DESIGN.md         # kernel map, tolerances, production path
 ├── docs/
 │   ├── blog_speedup.md                 # first optimization writeup
@@ -221,6 +227,7 @@ evm_cuda/
 ├── scripts/              # CLI + profilers
 ├── tests/                # 32 Python + 60 CUDA cases (92 collected)
 ├── kaggle/               # free-GPU benchmark harness
+├── pyproject.toml        # one distribution, `pip install .`, CUDA optional
 └── Makefile              # build, test, run, profile targets
 ```
 

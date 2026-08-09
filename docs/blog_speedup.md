@@ -4,6 +4,12 @@ A study in porting Eulerian Video Magnification (EVM) from Python/NumPy to
 CUDA, analyzing the bottlenecks at each level of the GPU memory hierarchy
 and the optimization strategies that address them.
 
+> **Note on module paths (added 2026-08-09).** This post names modules as they
+> were when the measurements were taken. The 2026-08 library restructure moved
+> the GPU package without changing its code, so the benchmark harness named
+> `evm_cuda.benchmark` below is imported today as `evm.cuda.benchmark`. Nothing
+> else here has been edited.
+
 ## The algorithm
 
 [Eulerian Video Magnification][evm] (Wu et al., 2012) reveals subtle

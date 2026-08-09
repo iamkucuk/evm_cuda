@@ -15,10 +15,11 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "cuda")]
+# Until the editable install lands (plan steps 1.10/1.12), point at src/.
+sys.path.insert(0, str(ROOT / "src"))
 
-from evm_cuda import _evm_cuda  # noqa: E402
-from evm_cuda.batched import DeviceBuffer, _d_binom5_sum1  # noqa: E402
+from evm.cuda import _evm_cuda  # noqa: E402
+from evm.cuda.batched import DeviceBuffer, _d_binom5_sum1  # noqa: E402
 
 # Force device completion via tiny D2H.
 _SYNC = DeviceBuffer(4)

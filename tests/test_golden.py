@@ -8,9 +8,9 @@ each of the four public ``magnify_*`` entry points is committed alongside it,
 and any change to pipeline behaviour shows up here immediately.
 
 **Why the clip is re-encoded instead of being committed as a video.** The
-pipelines take a *path* and decode it themselves (``evm.magnify._read_frames``
+pipelines take a *path* and decode it themselves (``evm.cpu.magnify._read_frames``
 -> ``cv2.VideoCapture``), so a file has to exist. The project's own writer
-(:func:`evm.video.encode_video`) is H.264 ``yuv420p`` at ``crf 18`` — lossy and
+(:func:`evm.io.video.encode_video`) is H.264 ``yuv420p`` at ``crf 18`` — lossy and
 chroma-subsampled, and its exact output depends on the bundled libx264 version,
 so the frames the pipelines saw would differ from machine to machine and no
 exact golden value would be reproducible. Instead the committed frames are
@@ -25,7 +25,6 @@ Regenerate the fixtures with ``python scripts/dev/make_golden_fixtures.py``.
 
 from __future__ import annotations
 
-import sys
 from fractions import Fraction
 from pathlib import Path
 
@@ -33,11 +32,7 @@ import cv2
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from evm import (  # noqa: E402
+from evm import (
     magnify_color_gdown_ideal,
     magnify_motion_lpyr_butter,
     magnify_motion_lpyr_ideal,
@@ -89,7 +84,7 @@ ATOL = 1e-6
 def write_lossless_video(path: str | Path, frames_bgr: np.ndarray, fps: float) -> None:
     """Write ``(T, H, W, 3)`` uint8 BGR frames as FFV1, which decodes bit-exactly.
 
-    Deliberately *not* :func:`evm.video.encode_video` — see the module
+    Deliberately *not* :func:`evm.io.video.encode_video` — see the module
     docstring. ``bgr0`` keeps the frames in RGB space (no chroma subsampling,
     no YUV round-trip), which is what makes the decode byte-identical.
     """

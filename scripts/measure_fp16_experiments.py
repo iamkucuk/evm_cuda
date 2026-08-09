@@ -10,12 +10,13 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "cuda")]
+# Until the editable install lands (plan steps 1.10/1.12), point at src/.
+sys.path.insert(0, str(ROOT / "src"))
 
-from evm_cuda.benchmark import run
-from evm_cuda import batched, _evm_cuda
-from evm_cuda.batched import DeviceBuffer, _d_binom5
-from evm_cuda._common import figure6_alpha_schedule, read_frames as _read_frames
+from evm.cuda.benchmark import run
+from evm.cuda import batched, _evm_cuda
+from evm.cuda.batched import DeviceBuffer, _d_binom5
+from evm.cuda._common import figure6_alpha_schedule, read_frames as _read_frames
 
 def accuracy_vs_fp32(fp16_out, fp32_out):
     d = np.abs(fp32_out.astype(np.float64) - fp16_out.astype(np.float64))
@@ -94,7 +95,7 @@ def main():
     print("\n=== FP16 HALFACC spatial experiment (build+recon) ===")
     # time halfacc path roughly via manual stages not full benchmark harness
     import time
-    from evm_cuda.batched import DeviceBuffer as DB
+    from evm.cuda.batched import DeviceBuffer as DB
     # warm
     _ = motion_fp16_halfacc("data/baby.mp4", **{k:v for k,v in params.items() if k!="vid"})
     ts = []

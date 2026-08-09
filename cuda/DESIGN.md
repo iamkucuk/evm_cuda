@@ -1,7 +1,8 @@
 # CUDA Port Design
 
 This document records the kernel-by-kernel mapping from the Python baseline
-(`evm/`) to the CUDA port (`cuda/`), the grid/block rationale, and the
+(`evm.cpu`, at `src/evm/cpu/`) to the CUDA port (`cuda/` kernels behind the
+`src/evm/cuda/` wrapper), the grid/block rationale, and the
 precision choices behind the per-stage tolerances. It is the authoritative
 reference for the numerical contract.
 
@@ -39,13 +40,16 @@ cuda/
 │   └── amplify_render.cu  # add+quantize, fused upsample+add, fused planar+add
 ├── bindings.cpp           # pybind11 module: per-kernel + batched_* wrappers,
 │                          # cuFFT plan cache, batched lpyr/blur orchestration
-├── evm_cuda/              # Python wrapper package
-│   ├── __init__.py        # lazy surface for the 4 magnify_* pipelines
-│   ├── runtime.py         # have_cuda probe, butter coeffs
-│   ├── pipelines.py       # non-batched magnify_* (ideal/butter motion pipelines)
-│   └── batched.py         # optimized device-resident magnify_* (color/iir)
-├── CMakeLists.txt         # enable_language(CUDA), CUDAToolkit, pybind11
-└── setup.py               # pip-installable; shells out to CMake
+└── CMakeLists.txt         # CUDA-optional; CUDAToolkit, pybind11. Driven by
+                           # scikit-build-core from the root pyproject.toml
+                           # (`pip install .`); setup.py is gone.
+
+src/evm/cuda/              # Python wrapper package (it used to live in cuda/)
+├── __init__.py            # lazy surface for the 4 magnify_* pipelines
+├── runtime.py             # have_cuda probe, butter coeffs
+├── pipelines.py           # non-batched magnify_* (ideal/butter motion pipelines)
+├── batched.py             # optimized device-resident magnify_* (color/iir)
+└── _evm_cuda*.so          # the compiled extension, written here by CMake
 ```
 
 ## Kernel-by-kernel mapping
@@ -234,7 +238,7 @@ Two pipeline implementations exist:
 - **`pipelines.py`** — the non-batched reference path (per-frame H2D/D2H per
   binding call). Used for `magnify_motion_lpyr_ideal` and
   `magnify_motion_lpyr_butter` (which `batched.py` doesn't implement).
-  Matches `evm/magnify.py` line-for-line.
+  Matches `src/evm/cpu/magnify.py` line-for-line.
 - **`batched.py`** — the optimized device-resident path for
   `magnify_color_gdown_ideal` and `magnify_motion_lpyr_iir`. Upload once,
   keep data on-device through all stages (batched spatial kernels, on-device
@@ -267,7 +271,8 @@ These are documented per the "CUDA matches Python, not MATLAB"
 rule. The Python baseline is the oracle.
 
 1. **Color pipeline upsample** uses `cv2.INTER_LINEAR` (half-pixel-centered
-   bilinear), same as the Python baseline's choice at `evm/magnify.py:191`.
+   bilinear), same as the Python baseline's choice at
+   `src/evm/cpu/magnify.py:191`.
    MATLAB's `imresize` uses a different grid; this is a Python-baseline
    choice we inherit, not a CUDA choice.
 
@@ -283,7 +288,7 @@ rule. The Python baseline is the oracle.
 ## Validation strategy
 
 1. **Build succeeds.** `make build` produces
-   `cuda/evm_cuda/_evm_cuda.so`.
+   `src/evm/cuda/_evm_cuda*.so` (and installs it at `evm/cuda/` in the wheel).
 2. **Each kernel matches the Python baseline within its tolerance.**
    `tests/cuda/test_*.py` (36 tests across 9 test files).
 3. **End-to-end pipelines match the Python baseline within `<0.01` RMSE** on

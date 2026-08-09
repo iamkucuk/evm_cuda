@@ -412,7 +412,7 @@ or more CUDA kernels, with the entire pipeline running device-resident:
 output video (magnified)</pre>
 </div>
 <p>
-The port validates against the Python baseline (<code>evm/</code>), which is
+The port validates against the Python baseline (<code>evm.cpu</code>), which is
 itself validated against MIT's published output videos. Per-kernel tolerances
 range from <code>1e-6</code> (pure arithmetic) to <code>1e-4</code> (cuFFT),
 with end-to-end RMSE held below <code>0.01</code>. See
@@ -425,7 +425,7 @@ for the kernel-by-kernel mapping.
 <p>
 Measured on a consumer RTX 3090 24GB vs the Python/NumPy CPU baseline. Each
 stage, including every H2D/D2H transfer, is timed with
-<code>cudaDeviceSynchronize</code> (harness: <code>evm_cuda.benchmark</code>,
+<code>cudaDeviceSynchronize</code> (harness: <code>evm.cuda.benchmark</code>,
 1 warmup, median of 7). We report the speedup at three inclusion levels
 because they answer different questions:
 </p>

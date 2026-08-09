@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.pyramids import (
+from evm.cpu.pyramids import (
     BINOM5,
     blur_dn,
     blur_dn_clr,

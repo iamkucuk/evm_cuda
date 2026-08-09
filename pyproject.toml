@@ -1,6 +1,15 @@
+# Build backend: scikit-build-core. It drives cuda/CMakeLists.txt, which builds
+# the optional _evm_cuda extension. That CMakeLists configures cleanly and
+# defines no target when there is no CUDA compiler, so `pip install .` succeeds
+# on any machine and produces a working CPU-only package; with nvcc present the
+# same command also compiles and installs the GPU extension.
 [build-system]
-requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.build_meta"
+# pybind11 is a build requirement, not a runtime one. Without it here,
+# cuda/CMakeLists.txt falls back to downloading pybind11 from GitHub during the
+# build, which turns `pip install` into something that needs network access and
+# a working git. Declaring it lets pip supply it from a wheel instead.
+requires = ["scikit-build-core>=1.0", "pybind11>=2.10"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "evm-cuda"
@@ -8,8 +17,44 @@ version = "0.1.0"
 description = "CUDA-accelerated Eulerian Video Magnification for revealing subtle temporal changes in video."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "BSD-3-Clause-NonCommercial" }
+# PEP 639 form, replacing the deprecated `license = { text = ... }` table that
+# setuptools stops accepting on 2027-02-18. The licence itself is UNCHANGED:
+# BSD-3-Clause-NonCommercial has no SPDX/OSI identifier (no non-commercial
+# variant does), so it is expressed as a custom LicenseRef. LICENSE remains the
+# authoritative text and ships in the wheel and sdist.
+license = "LicenseRef-BSD-3-Clause-NonCommercial"
+license-files = ["LICENSE"]
 authors = [{ name = "Furkan Kucuk" }]
+keywords = [
+    "eulerian-video-magnification",
+    "motion-magnification",
+    "video-magnification",
+    "photoplethysmography",
+    "remote-ppg",
+    "vibration-analysis",
+    "computer-vision",
+    "video-processing",
+    "cuda",
+    "gpu",
+]
+# Deliberately no per-version Python classifiers: only 3.13 and 3.14 have been
+# run against this tree, and `requires-python` already states the floor.
+# Deliberately no Windows classifier: never tested there (the RTX 3090 host runs
+# the suite inside WSL2, which is Linux).
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
 dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
@@ -19,10 +64,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Tools needed to compile the CUDA extension (nvcc + the CUDA toolkit are still
-# required from the system). Mirrors what the Colab notebook installs.
-build = [
-    "cmake>=3.18",
+# Everything needed to compile the CUDA extension WITHOUT pip's build isolation,
+# which is what `make build` uses. nvcc and the CUDA toolkit still come from the
+# system. A plain isolated `pip install .` needs none of this: pip installs the
+# backend from [build-system].requires and scikit-build-core fetches cmake/ninja
+# itself when the system copies are missing or too old.
+cuda-build = [
+    "scikit-build-core>=1.0",
+    "cmake>=3.24",
     "ninja",
     "pybind11>=2.10",
 ]
@@ -31,11 +80,27 @@ dev = [
 ]
 
 [project.urls]
+Homepage = "https://iamkucuk.github.io/eulerian-video-magnification-cuda/"
 Repository = "https://github.com/iamkucuk/eulerian-video-magnification-cuda"
+Issues = "https://github.com/iamkucuk/eulerian-video-magnification-cuda/issues"
 
-# The compiled _evm_cuda extension lives under cuda/evm_cuda/ and is built by
-# cuda/setup.py + CMake (not by this metadata). These tool configs are for the
-# pure-Python packages (evm/, cuda/evm_cuda/ wrappers).
+[tool.scikit-build]
+# Freeze the backend's default behaviour at the version named in
+# [build-system].requires, so a later scikit-build-core release cannot silently
+# change how this project builds.
+minimum-version = "build-system.requires"
+# The CMake project lives in cuda/. `cmake.version` is deliberately left unset:
+# scikit-build-core then reads the requirement from that file's
+# cmake_minimum_required(VERSION 3.24) instead of duplicating the number here.
+cmake.source-dir = "cuda"
+# Pure-Python packages are copied from src/ as-is. The compiled extension is
+# placed beside them by `install(TARGETS _evm_cuda LIBRARY DESTINATION evm/cuda)`
+# in cuda/CMakeLists.txt, so it lands at evm/cuda/_evm_cuda*.so in the wheel.
+wheel.packages = ["src/evm", "src/evm_cuda"]
 
 [tool.pytest.ini_options]
+# No `pythonpath` entry on purpose: the tests import the INSTALLED package
+# (`pip install -e ".[dev]"`), which is what makes them a real check on the
+# packaging. A source checkout with nothing installed is expected to fail with
+# ModuleNotFoundError; scripts/dev/verify_install.sh exercises the clean path.
 testpaths = ["tests"]

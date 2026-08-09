@@ -55,7 +55,7 @@ def __getattr__(name: str):
     if name in _PIPELINES:
         from . import pipelines
         return getattr(pipelines, name)
-    # Allow ``from evm_cuda import batched`` / ``import evm_cuda.benchmark`` to
+    # Allow ``from evm.cuda import batched`` / ``import evm.cuda.benchmark`` to
     # work even though __getattr__ is defined (a module-level __getattr__ would
     # otherwise shadow the standard submodule-import fallback).
     import importlib

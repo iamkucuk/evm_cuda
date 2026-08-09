@@ -2,10 +2,11 @@
 
 Run the EVM CUDA profiler on Kaggle's free GPU (T4 or P100) via CLI.
 
-The active kernel is `run_gpu_comparison.py` — it clones
-`feature/true-fp16-motion`, builds the CUDA extension for the detected GPU
-arch, runs color+motion × FP32+FP16 via `evm_cuda.benchmark` (1 warmup +
-median of 7), and renders output videos (skips OOM configs on 16 GB).
+The active kernel is `run_gpu_comparison.py` — it clones `main`, installs the
+repo with `pip install .` (one step; that also compiles the CUDA extension for
+the detected GPU arch), runs color+motion × FP32+FP16 via `evm.cuda.benchmark`
+(1 warmup + median of 7), and renders output videos (skips OOM configs on
+16 GB).
 
 CPU reference numbers match the README baselines (color 11,194 ms / motion
 44,190 ms) so speedup ratios line up with local/H100 docs.

@@ -41,7 +41,7 @@ from .pyramids import (
     recon_lpyr,
     reconstruct_from_channels,
 )
-from .video import rgb_to_yiq, yiq_to_rgb
+from ..io.video import rgb_to_yiq, yiq_to_rgb
 
 FilterKind = Literal["ideal", "butter", "iir"]
 
@@ -409,8 +409,8 @@ def magnify_motion_lpyr_iir(
 
 
 def _write(out_path: str | Path, frames_uint8: np.ndarray, fps: float) -> None:
-    # Delegates to the shared H.264 encoder in evm.video so every writer
+    # Delegates to the shared H.264 encoder in evm.io.video so every writer
     # (batched CUDA, host CUDA, and this pure-Python path) emits identical
     # browser/VSCode-playable video.
-    from .video import encode_video
+    from ..io.video import encode_video
     encode_video(frames_uint8, out_path, fps)

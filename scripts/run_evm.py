@@ -23,15 +23,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import numpy as np
 
-import numpy as np  # noqa: E402
-
-from evm import (  # noqa: E402
+from evm import (
     magnify_color_gdown_ideal,
     magnify_motion_lpyr_butter,
     magnify_motion_lpyr_iir,

@@ -20,10 +20,11 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "cuda")]
+# Until the editable install lands (plan steps 1.10/1.12), point at src/.
+sys.path.insert(0, str(ROOT / "src"))
 
-from evm_cuda import _evm_cuda  # noqa: E402
-from evm_cuda.batched import DeviceBuffer, _d_binom5  # noqa: E402
+from evm.cuda import _evm_cuda  # noqa: E402
+from evm.cuda.batched import DeviceBuffer, _d_binom5  # noqa: E402
 
 
 def sync():
@@ -160,7 +161,7 @@ def main():
                 sys.executable, "-c",
                 (
                     "import sys; sys.path[:0]=%r; "
-                    "from evm_cuda import _evm_cuda; from evm_cuda.batched import DeviceBuffer,_d_binom5; "
+                    "from evm.cuda import _evm_cuda; from evm.cuda.batched import DeviceBuffer,_d_binom5; "
                     "import numpy as np; "
                     "H,W,B=%d,%d,%d; Ho,Wo=(H+1)//2,(W+1)//2; "
                     "rng=np.random.default_rng(0); "
@@ -172,7 +173,7 @@ def main():
                     "else:\n"
                     " d_in=DeviceBuffer.from_array(x.astype(np.float16)); d_out=DeviceBuffer(B*Ho*Wo*2); "
                     " _evm_cuda.micro_corr_dn_fused(d_in.ptr,d_out.ptr,H,W,B,filt,5,%r)\n"
-                ) % ([str(ROOT), str(ROOT / "cuda")], H, W, B, mode, mode),
+                ) % ([str(ROOT / "src")], H, W, B, mode, mode),
             ]
             print("\n$ " + " ".join(cmd[:6]) + f" ... mode={mode}")
             try:

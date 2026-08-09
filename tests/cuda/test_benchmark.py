@@ -1,4 +1,4 @@
-"""Tests for evm_cuda.benchmark.
+"""Tests for evm.cuda.benchmark.
 
 Two guarantees:
 1. ``benchmark.run()`` measures the SAME code path the application uses —
@@ -11,22 +11,17 @@ Two guarantees:
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-CUDA_DIR = ROOT / "cuda"
-for p in (str(ROOT), str(CUDA_DIR), str(Path(__file__).resolve().parent)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
 
 from conftest import skip_no_cuda  # noqa: E402
 
 try:
-    from evm_cuda import benchmark  # noqa: E402
-    from evm_cuda import batched  # noqa: E402
+    from evm.cuda import benchmark  # noqa: E402
+    from evm.cuda import batched  # noqa: E402
 except Exception:
     benchmark = None
     batched = None

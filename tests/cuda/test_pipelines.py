@@ -8,7 +8,6 @@ Two flavours:
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import cv2
@@ -16,17 +15,13 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-CUDA_DIR = ROOT / "cuda"
-for p in (str(ROOT), str(CUDA_DIR), str(Path(__file__).resolve().parent)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
 
 import evm  # noqa: E402
 from conftest import TOL, have_cuda, skip_no_cuda  # noqa: E402
 
 if have_cuda:
-    from evm_cuda import pipelines as cu  # noqa: E402
-    from evm_cuda import batched as cu_batched  # noqa: E402
+    from evm.cuda import pipelines as cu  # noqa: E402
+    from evm.cuda import batched as cu_batched  # noqa: E402
 
 DATA = ROOT / "data"
 TMP = ROOT / "output" / "_test"
@@ -137,7 +132,7 @@ def test_baby_iir_cuda_matches_python(tmp_path):
 
 # --- optimized (batched) pipeline vs Python baseline -----------------------
 #
-# The batched pipeline (evm_cuda.batched) is the speed-optimized path. It
+# The batched pipeline (evm.cuda.batched) is the speed-optimized path. It
 # uses a different code flow (to_planar_3ch, batched_blur_dn_color, CUDA
 # bilinear upsample, device-resident NTSC) but must produce the same output
 # as the Python baseline within the end-to-end RMSE tolerance.

@@ -7,10 +7,8 @@ that plays in the browser.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
-from IPython.display import HTML, display
 from base64 import b64encode
+from pathlib import Path
 
 
 def show_video(path: str | Path, label: str = "") -> None:
@@ -18,7 +16,13 @@ def show_video(path: str | Path, label: str = "") -> None:
 
     The clip must be browser-playable (H.264 / yuv420p); this repo's writers
     produce exactly that. If the file is missing, a message is printed instead.
+
+    IPython is imported here rather than at module scope so that importing
+    ``evm.notebook`` works in a plain install. IPython ships with every notebook
+    environment this helper targets, but it is not a dependency of the package.
     """
+    from IPython.display import HTML, display
+
     if not os.path.exists(path):
         print(f"  {label or path}: file not found")
         return

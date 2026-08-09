@@ -2,7 +2,7 @@
 
 Host-side glue: a clean CUDA-presence probe (used by `tests/cuda/` to skip
 cleanly on hosts without nvcc) and the scipy-side Butterworth coefficient
-helper that mirrors what `evm/filters.py` does. cuFFT plan lifecycle is
+helper that mirrors what `evm/cpu/filters.py` does. cuFFT plan lifecycle is
 owned by the bindings themselves (`_evm_cuda.ideal_bandpass` creates and
 destroys its own plans per call), so this module is intentionally small.
 """
@@ -28,14 +28,14 @@ def require_cuda() -> None:
     """Raise a clear error if the CUDA extension isn't available."""
     if not _have_cuda:
         raise RuntimeError(
-            "evm_cuda._evm_cuda not importable; the extension was not built "
+            "evm.cuda._evm_cuda not importable; the extension was not built "
             "(no nvcc?) or no CUDA device is available. "
             f"Underlying error: {import_error!r}"
         )
 
 
 # ---------------------------------------------------------------------------
-# Butterworth coefficients (host-side, mirrors evm/filters.py:butter_bandpass)
+# Butterworth coefficients (host-side, mirrors evm/cpu/filters.py:butter_bandpass)
 # ---------------------------------------------------------------------------
 
 def butter_bandpass_coeffs(

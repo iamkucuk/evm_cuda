@@ -2,17 +2,8 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
-
-ROOT = Path(__file__).resolve().parents[2]
-CUDA_DIR = ROOT / "cuda"
-for p in (str(ROOT), str(CUDA_DIR), str(Path(__file__).resolve().parent)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
 
 import evm  # noqa: E402
 from conftest import (  # noqa: E402
@@ -21,12 +12,12 @@ from conftest import (  # noqa: E402
 )
 
 if have_cuda:
-    from evm_cuda import _evm_cuda  # noqa: E402
+    from evm.cuda import _evm_cuda  # noqa: E402
 
 
 @skip_no_cuda
 def test_binom5_constants_match_baseline():
-    from evm.pyramids import BINOM5, BINOM5_SUM1
+    from evm.cpu.pyramids import BINOM5, BINOM5_SUM1
     assert abs_err(BINOM5_CUDA, BINOM5.astype(np.float32)) < 1e-7
     assert abs_err(BINOM5_SUM1_CUDA, BINOM5_SUM1.astype(np.float32)) < 1e-7
 
@@ -62,7 +53,7 @@ def test_ntsc_f32_to_bgr_u8_matches_baseline():
 @skip_no_cuda
 def test_batched_bgr_u8_to_ntsc_f16_near_f32():
     """Fused u8→half NTSC matches float NTSC after promote (half rounding)."""
-    from evm_cuda.batched import DeviceBuffer
+    from evm.cuda.batched import DeviceBuffer
 
     rng = np.random.default_rng(3)
     T, H, W = 2, 32, 24

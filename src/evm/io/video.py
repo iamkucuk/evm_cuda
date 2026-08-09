@@ -77,11 +77,11 @@ def encode_video(
 ) -> None:
     """Write a ``(T, H, W, 3)`` uint8 BGR frame array to an H.264 MP4.
 
-    Delegates to the shared encoder in ``shared.h264`` (browser/VSCode-playable
+    Delegates to the shared encoder in ``evm.io.h264`` (browser/VSCode-playable
     H.264 ``yuv420p`` +faststart via PyAV) so the CPU baseline and the CUDA port
     share one encode implementation.
     """
-    from shared.h264 import encode_h264
+    from .h264 import encode_h264
     encode_h264(frames_uint8, path, fps, codec=codec)
 
 

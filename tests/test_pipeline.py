@@ -13,18 +13,13 @@ The face/baby numerical comparison against MIT's own output videos lives in
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from evm import (  # noqa: E402
+from evm import (
     figure6_alpha_schedule,
     magnify_color_gdown_ideal,
     magnify_motion_lpyr_iir,

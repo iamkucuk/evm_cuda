@@ -11,16 +11,11 @@ so the test has no system-binary dependency.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from evm.video import encode_video, save_video  # noqa: E402
+from evm.io.video import encode_video, save_video
 
 
 def _codec_and_pixfmt(path: Path) -> tuple[str, str]:
