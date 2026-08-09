@@ -252,6 +252,11 @@ This project builds on the original EVM work:
 
 ## License
 
-[BSD 3-Clause (Non-Commercial Research Use)](LICENSE), free for academic
-research and non-commercial educational use. Commercial use requires written
-permission. Citation is required for any derived publication.
+[BSD 3-Clause (Non-Commercial Research Use)](LICENSE). Free to use for research
+(including research inside a company), for teaching, for personal and evaluation
+use, and inside open-source software that is distributed at no charge under a
+licence permitting those same uses.
+
+Selling it, or building it into a product or service that is sold or run for
+commercial advantage, requires written permission. Any publication that uses
+this software must cite it; the required citation is in the licence file.

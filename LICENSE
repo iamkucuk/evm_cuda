@@ -4,8 +4,30 @@ Copyright (c) 2026, Furkan Kucuk
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
-modification, are permitted for academic research and non-commercial
-educational purposes only, provided that the following conditions are met:
+modification, are permitted for the following purposes only, and subject to the
+conditions listed below:
+
+  (a) academic and scientific research;
+
+  (b) education and teaching;
+
+  (c) personal, hobby, and evaluation use;
+
+  (d) development of, and inclusion in, open-source software, provided that
+      software is distributed at no charge under a licence that permits the
+      uses in (a) through (d).
+
+Any other use requires prior written permission from the copyright holder. In
+particular, permission is required to use this software, in whole or in part,
+in a product or service that is sold, licensed for a fee, or otherwise operated
+for commercial advantage or monetary compensation, whether or not this software
+is distributed to the user of that product or service.
+
+Research carried out by a commercial organisation is permitted under (a),
+including research that is internally funded, provided the software itself is
+not incorporated into a commercial product or service.
+
+The conditions:
 
 1. Redistributions of source code must retain the above copyright notice,
    this list of conditions, and the following disclaimer.

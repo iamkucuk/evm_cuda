@@ -1,0 +1,356 @@
+[{"stream_name":"stdout","time":0.799758331,"data":"GPU: Tesla P100-PCIE-16GB, sm_6.0, VRAM: 16384 MiB\n"}
+,{"stream_name":"stdout","time":0.799803728,"data":"\n"}
+,{"stream_name":"stdout","time":0.799810712,"data":"$ git clone --depth 1 -b main https://github.com/iamkucuk/eulerian-video-magnification-cuda.git evm_cuda\n"}
+,{"stream_name":"stderr","time":0.82522098,"data":"Cloning into 'evm_cuda'...\n"}
+,{"stream_name":"stdout","time":2.470844711,"data":"Checked out: 47c7001 Docs: sync project page + writeup to README (557x H100, 3-tier table, 83 tests)\n"}
+,{"stream_name":"stdout","time":2.470877168,"data":"\n"}
+,{"stream_name":"stdout","time":2.470885527,"data":"$ /usr/bin/python3 -m pip install -q cmake ninja pybind11 numpy scipy opencv-python requests av\n"}
+,{"stream_name":"stdout","time":5.698454948,"data":"   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.5/35.5 MB 60.5 MB/s eta 0:00:00\n"}
+,{"stream_name":"stdout","time":8.728233859,"data":"$ cmake -S cuda -B cuda/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=60 -G Ninja\n"}
+,{"stream_name":"stdout","time":9.3460712,"data":"-- The CXX compiler identification is GNU 11.4.0\n"}
+,{"stream_name":"stdout","time":11.255158949,"data":"-- The CUDA compiler identification is NVIDIA 12.8.93 with host compiler GNU 11.4.0\n"}
+,{"stream_name":"stdout","time":11.279106355,"data":"-- Detecting CXX compiler ABI info\n"}
+,{"stream_name":"stdout","time":11.382296784,"data":"-- Detecting CXX compiler ABI info - done\n"}
+,{"stream_name":"stdout","time":11.40237206,"data":"-- Check for working CXX compiler: /usr/bin/c++ - skipped\n"}
+,{"stream_name":"stdout","time":11.403381672,"data":"-- Detecting CXX compile features\n"}
+,{"stream_name":"stdout","time":11.405288745,"data":"-- Detecting CXX compile features - done\n"}
+,{"stream_name":"stdout","time":11.428872996,"data":"-- Detecting CUDA compiler ABI info\n"}
+,{"stream_name":"stdout","time":12.56590785,"data":"-- Detecting CUDA compiler ABI info - done\n"}
+,{"stream_name":"stdout","time":12.630634049,"data":"-- Check for working CUDA compiler: /usr/local/cuda/bin/nvcc - skipped\n"}
+,{"stream_name":"stdout","time":12.68698708,"data":"-- Detecting CUDA compile features\n"}
+,{"stream_name":"stdout","time":12.687551309,"data":"-- Detecting CUDA compile features - done\n"}
+,{"stream_name":"stdout","time":12.706193419,"data":"-- Found CUDAToolkit: /usr/local/cuda/targets/x86_64-linux/include (found version \"12.8.93\")\n"}
+,{"stream_name":"stdout","time":12.710054383,"data":"-- Performing Test CMAKE_HAVE_LIBC_PTHREAD\n"}
+,{"stream_name":"stdout","time":12.801275741,"data":"-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success\n"}
+,{"stream_name":"stdout","time":12.802796314,"data":"-- Found Threads: TRUE\n"}
+,{"stream_name":"stdout","time":14.431513713,"data":"-- Found Python3: /usr/local/bin/python (found version \"3.12.13\") found components: Interpreter Development NumPy Development.Module Development.Embed\n"}
+,{"stream_name":"stdout","time":14.620195849,"data":"-- Performing Test HAS_FLTO_AUTO\n"}
+,{"stream_name":"stdout","time":14.855413985,"data":"-- Performing Test HAS_FLTO_AUTO - Success\n"}
+,{"stream_name":"stdout","time":14.857214039,"data":"-- Configuring done (5.8s)\n"}
+,{"stream_name":"stdout","time":14.87347853,"data":"-- Generating done (0.0s)\n"}
+,{"stream_name":"stdout","time":14.874121397,"data":"-- Build files have been written to: /kaggle/working/evm_cuda/cuda/build\n"}
+,{"stream_name":"stdout","time":14.883972157,"data":"$ cmake --build cuda/build --config Release -j\n"}
+,{"stream_name":"stdout","time":18.546728721,"data":"[1/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/butter_bandpass.cu.o\n"}
+,{"stream_name":"stdout","time":18.546884677,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":18.546896694,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":18.546900902,"data":"ptxas info    : Compiling entry function '_ZN3evm22butter_bandpass_kernelEPKfPfiidddddd' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.546904673,"data":"ptxas info    : Function properties for _ZN3evm22butter_bandpass_kernelEPKfPfiidddddd\n"}
+,{"stream_name":"stdout","time":18.546908292,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.546911864,"data":"ptxas info    : Used 32 registers, used 0 barriers, 392 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.546915378,"data":"ptxas info    : Compile time = 17.453 ms\n"}
+,{"stream_name":"stdout","time":18.614267873,"data":"[2/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/color_cvt.cu.o\n"}
+,{"stream_name":"stdout","time":18.61443639,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":18.614448845,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":18.614452955,"data":"ptxas info    : Compiling entry function '_ZN3evm25ntsc_f32_to_bgr_u8_kernelEPKfPhii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.614456732,"data":"ptxas info    : Function properties for _ZN3evm25ntsc_f32_to_bgr_u8_kernelEPKfPhii\n"}
+,{"stream_name":"stdout","time":18.614461123,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.614465248,"data":"ptxas info    : Used 9 registers, used 0 barriers, 344 bytes cmem[0], 24 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":18.614469658,"data":"ptxas info    : Compile time = 5.806 ms\n"}
+,{"stream_name":"stdout","time":18.614474275,"data":"ptxas info    : Compiling entry function '_ZN3evm25bgr_u8_to_ntsc_f32_kernelEPKhPfii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.614478621,"data":"ptxas info    : Function properties for _ZN3evm25bgr_u8_to_ntsc_f32_kernelEPKhPfii\n"}
+,{"stream_name":"stdout","time":18.61448351,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.614488069,"data":"ptxas info    : Used 13 registers, used 0 barriers, 344 bytes cmem[0], 16 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":18.614492189,"data":"ptxas info    : Compile time = 9.601 ms\n"}
+,{"stream_name":"stdout","time":18.684724985,"data":"[3/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/iir_bandpass.cu.o\n"}
+,{"stream_name":"stdout","time":18.684870995,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":18.684881085,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":18.684885169,"data":"ptxas info    : Compiling entry function '_ZN3evm19iir_bandpass_kernelI6__halfS1_EEvPKT_PT0_iidd' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.684889035,"data":"ptxas info    : Function properties for _ZN3evm19iir_bandpass_kernelI6__halfS1_EEvPKT_PT0_iidd\n"}
+,{"stream_name":"stdout","time":18.68489287,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.684905166,"data":"ptxas info    : Used 30 registers, used 0 barriers, 360 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.684908975,"data":"ptxas info    : Compile time = 18.480 ms\n"}
+,{"stream_name":"stdout","time":18.68491252,"data":"ptxas info    : Compiling entry function '_ZN3evm19iir_bandpass_kernelIffEEvPKT_PT0_iidd' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.684916194,"data":"ptxas info    : Function properties for _ZN3evm19iir_bandpass_kernelIffEEvPKT_PT0_iidd\n"}
+,{"stream_name":"stdout","time":18.684919728,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.684922999,"data":"ptxas info    : Used 38 registers, used 0 barriers, 360 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.68492641,"data":"ptxas info    : Compile time = 54.231 ms\n"}
+,{"stream_name":"stdout","time":18.89069651,"data":"[4/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/transpose.cu.o\n"}
+,{"stream_name":"stdout","time":18.890720943,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":18.890728674,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":18.890749856,"data":"ptxas info    : Compiling entry function '_ZN3evm32planar_to_interleaved_3ch_kernelEPKfPfiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.890754211,"data":"ptxas info    : Function properties for _ZN3evm32planar_to_interleaved_3ch_kernelEPKfPfiii\n"}
+,{"stream_name":"stdout","time":18.890757866,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.890761662,"data":"ptxas info    : Used 17 registers, used 0 barriers, 348 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.890765385999998,"data":"ptxas info    : Compile time = 14.498 ms\n"}
+,{"stream_name":"stdout","time":18.890768903,"data":"ptxas info    : Compiling entry function '_ZN3evm20to_planar_3ch_kernelI6__halfEEvPKT_PS2_iii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.890772767,"data":"ptxas info    : Function properties for _ZN3evm20to_planar_3ch_kernelI6__halfEEvPKT_PS2_iii\n"}
+,{"stream_name":"stdout","time":18.890776777,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.890780651,"data":"ptxas info    : Used 16 registers, used 0 barriers, 348 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.890784463,"data":"ptxas info    : Compile time = 8.203 ms\n"}
+,{"stream_name":"stdout","time":18.890788497,"data":"ptxas info    : Compiling entry function '_ZN3evm20to_planar_3ch_kernelIfEEvPKT_PS1_iii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.89079277,"data":"ptxas info    : Function properties for _ZN3evm20to_planar_3ch_kernelIfEEvPKT_PS1_iii\n"}
+,{"stream_name":"stdout","time":18.890804019,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.890808112,"data":"ptxas info    : Used 16 registers, used 0 barriers, 348 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.890812452,"data":"ptxas info    : Compile time = 8.472 ms\n"}
+,{"stream_name":"stdout","time":18.890816558,"data":"ptxas info    : Compiling entry function '_ZN3evm17nt_to_thwc_kernelI6__halfS1_EEvPKT_PT0_iif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.890820719,"data":"ptxas info    : Function properties for _ZN3evm17nt_to_thwc_kernelI6__halfS1_EEvPKT_PT0_iif\n"}
+,{"stream_name":"stdout","time":18.890832413,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.890836076,"data":"ptxas info    : Used 30 registers, used 0 barriers, 348 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.890839714,"data":"ptxas info    : Compile time = 24.323 ms\n"}
+,{"stream_name":"stdout","time":18.890843196,"data":"ptxas info    : Compiling entry function '_ZN3evm17thwc_to_nt_kernelI6__halfS1_EEvPKT_PT0_ii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.890846716,"data":"ptxas info    : Function properties for _ZN3evm17thwc_to_nt_kernelI6__halfS1_EEvPKT_PT0_ii\n"}
+,{"stream_name":"stdout","time":18.890851586,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.890855422,"data":"ptxas info    : Used 26 registers, used 0 barriers, 344 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.890859034,"data":"ptxas info    : Compile time = 21.816 ms\n"}
+,{"stream_name":"stdout","time":18.890862563,"data":"ptxas info    : Compiling entry function '_ZN3evm17nt_to_thwc_kernelIffEEvPKT_PT0_iif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.890866178,"data":"ptxas info    : Function properties for _ZN3evm17nt_to_thwc_kernelIffEEvPKT_PT0_iif\n"}
+,{"stream_name":"stdout","time":18.890869849,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.890873307,"data":"ptxas info    : Used 29 registers, used 0 barriers, 348 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.890876914,"data":"ptxas info    : Compile time = 20.888 ms\n"}
+,{"stream_name":"stdout","time":18.890880394,"data":"ptxas info    : Compiling entry function '_ZN3evm17thwc_to_nt_kernelIffEEvPKT_PT0_ii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":18.890884087,"data":"ptxas info    : Function properties for _ZN3evm17thwc_to_nt_kernelIffEEvPKT_PT0_ii\n"}
+,{"stream_name":"stdout","time":18.890887886,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":18.890892082,"data":"ptxas info    : Used 25 registers, used 0 barriers, 344 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":18.890896306,"data":"ptxas info    : Compile time = 18.039 ms\n"}
+,{"stream_name":"stdout","time":19.672296483,"data":"[5/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/spatial.cu.o\n"}
+,{"stream_name":"stdout","time":19.672446757,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":19.672457356,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":19.672461458,"data":"ptxas info    : Compiling entry function '_ZN3evm27up_conv_cols_batched_kernelI6__halfS1_EEvPKT_PT0_iiiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672465422,"data":"ptxas info    : Function properties for _ZN3evm27up_conv_cols_batched_kernelI6__halfS1_EEvPKT_PT0_iiiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672469221,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672472739,"data":"ptxas info    : Used 28 registers, used 0 barriers, 376 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672476281,"data":"ptxas info    : Compile time = 35.929 ms\n"}
+,{"stream_name":"stdout","time":19.672479833,"data":"ptxas info    : Compiling entry function '_ZN3evm27up_conv_rows_batched_kernelI6__halfS1_EEvPKT_PT0_iiiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672483653,"data":"ptxas info    : Function properties for _ZN3evm27up_conv_rows_batched_kernelI6__halfS1_EEvPKT_PT0_iiiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672496949,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672500816,"data":"ptxas info    : Used 29 registers, used 0 barriers, 376 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672504357,"data":"ptxas info    : Compile time = 35.266 ms\n"}
+,{"stream_name":"stdout","time":19.672507876,"data":"ptxas info    : Compiling entry function '_ZN3evm27corr_dn_cols_batched_kernelI6__halfS1_EEvPKT_PT0_iiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672511616,"data":"ptxas info    : Function properties for _ZN3evm27corr_dn_cols_batched_kernelI6__halfS1_EEvPKT_PT0_iiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672515299,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672518914,"data":"ptxas info    : Used 31 registers, used 0 barriers, 368 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672522472,"data":"ptxas info    : Compile time = 29.180 ms\n"}
+,{"stream_name":"stdout","time":19.672525956,"data":"ptxas info    : Compiling entry function '_ZN3evm27corr_dn_rows_batched_kernelI6__halfS1_EEvPKT_PT0_iiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672530101,"data":"ptxas info    : Function properties for _ZN3evm27corr_dn_rows_batched_kernelI6__halfS1_EEvPKT_PT0_iiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672533824,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672537299,"data":"ptxas info    : Used 30 registers, used 0 barriers, 368 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672540821,"data":"ptxas info    : Compile time = 29.380 ms\n"}
+,{"stream_name":"stdout","time":19.672544264,"data":"ptxas info    : Compiling entry function '_ZN3evm27up_conv_cols_batched_kernelIffEEvPKT_PT0_iiiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672549574,"data":"ptxas info    : Function properties for _ZN3evm27up_conv_cols_batched_kernelIffEEvPKT_PT0_iiiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672553256,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672556759,"data":"ptxas info    : Used 26 registers, used 0 barriers, 376 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672560364,"data":"ptxas info    : Compile time = 30.957 ms\n"}
+,{"stream_name":"stdout","time":19.672564129,"data":"ptxas info    : Compiling entry function '_ZN3evm27up_conv_rows_batched_kernelIffEEvPKT_PT0_iiiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.67256809,"data":"ptxas info    : Function properties for _ZN3evm27up_conv_rows_batched_kernelIffEEvPKT_PT0_iiiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672571689,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672575156,"data":"ptxas info    : Used 26 registers, used 0 barriers, 376 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672579207,"data":"ptxas info    : Compile time = 34.388 ms\n"}
+,{"stream_name":"stdout","time":19.67258261,"data":"ptxas info    : Compiling entry function '_ZN3evm27corr_dn_cols_batched_kernelIffEEvPKT_PT0_iiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.67258628,"data":"ptxas info    : Function properties for _ZN3evm27corr_dn_cols_batched_kernelIffEEvPKT_PT0_iiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672590182,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.67259399,"data":"ptxas info    : Used 31 registers, used 0 barriers, 368 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672600582,"data":"ptxas info    : Compile time = 16.094 ms\n"}
+,{"stream_name":"stdout","time":19.672603995,"data":"ptxas info    : Compiling entry function '_ZN3evm27corr_dn_rows_batched_kernelIffEEvPKT_PT0_iiPKfiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672608444,"data":"ptxas info    : Function properties for _ZN3evm27corr_dn_rows_batched_kernelIffEEvPKT_PT0_iiPKfiiii\n"}
+,{"stream_name":"stdout","time":19.672612404,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672615913,"data":"ptxas info    : Used 30 registers, used 0 barriers, 368 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672619848,"data":"ptxas info    : Compile time = 13.160 ms\n"}
+,{"stream_name":"stdout","time":19.672623308,"data":"ptxas info    : Compiling entry function '_ZN3evm19up_conv_cols_kernelEPKfPfiiiS1_i' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672626897,"data":"ptxas info    : Function properties for _ZN3evm19up_conv_cols_kernelEPKfPfiiiS1_i\n"}
+,{"stream_name":"stdout","time":19.672630435,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672633937,"data":"ptxas info    : Used 31 registers, used 0 barriers, 364 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672637915,"data":"ptxas info    : Compile time = 17.791 ms\n"}
+,{"stream_name":"stdout","time":19.67264143,"data":"ptxas info    : Compiling entry function '_ZN3evm19up_conv_rows_kernelEPKfPfiiiS1_i' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.672645095,"data":"ptxas info    : Function properties for _ZN3evm19up_conv_rows_kernelEPKfPfiiiS1_i\n"}
+,{"stream_name":"stdout","time":19.672649075,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.672775787,"data":"ptxas info    : Used 31 registers, used 0 barriers, 364 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.672873533,"data":"ptxas info    : Compile time = 18.118 ms\n"}
+,{"stream_name":"stdout","time":19.672961192,"data":"ptxas info    : Compiling entry function '_ZN3evm19corr_dn_cols_kernelEPKfPfiiS1_i' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.673064083,"data":"ptxas info    : Function properties for _ZN3evm19corr_dn_cols_kernelEPKfPfiiS1_i\n"}
+,{"stream_name":"stdout","time":19.673161891,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.67327275,"data":"ptxas info    : Used 32 registers, used 0 barriers, 356 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.673387685,"data":"ptxas info    : Compile time = 22.749 ms\n"}
+,{"stream_name":"stdout","time":19.673501612,"data":"ptxas info    : Compiling entry function '_ZN3evm19corr_dn_rows_kernelEPKfPfiiS1_i' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":19.67360416,"data":"ptxas info    : Function properties for _ZN3evm19corr_dn_rows_kernelEPKfPfiiS1_i\n"}
+,{"stream_name":"stdout","time":19.673713486,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":19.673777306,"data":"ptxas info    : Used 30 registers, used 0 barriers, 356 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":19.673877136,"data":"ptxas info    : Compile time = 23.243 ms\n"}
+,{"stream_name":"stdout","time":23.062928415,"data":"[6/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/fp16_cvt.cu.o\n"}
+,{"stream_name":"stdout","time":23.062954899,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":23.062990769,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":23.062995281,"data":"ptxas info    : Compiling entry function '_ZN3evm17f16_to_f32_kernelEPK6__halfPfi' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.062999839,"data":"ptxas info    : Function properties for _ZN3evm17f16_to_f32_kernelEPK6__halfPfi\n"}
+,{"stream_name":"stdout","time":23.063003465,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.063007105,"data":"ptxas info    : Used 7 registers, used 0 barriers, 340 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":23.063010699,"data":"ptxas info    : Compile time = 5.958 ms\n"}
+,{"stream_name":"stdout","time":23.06301423,"data":"ptxas info    : Compiling entry function '_ZN3evm17f32_to_f16_kernelEPKfP6__halfi' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.063017986,"data":"ptxas info    : Function properties for _ZN3evm17f32_to_f16_kernelEPKfP6__halfi\n"}
+,{"stream_name":"stdout","time":23.063021977,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.063025707,"data":"ptxas info    : Used 7 registers, used 0 barriers, 340 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":23.06302919,"data":"ptxas info    : Compile time = 1.906 ms\n"}
+,{"stream_name":"stdout","time":23.437897352,"data":"[7/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/amplify_render.cu.o\n"}
+,{"stream_name":"stdout","time":23.437922724,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":23.43792942,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":23.437934016,"data":"ptxas info    : Compiling entry function '_ZN3evm28upsample_add_quantize_kernelI6__halfEEvPKT_PKfPhiiiiif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.437938314,"data":"ptxas info    : Function properties for _ZN3evm28upsample_add_quantize_kernelI6__halfEEvPKT_PKfPhiiiiif\n"}
+,{"stream_name":"stdout","time":23.437943328,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.43794796,"data":"ptxas info    : Used 32 registers, used 0 barriers, 368 bytes cmem[0], 40 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":23.437952422,"data":"ptxas info    : Compile time = 93.689 ms\n"}
+,{"stream_name":"stdout","time":23.43795656,"data":"ptxas info    : Compiling entry function '_ZN3evm28upsample_add_quantize_kernelIfEEvPKT_PKfPhiiiiif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.437961155,"data":"ptxas info    : Function properties for _ZN3evm28upsample_add_quantize_kernelIfEEvPKT_PKfPhiiiiif\n"}
+,{"stream_name":"stdout","time":23.437965531,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.437969747,"data":"ptxas info    : Used 32 registers, used 0 barriers, 368 bytes cmem[0], 40 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":23.437974482,"data":"ptxas info    : Compile time = 40.904 ms\n"}
+,{"stream_name":"stdout","time":23.437979276,"data":"ptxas info    : Compiling entry function '_ZN3evm26add_planar_quantize_kernelI6__halfEEvPKT_S4_Phiiif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.437983752,"data":"ptxas info    : Function properties for _ZN3evm26add_planar_quantize_kernelI6__halfEEvPKT_S4_Phiiif\n"}
+,{"stream_name":"stdout","time":23.43798851,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.438003089,"data":"ptxas info    : Used 21 registers, used 0 barriers, 360 bytes cmem[0], 24 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":23.438007771,"data":"ptxas info    : Compile time = 12.718 ms\n"}
+,{"stream_name":"stdout","time":23.438012434,"data":"ptxas info    : Compiling entry function '_ZN3evm26add_planar_quantize_kernelIfEEvPKT_S3_Phiiif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.438067268,"data":"ptxas info    : Function properties for _ZN3evm26add_planar_quantize_kernelIfEEvPKT_S3_Phiiif\n"}
+,{"stream_name":"stdout","time":23.438073192,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.438077378,"data":"ptxas info    : Used 21 registers, used 0 barriers, 360 bytes cmem[0], 24 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":23.438081718,"data":"ptxas info    : Compile time = 14.592 ms\n"}
+,{"stream_name":"stdout","time":23.438088527,"data":"ptxas info    : Compiling entry function '_ZN3evm28bilinear_upsample_3ch_kernelEPKfPfiiiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.438093698,"data":"ptxas info    : Function properties for _ZN3evm28bilinear_upsample_3ch_kernelEPKfPfiiiii\n"}
+,{"stream_name":"stdout","time":23.438098374,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.438102843,"data":"ptxas info    : Used 32 registers, used 0 barriers, 356 bytes cmem[0], 16 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":23.438107218,"data":"ptxas info    : Compile time = 46.982 ms\n"}
+,{"stream_name":"stdout","time":23.438112523,"data":"ptxas info    : Compiling entry function '_ZN3evm20scale_inplace_kernelEPfif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.438117458,"data":"ptxas info    : Function properties for _ZN3evm20scale_inplace_kernelEPfif\n"}
+,{"stream_name":"stdout","time":23.438122113,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.438126256,"data":"ptxas info    : Used 4 registers, used 0 barriers, 336 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":23.438130585,"data":"ptxas info    : Compile time = 1.691 ms\n"}
+,{"stream_name":"stdout","time":23.438134832,"data":"ptxas info    : Compiling entry function '_ZN3evm22attenuate_chrom_kernelEPfiif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.438139298,"data":"ptxas info    : Function properties for _ZN3evm22attenuate_chrom_kernelEPfiif\n"}
+,{"stream_name":"stdout","time":23.438144373,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.438148637,"data":"ptxas info    : Used 6 registers, used 0 barriers, 340 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":23.438152767,"data":"ptxas info    : Compile time = 1.866 ms\n"}
+,{"stream_name":"stdout","time":23.438157753,"data":"ptxas info    : Compiling entry function '_ZN3evm23add_and_quantize_kernelEPKfS1_Phiif' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.438162342,"data":"ptxas info    : Function properties for _ZN3evm23add_and_quantize_kernelEPKfS1_Phiif\n"}
+,{"stream_name":"stdout","time":23.438166915,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.438193954,"data":"ptxas info    : Used 12 registers, used 0 barriers, 356 bytes cmem[0], 24 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":23.438198497,"data":"ptxas info    : Compile time = 5.842 ms\n"}
+,{"stream_name":"stdout","time":23.438202856,"data":"ptxas info    : Compiling entry function '_ZN3evm25apply_channel_gain_kernelEPfiifff' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":23.438207481,"data":"ptxas info    : Function properties for _ZN3evm25apply_channel_gain_kernelEPfiifff\n"}
+,{"stream_name":"stdout","time":23.438217403,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":23.438222015,"data":"ptxas info    : Used 6 registers, used 0 barriers, 348 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":23.438226803,"data":"ptxas info    : Compile time = 4.196 ms\n"}
+,{"stream_name":"stdout","time":23.750308835,"data":"[8/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/blur_dn.cu.o\n"}
+,{"stream_name":"stdout","time":23.750410027,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":23.75043904,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":24.106596808,"data":"[9/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/ideal_bandpass.cu.o\n"}
+,{"stream_name":"stdout","time":24.106622633,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":24.106629606,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":24.106634487,"data":"ptxas info    : Compiling entry function '_ZN3evm29real_part_kernel_unnormalizedEPK6float2Pfii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.106639255,"data":"ptxas info    : Function properties for _ZN3evm29real_part_kernel_unnormalizedEPK6float2Pfii\n"}
+,{"stream_name":"stdout","time":24.106643993,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.106648648,"data":"ptxas info    : Used 13 registers, used 0 barriers, 344 bytes cmem[0], 12 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":24.106653462,"data":"ptxas info    : Compile time = 12.151 ms\n"}
+,{"stream_name":"stdout","time":24.106658322,"data":"ptxas info    : Compiling entry function '_ZN3evm22real_to_complex_kernelEPKfP6float2i' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.106662992,"data":"ptxas info    : Function properties for _ZN3evm22real_to_complex_kernelEPKfP6float2i\n"}
+,{"stream_name":"stdout","time":24.10666762,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.10667193,"data":"ptxas info    : Used 8 registers, used 0 barriers, 340 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.106676479,"data":"ptxas info    : Compile time = 4.858 ms\n"}
+,{"stream_name":"stdout","time":24.106681019,"data":"ptxas info    : Compiling entry function '_ZN3evm23apply_ideal_mask_kernelEP6float2iifff' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.106685864,"data":"ptxas info    : Function properties for _ZN3evm23apply_ideal_mask_kernelEP6float2iifff\n"}
+,{"stream_name":"stdout","time":24.106690422,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.106695019,"data":"ptxas info    : Used 12 registers, used 0 barriers, 348 bytes cmem[0], 12 bytes cmem[2]\n"}
+,{"stream_name":"stdout","time":24.106699649,"data":"ptxas info    : Compile time = 24.402 ms\n"}
+,{"stream_name":"stdout","time":24.423001193,"data":"[10/12] Building CUDA object CMakeFiles/_evm_cuda.dir/kernels/lpyr.cu.o\n"}
+,{"stream_name":"stdout","time":24.423024351,"data":"nvcc warning : Support for offline compilation for architectures prior to '\u003ccompute/sm/lto\u003e_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).\n"}
+,{"stream_name":"stdout","time":24.423067635,"data":"ptxas info    : 0 bytes gmem, 112 bytes cmem[3]\n"}
+,{"stream_name":"stdout","time":24.423072623,"data":"ptxas info    : Compiling entry function '_ZN3evm21gather_add_f16_kernelEPK6__halfS2_PS0_PKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.423076913,"data":"ptxas info    : Function properties for _ZN3evm21gather_add_f16_kernelEPK6__halfS2_PS0_PKiii\n"}
+,{"stream_name":"stdout","time":24.423081089,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423085265,"data":"ptxas info    : Used 9 registers, used 0 barriers, 360 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423089227,"data":"ptxas info    : Compile time = 12.932 ms\n"}
+,{"stream_name":"stdout","time":24.423092718,"data":"ptxas info    : Compiling entry function '_ZN3evm17gather_f16_kernelEPK6__halfPS0_PKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.423096259,"data":"ptxas info    : Function properties for _ZN3evm17gather_f16_kernelEPK6__halfPS0_PKiii\n"}
+,{"stream_name":"stdout","time":24.423099809,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423103205,"data":"ptxas info    : Used 8 registers, used 0 barriers, 352 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423106629,"data":"ptxas info    : Compile time = 2.363 ms\n"}
+,{"stream_name":"stdout","time":24.423112599,"data":"ptxas info    : Compiling entry function '_ZN3evm18scatter_f16_kernelEPK6__halfPfPKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.42311649,"data":"ptxas info    : Function properties for _ZN3evm18scatter_f16_kernelEPK6__halfPfPKiii\n"}
+,{"stream_name":"stdout","time":24.423120014,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423123412,"data":"ptxas info    : Used 9 registers, used 0 barriers, 352 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423127051,"data":"ptxas info    : Compile time = 4.955 ms\n"}
+,{"stream_name":"stdout","time":24.423130719,"data":"ptxas info    : Compiling entry function '_ZN3evm27scatter_subtract_f16_kernelEPK6__halfS2_PfPKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.423135939,"data":"ptxas info    : Function properties for _ZN3evm27scatter_subtract_f16_kernelEPK6__halfS2_PfPKiii\n"}
+,{"stream_name":"stdout","time":24.423142163,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423144499,"data":"ptxas info    : Used 10 registers, used 0 barriers, 360 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423146734,"data":"ptxas info    : Compile time = 5.124 ms\n"}
+,{"stream_name":"stdout","time":24.423148893,"data":"ptxas info    : Compiling entry function '_ZN3evm13gather_kernelEPKfPfPKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.423151133,"data":"ptxas info    : Function properties for _ZN3evm13gather_kernelEPKfPfPKiii\n"}
+,{"stream_name":"stdout","time":24.423154168,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423169987,"data":"ptxas info    : Used 8 registers, used 0 barriers, 352 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423173937,"data":"ptxas info    : Compile time = 2.188 ms\n"}
+,{"stream_name":"stdout","time":24.423177838,"data":"ptxas info    : Compiling entry function '_ZN3evm17gather_add_kernelEPKfS1_PfPKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.423181965,"data":"ptxas info    : Function properties for _ZN3evm17gather_add_kernelEPKfS1_PfPKiii\n"}
+,{"stream_name":"stdout","time":24.423186084,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423193448,"data":"ptxas info    : Used 10 registers, used 0 barriers, 360 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423196982,"data":"ptxas info    : Compile time = 2.071 ms\n"}
+,{"stream_name":"stdout","time":24.423200297,"data":"ptxas info    : Compiling entry function '_ZN3evm14scatter_kernelEPKfPfPKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.42320377,"data":"ptxas info    : Function properties for _ZN3evm14scatter_kernelEPKfPfPKiii\n"}
+,{"stream_name":"stdout","time":24.42320716,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423210573,"data":"ptxas info    : Used 9 registers, used 0 barriers, 352 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423214055,"data":"ptxas info    : Compile time = 1.902 ms\n"}
+,{"stream_name":"stdout","time":24.423217393,"data":"ptxas info    : Compiling entry function '_ZN3evm23scatter_subtract_kernelEPKfS1_PfPKiii' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.423220872,"data":"ptxas info    : Function properties for _ZN3evm23scatter_subtract_kernelEPKfS1_PfPKiii\n"}
+,{"stream_name":"stdout","time":24.423224358,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423227752,"data":"ptxas info    : Used 11 registers, used 0 barriers, 360 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423231203,"data":"ptxas info    : Compile time = 2.083 ms\n"}
+,{"stream_name":"stdout","time":24.423234493,"data":"ptxas info    : Compiling entry function '_ZN3evm18add_inplace_kernelEPKfPfi' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.423238061,"data":"ptxas info    : Function properties for _ZN3evm18add_inplace_kernelEPKfPfi\n"}
+,{"stream_name":"stdout","time":24.423247659,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423250828,"data":"ptxas info    : Used 6 registers, used 0 barriers, 340 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.423265336,"data":"ptxas info    : Compile time = 1.460 ms\n"}
+,{"stream_name":"stdout","time":24.423269544,"data":"ptxas info    : Compiling entry function '_ZN3evm23subtract_inplace_kernelEPKfPfi' for 'sm_60'\n"}
+,{"stream_name":"stdout","time":24.42327365,"data":"ptxas info    : Function properties for _ZN3evm23subtract_inplace_kernelEPKfPfi\n"}
+,{"stream_name":"stdout","time":24.423277848,"data":"    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads\n"}
+,{"stream_name":"stdout","time":24.423281330000002,"data":"ptxas info    : Used 6 registers, used 0 barriers, 340 bytes cmem[0]\n"}
+,{"stream_name":"stdout","time":24.42328476,"data":"ptxas info    : Compile time = 1.422 ms\n"}
+,{"stream_name":"stdout","time":28.112152393,"data":"[11/12] Building CXX object CMakeFiles/_evm_cuda.dir/bindings.cpp.o\n"}
+,{"stream_name":"stdout","time":32.522384823,"data":"[12/12] Linking CXX shared module /kaggle/working/evm_cuda/cuda/evm_cuda/_evm_cuda.cpython-312-x86_64-linux-gnu.so\n"}
+,{"stream_name":"stdout","time":32.52389863,"data":"Build complete.\n"}
+,{"stream_name":"stdout","time":32.52392275,"data":"\n"}
+,{"stream_name":"stdout","time":32.523928101,"data":"$ /usr/bin/python3 scripts/download_samples.py face\n"}
+,{"stream_name":"stderr","time":32.893583065,"data":"[samples] face: fetching https://people.csail.mit.edu/mrub/evm/video/face.mp4\n"}
+,{"stream_name":"stderr","time":33.753028751,"data":"[samples] face: wrote 1639646 bytes to /kaggle/working/evm_cuda/data/face.mp4\n"}
+,{"stream_name":"stdout","time":55.917511041,"data":"\n"}
+,{"stream_name":"stdout","time":55.917730521,"data":"=== COLOR FP32 (BASELINE main) ===\n"}
+,{"stream_name":"stdout","time":55.917740103,"data":"color FP32 on Tesla P100-PCIE-16GB\n"}
+,{"stream_name":"stdout","time":55.917742826,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":55.917745092,"data":"  0) H2D: clip               89.1 ms  (88.8-90.9)   28.6%\n"}
+,{"stream_name":"stdout","time":55.917747296,"data":"  1) color_cvt                6.8 ms  (6.8-6.8)    2.2%\n"}
+,{"stream_name":"stdout","time":55.917749935,"data":"  2) blur_dn                 37.7 ms  (37.6-37.8)   12.1%\n"}
+,{"stream_name":"stdout","time":55.917768529,"data":"  2b) D2H: gdown              3.5 ms  (3.4-6.3)    1.1%\n"}
+,{"stream_name":"stdout","time":55.917772847,"data":"  3a) H2D: sig x3            11.0 ms  (10.2-11.0)    3.5%\n"}
+,{"stream_name":"stdout","time":55.917776668,"data":"  3b) ideal_bandpass         44.3 ms  (44.3-44.6)   14.2%\n"}
+,{"stream_name":"stdout","time":55.917780727,"data":"  3c) D2H: filt x3            4.7 ms  (4.0-5.3)    1.5%\n"}
+,{"stream_name":"stdout","time":55.917784821,"data":"  4a) H2D: filt              11.3 ms  (9.9-11.7)    3.6%\n"}
+,{"stream_name":"stdout","time":55.91778825,"data":"  4b) render                  5.5 ms  (5.5-5.5)    1.8%\n"}
+,{"stream_name":"stdout","time":55.917791708,"data":"  4c) D2H: output            98.0 ms  (96.7-98.9)   31.4%\n"}
+,{"stream_name":"stdout","time":55.917795049,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":55.917798662,"data":"  compute total              94.3 ms\n"}
+,{"stream_name":"stdout","time":55.917801943,"data":"  transfer total            217.5 ms\n"}
+,{"stream_name":"stdout","time":55.917805161,"data":"  TOTAL                     311.8 ms\n"}
+,{"stream_name":"stdout","time":55.917808429,"data":"total_ms: 311.8\n"}
+,{"stream_name":"stdout","time":55.917811754,"data":"compute_ms: 94.3, transfer_ms: 217.5\n"}
+,{"stream_name":"stdout","time":55.917815049,"data":"\n"}
+,{"stream_name":"stdout","time":55.917818188,"data":"=== COLOR FP16 (BASELINE main) ===\n"}
+,{"stream_name":"stdout","time":55.917821487,"data":"color FP16 on Tesla P100-PCIE-16GB\n"}
+,{"stream_name":"stdout","time":55.917824817,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":55.917828173,"data":"  0) H2D: clip               88.7 ms  (87.3-89.5)   29.2%\n"}
+,{"stream_name":"stdout","time":55.917831499,"data":"  1) color_cvt               10.7 ms  (10.7-10.8)    3.5%\n"}
+,{"stream_name":"stdout","time":55.917834857,"data":"  2) blur_dn                 53.5 ms  (53.5-53.7)   17.6%\n"}
+,{"stream_name":"stdout","time":55.917838187,"data":"  2b) D2H: gdown              3.3 ms  (3.3-3.4)    1.1%\n"}
+,{"stream_name":"stdout","time":55.917843232,"data":"  3a) H2D: sig x3            11.4 ms  (10.4-11.4)    3.7%\n"}
+,{"stream_name":"stdout","time":55.917850902,"data":"  3b) ideal_bandpass         27.1 ms  (27.1-28.2)    8.9%\n"}
+,{"stream_name":"stdout","time":55.917865747,"data":"  3c) D2H: filt x3            3.9 ms  (3.9-4.1)    1.3%\n"}
+,{"stream_name":"stdout","time":55.917869862,"data":"  4a) H2D: filt               3.6 ms  (3.5-3.8)    1.2%\n"}
+,{"stream_name":"stdout","time":55.917873643,"data":"  4b) render                  4.8 ms  (4.8-4.8)    1.6%\n"}
+,{"stream_name":"stdout","time":55.917878189,"data":"  4c) D2H: output            96.8 ms  (94.7-110.9)   31.8%\n"}
+,{"stream_name":"stdout","time":55.917882098,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":55.917885752,"data":"  compute total              96.2 ms\n"}
+,{"stream_name":"stdout","time":55.917901209,"data":"  transfer total            207.7 ms\n"}
+,{"stream_name":"stdout","time":55.917904688,"data":"  TOTAL                     303.9 ms\n"}
+,{"stream_name":"stdout","time":55.917908029,"data":"total_ms: 303.9\n"}
+,{"stream_name":"stdout","time":55.917911393,"data":"compute_ms: 96.2, transfer_ms: 207.7\n"}
+,{"stream_name":"stderr","time":58.086858015,"data":"/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":58.086881837,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":58.335627104,"data":"/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":58.335651879,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":59.089817812,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":60.290897883,"data":"[NbConvertApp] Writing 287091 bytes to __results__.html\n"}
+]
