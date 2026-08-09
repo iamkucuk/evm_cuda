@@ -1,0 +1,63 @@
+name: Lint
+
+# Style, dead code and types. Correctness is ci.yml's job; nothing here runs a
+# test. Kept separate so a formatting nit and a broken pipeline never arrive as
+# the same red X.
+on:
+  push:
+    branches: [main, library-restructure]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Must stay >= 3.12, and must stay in step with `python_version` in
+          # [tool.mypy]. Ruff genuinely does not care — it takes its target from
+          # `requires-python`. Mypy does: it parses numpy's stubs with the
+          # grammar of its configured version, and numpy >= 2.5 needs 3.12 there
+          # (see the comment on `python_version` in pyproject.toml). 3.12 also
+          # means every runtime dependency ships a wheel, so this job never
+          # compiles numpy.
+          python-version: "3.12"
+          cache: pip
+
+      # Installs the package as well as the two tools, and that is the point:
+      # mypy needs numpy's bundled type information to say anything true about
+      # this code, and installing evm-cuda is the only way to get the runtime
+      # dependencies without listing them a second time here. On a runner with
+      # no nvcc this is the CPU-only install, which cuda/CMakeLists.txt handles
+      # by defining no target.
+      - name: Install the package and the lint tools
+        run: python -m pip install ".[lint]"
+
+      # `--output-format=github` turns each finding into a file/line annotation
+      # on the pull request, so a reviewer sees it in the diff, not in a log.
+      - name: ruff check
+        run: ruff check --output-format=github .
+
+      # Scoped by `[tool.ruff.format] exclude` in pyproject.toml, which names the
+      # 42 files that predate the formatter as an explicit, shrinking backlog.
+      # Everything else — including every file added from here on — is gated,
+      # so this step is a real check today rather than a 2100-line reformatting
+      # demand. Verified locally: `ruff format --diff .` produces no output.
+      - name: ruff format --check
+        run: ruff format --check .
+
+      # Configuration (which files, how strict, and where strict stops) lives in
+      # [tool.mypy]; no flags here, so a local `mypy` run and this one cannot
+      # disagree.
+      - name: mypy
+        run: mypy

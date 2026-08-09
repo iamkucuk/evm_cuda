@@ -44,10 +44,7 @@ from .filters import (
 )
 from .pyramids import (
     blur_dn_clr,
-    build_lpyr,
     laplacian_pyramid_channels,
-    max_pyr_ht,
-    recon_lpyr,
     reconstruct_from_channels,
 )
 from ..io.video import rgb_to_yiq, yiq_to_rgb
@@ -92,12 +89,12 @@ def figure6_alpha_schedule(
     match the pyramid band ordering produced by :func:`build_lpyr`.
     """
     delta = lambda_c / 8.0 / (1.0 + alpha)
-    lam = (vid_h ** 2 + vid_w ** 2) ** 0.5 / 3.0  # noqa: E741 - match MATLAB var
+    lam = (vid_h ** 2 + vid_w ** 2) ** 0.5 / 3.0  # match MATLAB var
 
     # MATLAB iterates coarse->fine (nLevels..1) and appends per level; we build
     # coarse->fine then reverse to get the finest-first order of build_lpyr.
     coarse_first: list[float] = []
-    for l in range(n_levels, 0, -1):  # noqa: E741 - match MATLAB var
+    for l in range(n_levels, 0, -1):  # match MATLAB var
         if l == n_levels or l == 1:
             a = 0.0
         else:
@@ -300,7 +297,7 @@ def motion_lpyr_ideal_core(
     # Stack each band along time: bands[l] is (T, h_l, w_l, 3).
     bands = [
         np.stack([pyrs[i][0][l] for i in range(n)], axis=0)
-        for l in range(n_levels)  # noqa: E741
+        for l in range(n_levels)
     ]
 
     # Figure-6 schedule (finest-first).
@@ -310,7 +307,7 @@ def motion_lpyr_ideal_core(
 
     # Temporal bandpass + per-level amplify.
     amplified_bands = []
-    for l, band in enumerate(bands):  # noqa: E741
+    for l, band in enumerate(bands):
         filtered = ideal_bandpass(band.astype(np.float64), fl, fh, sampling_rate)
         amplified_bands.append(filtered * alpha_sched[l])
 
@@ -362,7 +359,7 @@ def _streaming_lpyr_motion(
     n_coeffs = sum(int(pind[l, 0] * pind[l, 1]) for l in range(n_levels))
     series = np.empty((n, n_coeffs, 3), dtype=np.float64)
     for i in range(n):
-        for l in range(n_levels):  # noqa: E741
+        for l in range(n_levels):
             band = pyrs[i][0][l]
             sl = _level_slice(l, pind)
             series[i, sl, :] = band.reshape(-1, 3)
@@ -378,7 +375,7 @@ def _streaming_lpyr_motion(
     filtered_per_frame = []
     for i in range(n):
         bands = []
-        for l in range(n_levels):  # noqa: E741
+        for l in range(n_levels):
             sl = _level_slice(l, pind)
             lh, lw = int(pind[l, 0]), int(pind[l, 1])
             bands.append(filtered[i, sl, :].reshape(lh, lw, 3) * alpha_sched[l])

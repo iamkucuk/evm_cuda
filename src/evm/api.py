@@ -77,13 +77,13 @@ _FPS_UNUSED = 0.0
 
 
 def magnify(
-    video: str | os.PathLike | np.ndarray | Iterable[np.ndarray],
+    video: str | os.PathLike[str] | np.ndarray | Iterable[np.ndarray],
     *,
     preset: str | None = None,
     backend: str = "auto",
     precision: str = "fp32",
     fps: float | None = None,
-    out: str | os.PathLike | None = None,
+    out: str | os.PathLike[str] | None = None,
     drop_last: int = 0,
     **overrides: Any,
 ) -> np.ndarray:
@@ -149,12 +149,15 @@ def magnify(
         rate if rate else "unused by this pipeline", preset,
     )
 
-    result = core(frames, rate, **params)
+    # The cores are reached through the registry, so their type is Any here.
+    # This is the one place the promise in the docstring — (T, H, W, 3) uint8 —
+    # is written down for the checker.
+    result: np.ndarray = core(frames, rate, **params)
 
     if out is not None:
         from .io.video import encode_video
 
-        encode_video(result, out, rate)
+        encode_video(result, os.fspath(out), rate)
     return result
 
 
@@ -164,7 +167,7 @@ def magnify(
 
 
 def _read_input(
-    video: str | os.PathLike | np.ndarray | Iterable[np.ndarray],
+    video: str | os.PathLike[str] | np.ndarray | Iterable[np.ndarray],
     *,
     fps: float | None,
     drop_last: int,
@@ -179,7 +182,10 @@ def _read_input(
         raise ValueError(f"drop_last must be >= 0; got {drop_last}")
 
     if isinstance(video, (str, os.PathLike)):
-        decoded, file_fps = _read_frames(video, drop_last=drop_last)
+        # os.fspath and not Path(): the readers take ``str | Path`` and do their
+        # own ``str(path)``, and fspath hands a str straight through unchanged
+        # rather than round-tripping it through Path's normalisation.
+        decoded, file_fps = _read_frames(os.fspath(video), drop_last=drop_last)
         if not decoded:
             raise ValueError(f"no frames decoded from {os.fspath(video)!r}")
         return np.stack(decoded, axis=0), float(fps) if fps is not None else file_fps
@@ -191,7 +197,7 @@ def _read_input(
 
 
 def _resolve_rate(
-    rate: float | None, *, core: Any, params: dict, stem: str, writing: bool
+    rate: float | None, *, core: Any, params: dict[str, Any], stem: str, writing: bool
 ) -> float:
     """The frame rate to hand the core, or a loud explanation of why it is needed."""
     if rate is not None:

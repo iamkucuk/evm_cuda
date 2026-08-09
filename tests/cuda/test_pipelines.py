@@ -20,8 +20,8 @@ import evm  # noqa: E402
 from conftest import TOL, have_cuda, skip_no_cuda  # noqa: E402
 
 if have_cuda:
-    from evm.cuda import pipelines as cu  # noqa: E402
-    from evm.cuda import batched as cu_batched  # noqa: E402
+    from evm.cuda import pipelines as cu
+    from evm.cuda import batched as cu_batched
 
 DATA = ROOT / "data"
 TMP = ROOT / "output" / "_test"

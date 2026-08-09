@@ -78,6 +78,13 @@ cuda-build = [
 dev = [
     "pytest>=7.0",
 ]
+# Pinned, not floating: a new ruff release adds rules, and a lint gate that can
+# turn red without anybody editing code is a gate people learn to ignore.
+# .pre-commit-config.yaml pins the same ruff version; bump both together.
+lint = [
+    "ruff==0.16.2",
+    "mypy==2.3.0",
+]
 
 # The console command. `evm` alone was rejected (plan decision D5): it collides
 # with Ethereum tooling, which already owns that name on PATH for a lot of
@@ -110,3 +117,221 @@ wheel.packages = ["src/evm", "src/evm_cuda"]
 # packaging. A source checkout with nothing installed is expected to fail with
 # ModuleNotFoundError; scripts/dev/verify_install.sh exercises the clean path.
 testpaths = ["tests"]
+
+# --------------------------------------------------------------------------
+# Ruff (plan step 2.2). Configured to describe the code that is already here,
+# not to impose a new house style on it: the settings below were chosen by
+# measuring, on 2026-08-09, what each candidate produced against this tree.
+# --------------------------------------------------------------------------
+[tool.ruff]
+# Measured, not chosen by taste. `ruff format --check` over the tracked *.py
+# files at 88 / 100 / 110 columns leaves 14 / 11 / 10 of them already
+# byte-identical to the formatter's output (25 / 21 / 20 counting the whole
+# tree, which adds .pyi and the notebook). 88 is not merely the best score: it
+# is the only width at which all of src/evm/backend/ and presets.py — the most
+# recently written modules — come out unchanged, 5 of 5 files, against 2 and 3
+# reformatted at 100 and 110. A wider limit scores *worse* because the
+# formatter then joins lines that were wrapped by hand.
+line-length = 88
+
+[tool.ruff.lint]
+# The pyflakes + pycodestyle-error core, i.e. the rules that find real defects
+# (undefined and unused names, comparison and except-clause mistakes, syntax
+# errors) rather than rules that would restyle working code. Ruff's own default
+# selection is far wider (413 rules in 0.16.2) and reports 265 findings here,
+# almost all of them "this file was written before that rule existed".
+#
+# Deliberately NOT selected, with the count each would add today:
+#   I    (import sorting)      35 files — this tree groups imports by meaning
+#                              (siblings, then parents), not by isort's order.
+#   UP   (pyupgrade)           29 — typing.Callable -> collections.abc, etc.
+#                              A real modernisation, but a source rewrite, so
+#                              it belongs in its own commit, not in the commit
+#                              that turns the linter on.
+#   RET/PLR1711                36 — explicit `return None` in the batched.py
+#                              stage closures, where returning nothing on
+#                              purpose is the point.
+#   C4   (comprehensions)      18 — `dict(alpha=..., level=...)` in the golden
+#                              fixture table and the CLI tests, which reads
+#                              better than a brace literal for a parameter set.
+#   RUF022                     5  — `__all__` is ordered by topic here, not
+#                              alphabetically, and the topic order is the docs'.
+#   BLE001                     6  — every one is a boundary that catches broad
+#                              and then *reports* (backend probes,
+#                              nvidia-smi shelling out, CUDA import guards).
+#                              E722 below still forbids a truly bare `except:`.
+select = ["E4", "E7", "E9", "F", "W", "RUF100"]
+
+ignore = [
+    # `l` is the pyramid level index, spelled exactly as the MATLAB reference
+    # spells it (`for l = nLevels:-1:1` in amplify_spatial_lpyr_temporal_*.m).
+    # 23 sites across the CPU baseline, the CUDA wrappers and their tests use
+    # it. The port is deliberately name-for-name with the reference, so this is
+    # a convention to keep, not a violation to annotate 23 times.
+    "E741",
+    # `t0 = time.perf_counter(); body()` — the benchmark and profiling code
+    # pairs a timer with the statement it times on one line, 41 times, so the
+    # pairing is visible at a glance. Nothing about it is ambiguous.
+    "E702",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `import evm` with nothing used from it: importing the oracle is the point,
+# because a missing install must fail here, loudly, before any CUDA test runs.
+"tests/cuda/conftest.py" = ["F401"]
+# 36 false positives, one cause. This module frees pooled device memory as soon
+# as a stage is done with it — `_stage("2) blur_dn", _s2); del d_ntsc_planar` —
+# and every stage body is a closure defined just above its own `del`. Ruff
+# checks a nested function body against the *final* state of the enclosing
+# scope, by which time the name is unbound, so it calls a name undefined that
+# was live when the closure actually ran. Reduced and confirmed on 2026-08-09:
+#
+#     def run():
+#         buf = "payload"
+#         def body(): return buf.upper()   # ruff: F821 Undefined name `buf`
+#         result = body()                  # ... yet this prints PAYLOAD
+#         del buf
+#         return result
+#
+# All 36 are this shape: every name ruff reports (d_clip, d_ntsc_planar,
+# d_gdown_planar, d_gdown_thwc, d_sig, d_filt, d_filtered, d_bands) is the
+# target of a `del` in its own function. Scoped to this one file so F821 keeps
+# working everywhere else.
+"src/evm/cuda/batched.py" = ["F821"]
+
+[tool.ruff.format]
+# THE DEBT LIST, and the only place it is written down. `ruff format` was never
+# run over this repository. Measured with `ruff format --diff` on 2026-08-09,
+# before this key existed: "42 files would be reformatted, 24 files already
+# formatted", and the 42 amount to about 2100 moved lines — enough to bury the
+# work of this branch. So the formatter is switched on for everything EXCEPT the
+# 42 named below, which makes it a real gate today and puts every new file in
+# scope automatically, because this list names files and not a directory.
+# With the list in place, `ruff format --diff .` produces no output at all.
+#
+# Delete a line from this list in the same commit that formats that file.
+# The list only ever shrinks; when it is empty, delete `exclude` with it.
+#
+# One source of truth on purpose: CI (.github/workflows/lint.yml), the
+# pre-commit hook and an editor's format-on-save all read this key, so none of
+# them can disagree about which files are in scope.
+exclude = [
+    "colab/evm_cuda_benchmark.ipynb",
+    "kaggle/run_gpu_comparison.py",
+    "scripts/bound_microbench.py",
+    "scripts/dev/make_golden_fixtures.py",
+    "scripts/download_samples.py",
+    "scripts/measure_fp16_experiments.py",
+    "scripts/profile_full_comparison.py",
+    "scripts/prove_fp16_cost.py",
+    "scripts/render_cuda_videos.py",
+    "src/evm/__init__.py",
+    "src/evm/_cli.py",
+    "src/evm/api.py",
+    "src/evm/cpu/filters.py",
+    "src/evm/cpu/magnify.py",
+    "src/evm/cpu/pyramids.py",
+    "src/evm/cuda/__init__.py",
+    "src/evm/cuda/_common.py",
+    "src/evm/cuda/batched.py",
+    "src/evm/cuda/benchmark.py",
+    "src/evm/cuda/pipelines.py",
+    "src/evm/cuda/runtime.py",
+    "src/evm/io/h264.py",
+    "src/evm/io/video.py",
+    "src/evm/notebook.py",
+    "tests/__init__.py",
+    "tests/cuda/conftest.py",
+    "tests/cuda/test_api_cuda.py",
+    "tests/cuda/test_batched_kernels.py",
+    "tests/cuda/test_benchmark.py",
+    "tests/cuda/test_color_cvt.py",
+    "tests/cuda/test_device_resident_bandpass.py",
+    "tests/cuda/test_lpyr.py",
+    "tests/cuda/test_pipelines.py",
+    "tests/cuda/test_spatial.py",
+    "tests/cuda/test_temporal.py",
+    "tests/cuda/test_upsample.py",
+    "tests/test_api.py",
+    "tests/test_cli.py",
+    "tests/test_golden.py",
+    "tests/test_pipeline.py",
+    "tests/test_pyramids.py",
+    "tests/test_video_encode.py",
+]
+
+# --------------------------------------------------------------------------
+# Mypy (plan step 2.3): permissive everywhere under src/evm, strict on the
+# public surface only. Measured on 2026-08-09 with mypy 2.3.0 on this Mac:
+# permissive alone gives 22 errors in 6 files; adding the strict surface below
+# gives 28 in 7. The +6 are all in evm/api.py and evm/__init__.py —
+# evm.presets and every module of evm.backend already pass strict unchanged.
+# --------------------------------------------------------------------------
+[tool.mypy]
+files = ["src/evm"]
+# Pinned rather than "whatever interpreter is running", so a local run and CI
+# cannot reach different verdicts.
+#
+# It must be 3.12 or higher, and that is a hard constraint, not a preference:
+# mypy parses third-party stubs with the grammar of THIS version, and numpy
+# >= 2.5 writes PEP 695 `type X = ...` statements in its `__init__.pyi`. At
+# 3.10 or 3.11, mypy stops at
+#     numpy/__init__.pyi:737: error: Type statement is only supported in
+#     Python 3.12 and greater  [syntax]
+#     Found 1 error in 1 file (errors prevented further checking)
+# — it type-checks NOTHING and the job is red for a reason that has nothing to
+# do with this code. A machine with numpy 2.4 installed does not see this, so
+# it hides from a local run and only appears on a fresh `pip install .[lint]`,
+# which is exactly what CI does. Verified on 2026-08-09 against both numpy
+# 2.4.6 and 2.5.2: at 3.12 and 3.13 both give the same 28 errors in 7 files;
+# at 3.10 and 3.11, numpy 2.5.2 gives the syntax error above.
+#
+# 3.12 and not the 3.9 floor in `requires-python`: mypy 2.3.0 refuses 3.9
+# outright ("Python 3.9 is not supported (must be 3.10 or higher)"), and 3.10
+# and 3.11 are ruled out above. So nothing here checks the 3.9 promise — and
+# nothing else does either, since this tree has only ever been run on 3.13 and
+# 3.14. Worth resolving when the classifier list is revisited.
+python_version = "3.12"
+# numpy ships types; cv2, av, scipy and the compiled _evm_cuda do not. Hunting
+# stubs for four third-party libraries is not what this step is for.
+ignore_missing_imports = true
+warn_unused_configs = true
+# Global-only in mypy 2.3.0 — it is part of what `strict` turns on, but a
+# per-module section rejects it ("Per-module sections should only specify
+# per-module flags"), so it lives up here and applies everywhere.
+warn_redundant_casts = true
+# The one suppression that must never go stale: a `# type: ignore` that stopped
+# being needed is how a silenced error outlives its cause.
+warn_unused_ignores = true
+
+# The public surface: what `import evm` gives you, plus the contract every
+# future backend implements. Semver covers exactly these names (plan section 1,
+# item 4), so these are the names worth checking properly.
+#
+# The strict flags are spelled out one by one instead of `strict = true`.
+# That is not verbosity for its own sake — `strict = true` inside an overrides
+# table does NOT stay inside it. Verified on 2026-08-09 with mypy 2.3.0: a
+# config whose only override was `module = ["evm.presets"], strict = true`
+# still reported 131 errors in 13 files, 65 of them in evm/cuda/batched.py — a
+# module the override never named — broken down as 28 no-untyped-call, 24
+# no-untyped-def, 12 no-any-return and 1 attr-defined. Spelled out, the same
+# surface reports 28 in 7 — the strictness lands where it was aimed.
+[[tool.mypy.overrides]]
+module = [
+    "evm",
+    "evm.api",
+    "evm.presets",
+    "evm.backend",
+    "evm.backend.*",
+]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true

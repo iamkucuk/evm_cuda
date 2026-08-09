@@ -10,12 +10,11 @@ truncated float32 uploads to all-zero for values that round to 0 as char
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from conftest import have_cuda, skip_no_cuda  # noqa: E402
+from conftest import have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda.batched import DeviceBuffer  # noqa: E402
+    from evm.cuda.batched import DeviceBuffer
 
 
 @skip_no_cuda

@@ -1,0 +1,10 @@
+# Config for actionlint (https://github.com/rhysd/actionlint).
+#
+# Without this, actionlint rejects `runs-on: [self-hosted, linux, x64, cuda]` in
+# gpu.yml with "label \"cuda\" is unknown" — it has no way to know which custom
+# labels this project's self-hosted runners carry. Declaring the label here is
+# also the one place that says a runner must be registered with it; see
+# docs/dev/gpu-runner.md.
+self-hosted-runner:
+  labels:
+    - cuda

@@ -5,12 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import evm  # noqa: E402
-from evm.cpu.pyramids import corr_dn_axis, up_conv_axis, BINOM5, BINOM5_SUM1  # noqa: E402
-from conftest import TOL, abs_err, have_cuda, skip_no_cuda  # noqa: E402
+from evm.cpu.pyramids import corr_dn_axis, up_conv_axis, BINOM5
+from conftest import TOL, abs_err, have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda import _evm_cuda  # noqa: E402
+    from evm.cuda import _evm_cuda
 
 
 @skip_no_cuda

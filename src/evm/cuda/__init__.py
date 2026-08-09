@@ -21,19 +21,24 @@ CUDA module isn't built (see `tests/cuda/conftest.py`).
 from __future__ import annotations
 
 try:
-    from . import _evm_cuda  # noqa: F401  (built by CMake into this package dir)
+    # The ignore below is for a compiled .so that CMake writes into this
+    # directory. It carries no stubs, so mypy can never resolve it, and the
+    # try/except around this line is precisely the code that handles its
+    # absence — there is no bug here to hide. warn_unused_ignores keeps it
+    # honest: it turns red the day mypy can see the module.
+    from . import _evm_cuda  # type: ignore[attr-defined]  # noqa: F401
     _have_cuda = True
     import_error: Exception | None = None
 except ImportError as _e:  # pragma: no cover - exercised on Mac dev host
     _have_cuda = False
     import_error = _e
 
-from .runtime import have_cuda, require_cuda  # noqa: F401
+from .runtime import have_cuda, require_cuda
 
 # Set runtime.import_error to the real captured error (it defaults to None).
 # Done after the runtime import completes to avoid the circular import that
 # previously swallowed the error.
-from . import runtime as _runtime  # noqa: E402
+from . import runtime as _runtime
 _runtime.import_error = import_error
 del _runtime
 

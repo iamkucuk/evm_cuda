@@ -385,6 +385,11 @@ def _load_download_samples() -> Any:
             "https://people.csail.mit.edu/mrub/evm/."
         )
     spec = importlib.util.spec_from_file_location("evm._download_samples", path)
+    if spec is None or spec.loader is None:
+        # Unreachable for the .py file `p.is_file()` just confirmed, but both
+        # are Optional in the import machinery, and an unloadable spec must say
+        # so rather than surface as an AttributeError on None two lines down.
+        raise SystemExit(f"error: {path} exists but could not be loaded as a module.")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

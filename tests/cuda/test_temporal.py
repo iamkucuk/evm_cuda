@@ -5,14 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.cpu.filters import (  # noqa: E402
+from evm.cpu.filters import (
     iir_bandpass, butter_bandpass, ideal_bandpass,
 )
-from evm.cuda.runtime import butter_bandpass_coeffs  # noqa: E402
-from conftest import TOL, abs_err, have_cuda, skip_no_cuda  # noqa: E402
+from evm.cuda.runtime import butter_bandpass_coeffs
+from conftest import TOL, abs_err, have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda import _evm_cuda  # noqa: E402
+    from evm.cuda import _evm_cuda
 
 FPS = 30.0
 T = 300

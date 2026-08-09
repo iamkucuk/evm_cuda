@@ -103,14 +103,14 @@ def main(argv: list[str] | None = None) -> int:
                 r.raise_for_status()
                 args.out.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(r.content)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f"[samples] {local}: FAILED {e}", file=sys.stderr)
 
     names = args.samples or sorted(SAMPLES)
     for n in names:
         try:
             download(n, args.out)
-        except Exception as e:  # noqa: BLE001 - report and continue
+        except Exception as e:  # report and continue
             print(f"[samples] {n}: FAILED {e}", file=sys.stderr)
     return 0
 

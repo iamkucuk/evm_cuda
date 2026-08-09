@@ -20,8 +20,6 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-# Until the editable install lands (plan steps 1.10/1.12), point at src/.
-sys.path.insert(0, str(ROOT / "src"))
 
 from evm.cuda import _evm_cuda  # noqa: E402
 from evm.cuda.batched import DeviceBuffer, _d_binom5  # noqa: E402

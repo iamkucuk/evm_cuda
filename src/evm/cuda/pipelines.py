@@ -49,7 +49,6 @@ persistent across pipeline calls.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Tuple
 
 import cv2
 import numpy as np
@@ -285,6 +284,15 @@ def _motion_lpyr_core(
             elif filter_kind == "iir":
                 out = _evm_cuda.iir_bandpass(nt, r1, r2)
             elif filter_kind == "butter":
+                if fl is None or fh is None or sampling_rate is None:
+                    # fl/fh are required keyword arguments on
+                    # motion_lpyr_butter_core and sampling_rate defaults to fps
+                    # above, so this fires only on an explicit None. Without it
+                    # the None reaches scipy and comes back as a bare TypeError.
+                    raise ValueError(
+                        "the butter pipeline needs a band and a rate; got "
+                        f"fl={fl!r} fh={fh!r} sampling_rate={sampling_rate!r}"
+                    )
                 (b0h, b1h, a1h), (b0l, b1l, a1l) = butter_bandpass_coeffs(
                     fl, fh, sampling_rate, order=1)
                 out = _evm_cuda.butter_bandpass(nt, b0h, b1h, a1h, b0l, b1l, a1l)

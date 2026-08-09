@@ -14,13 +14,10 @@ Run on a GPU node. Outputs land in <repo>/output/cuda_render/.
 
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-# Until the editable install lands (plan steps 1.10/1.12), point at src/.
-sys.path.insert(0, str(ROOT / "src"))
 
 import numpy as np  # noqa: E402
 

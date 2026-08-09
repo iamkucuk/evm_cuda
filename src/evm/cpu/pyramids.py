@@ -23,7 +23,7 @@ Reference: people.csail.mit.edu/mrub/evm/code/EVM_Matlab-1.1.zip (2012).
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Literal, Tuple
 
 import numpy as np
 
@@ -59,9 +59,11 @@ def corr_dn_axis(
     # reversed kernel == correlation of the original kernel, matching
     # matlabPyrTools (which flips the filter then calls conv2 'valid').
     rev = filt[::-1].astype(padded.dtype)
-    out = np.apply_along_axis(
-        lambda v, k=rev: np.convolve(v, k, mode="valid"), axis, padded
-    )
+
+    def conv_valid(v: np.ndarray) -> np.ndarray:
+        return np.convolve(v, rev, mode="valid")
+
+    out = np.apply_along_axis(conv_valid, axis, padded)
     sl = [slice(None)] * img.ndim
     sl[axis] = slice(None, None, 2)
     return out[tuple(sl)]
@@ -90,9 +92,11 @@ def up_conv_axis(
     pad_width[axis] = (pad, pad)
     padded = np.pad(up, pad_width, mode="reflect")
     rev = filt[::-1].astype(padded.dtype)
-    out = np.apply_along_axis(
-        lambda v, k=rev: np.convolve(v, k, mode="valid"), axis, padded
-    )
+
+    def conv_valid(v: np.ndarray) -> np.ndarray:
+        return np.convolve(v, rev, mode="valid")
+
+    out = np.apply_along_axis(conv_valid, axis, padded)
     sl = [slice(None)] * img.ndim
     sl[axis] = slice(0, out_size)
     return out[tuple(sl)]
@@ -145,7 +149,9 @@ def blur_dn_clr(img: np.ndarray, nlevs: int, filt: np.ndarray = BINOM5_SUM1) -> 
 
 
 def build_lpyr(
-    img: np.ndarray, height: int | str = "auto", filt: np.ndarray = BINOM5
+    img: np.ndarray,
+    height: int | Literal["auto"] | None = "auto",
+    filt: np.ndarray = BINOM5,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """matlabPyrTools ``buildLpyr`` for a 2-D single-channel image.
 
@@ -207,7 +213,7 @@ def recon_lpyr(
 
 
 def laplacian_pyramid_channels(
-    frame: np.ndarray, height: int | str = "auto"
+    frame: np.ndarray, height: int | Literal["auto"] | None = "auto"
 ) -> Tuple[List[np.ndarray], np.ndarray]:
     """Build a Laplacian pyramid per channel, returning per-level stacked bands.
 

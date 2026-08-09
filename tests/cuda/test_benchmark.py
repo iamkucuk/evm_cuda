@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 from conftest import skip_no_cuda  # noqa: E402
 
 try:
-    from evm.cuda import benchmark  # noqa: E402
-    from evm.cuda import batched  # noqa: E402
+    from evm.cuda import benchmark
+    from evm.cuda import batched
 except Exception:
     benchmark = None
     batched = None

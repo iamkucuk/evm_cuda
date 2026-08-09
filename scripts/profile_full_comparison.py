@@ -13,18 +13,14 @@ Output:
 from __future__ import annotations
 
 import os
-import sys
 import time
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-# Until the editable install lands (plan steps 1.10/1.12), point at src/.
-sys.path.insert(0, str(ROOT / "src"))
-
 import numpy as np
 import cv2
 
+ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 OUTPUT = ROOT / "output"
 OUTPUT.mkdir(exist_ok=True)
@@ -151,7 +147,7 @@ def profile_motion_cpu_stages():
     the GPU profiler's stage names.
     """
     import evm
-    from evm.cpu.pyramids import laplacian_pyramid_channels, reconstruct_from_channels
+    from evm.cpu.pyramids import laplacian_pyramid_channels
     from evm.cpu.filters import iir_bandpass
 
     frames, fps = evm.cpu.magnify._read_frames(MOTION_VID)
@@ -202,7 +198,9 @@ def profile_motion_cpu_stages():
 
         # Stage D2: YIQ->RGB + quantize (render)
         t0 = time.perf_counter()
-        out = np.stack([evm.cpu.magnify._ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
+        # The result is discarded on purpose: this is a profiling script and the
+        # point is to time the work, not to keep the frames.
+        _ = np.stack([evm.cpu.magnify._ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
         st["D2) render"] = time.perf_counter() - t0
 
         st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
@@ -318,7 +316,7 @@ def main():
                       f"({res.compute_ms:.0f}ms vs {cpu_total:.0f}ms CPU)")
 
     # Output videos
-    print(f"\nOutput videos:")
+    print("\nOutput videos:")
     for f in sorted(OUTPUT.glob("*.mp4")):
         print(f"  {f.name}: {f.stat().st_size/1024/1024:.1f} MB")
 
@@ -336,7 +334,7 @@ def main():
     }
     with open(ROOT / "comparison_results.json", "w") as f:
         json.dump(payload, f, indent=2, default=str)
-    print(f"\nResults saved to comparison_results.json")
+    print("\nResults saved to comparison_results.json")
     print("=" * 70)
 
 

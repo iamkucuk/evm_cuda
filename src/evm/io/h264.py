@@ -11,6 +11,7 @@ the encode logic lives exactly once.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 
 def encode_h264(
@@ -29,7 +30,6 @@ def encode_h264(
     """
     import av
     from fractions import Fraction
-    import numpy as np
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -42,7 +42,12 @@ def encode_h264(
     with av.open(
         str(path), mode="w", options={"movflags": "+faststart"}
     ) as container:
-        stream = container.add_stream(codec, rate=rate)
+        # PyAV's stubs return VideoStream only for a literal codec name; for a
+        # `str` variable they return the video|audio|subtitle union. `codec` is
+        # a video codec by contract (this function writes H.264 and sets width,
+        # height and pix_fmt on the result), so name that here rather than
+        # branch on a case the callers cannot produce.
+        stream = cast("av.VideoStream", container.add_stream(codec, rate=rate))
         stream.width = w
         stream.height = h
         stream.pix_fmt = "yuv420p"

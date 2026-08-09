@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import Tuple
 
-import numpy as np
 from scipy.signal import butter
 
 from . import _have_cuda
@@ -55,5 +54,3 @@ def butter_bandpass_coeffs(
     h = (float(high_b[0]), float(high_b[1]), float(high_a[1]))
     l = (float(low_b[0]), float(low_b[1]), float(low_a[1]))
     return h, l
-
-

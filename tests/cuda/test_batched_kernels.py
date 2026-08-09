@@ -16,12 +16,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.cpu.pyramids import build_lpyr, recon_lpyr, blur_dn, max_pyr_ht, BINOM5, BINOM5_SUM1  # noqa: E402
-from conftest import TOL, abs_err, have_cuda, skip_no_cuda, BINOM5_CUDA, BINOM5_SUM1_CUDA  # noqa: E402
+from evm.cpu.pyramids import max_pyr_ht
+from conftest import TOL, abs_err, have_cuda, skip_no_cuda, BINOM5_CUDA, BINOM5_SUM1_CUDA
 
 if have_cuda:
-    from evm.cuda import _evm_cuda  # noqa: E402
-    from evm.cuda.batched import DeviceBuffer, _d_binom5, _d_binom5_sum1  # noqa: E402
+    from evm.cuda import _evm_cuda
+    from evm.cuda.batched import DeviceBuffer, _d_binom5, _d_binom5_sum1
 
 
 @skip_no_cuda

@@ -1,0 +1,201 @@
+# The CUDA correctness gate (plan step 2.4, decision D6).
+#
+# GitHub's hosted runners have no NVIDIA GPU, so on every normal pull request
+# the whole tests/cuda/ suite skips and ci.yml proves nothing about the port —
+# which is the project's real correctness claim. This job is where that claim
+# gets checked, on the RTX 3090 machine, through a self-hosted runner.
+#
+# Deliberately NOT on push: that machine is somebody's desktop. It runs WSL2 and
+# the runner disappears whenever Windows sleeps or reboots, so a job queued on
+# every commit is a job that sits pending for hours. Manual dispatch and release
+# only. docs/dev/gpu-runner.md explains how the runner is registered and what it
+# cannot do.
+name: GPU suite
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# One GPU, one job at a time — and never cancel one in flight, because a
+# release is waiting on its answer.
+concurrency:
+  group: gpu-suite
+  cancel-in-progress: false
+
+jobs:
+  cuda-suite:
+    # `cuda` is a custom label added when registering the runner. `self-hosted`
+    # alone would also match any future runner on a machine with no GPU, where
+    # every CUDA test would skip and the gate below would fail for the wrong
+    # reason.
+    runs-on: [self-hosted, linux, x64, cuda]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash   # -eo pipefail, so a failure inside a `... | tee` is fatal
+
+    env:
+      # Facts about THAT machine, recorded in docs/dev/packaging-notes.md §3:
+      # there are no administrator rights on it and no system compiler, so the
+      # entire CUDA toolchain (nvcc, cmake, ninja, g++) lives in a conda
+      # environment, and nvidia-smi exists only in WSL's driver directory.
+      # Changing machines means changing these two lines and nothing else.
+      EVM_TOOLCHAIN_BIN: /home/furkan/miniconda3/envs/evm-cuda/bin
+      EVM_WSL_LIB: /usr/lib/wsl/lib
+      # A build that cannot find nvcc must fail right there. Without this the
+      # install would quietly succeed as the CPU-only package and the failure
+      # would surface three steps later as "everything skipped".
+      EVM_CUDA_REQUIRE: "1"
+      # Everything published as the run's evidence is written here.
+      EVIDENCE: gpu-evidence
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Put the CUDA toolchain on PATH, and prove it is there
+        run: |
+          echo "$EVM_TOOLCHAIN_BIN" >> "$GITHUB_PATH"
+          echo "$EVM_WSL_LIB" >> "$GITHUB_PATH"
+          export PATH="$EVM_TOOLCHAIN_BIN:$EVM_WSL_LIB:$PATH"
+          missing=()
+          for tool in python nvcc cmake ninja g++ nvidia-smi; do
+            command -v "$tool" > /dev/null || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::not on PATH: ${missing[*]}. Expected them in" \
+                 "$EVM_TOOLCHAIN_BIN (conda env) or $EVM_WSL_LIB (WSL driver" \
+                 "directory). See docs/dev/gpu-runner.md."
+            exit 1
+          fi
+          for tool in python nvcc cmake ninja g++ nvidia-smi; do
+            printf '%-12s %s\n' "$tool" "$(command -v "$tool")"
+          done
+
+      - name: Record which machine this ran on
+        run: |
+          mkdir -p "$EVIDENCE"
+          {
+            echo "commit    $GITHUB_SHA"
+            echo "ref       $GITHUB_REF"
+            echo "run       $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "when      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            echo "host      $(uname -srm)"
+            echo
+            nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv
+            echo
+            nvcc --version | tail -n 2
+            python -V
+          } | tee "$EVIDENCE/host.txt"
+
+      - name: Install the project into a throwaway venv (this compiles the extension)
+        run: |
+          # A venv, not the conda environment: that environment is a person's
+          # interactive workspace on a shared desktop and a CI job has no
+          # business writing into it. Plain `pip install .`, no --editable and
+          # no --no-build-isolation — the same path a user gets from a release.
+          python -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet --upgrade pip
+          # [dev] rather than a second mention of pytest: pyproject.toml is the
+          # one place that says what running the suite needs.
+          "$RUNNER_TEMP/venv/bin/python" -m pip install ".[dev]" \
+            2>&1 | tee "$EVIDENCE/install.log"
+
+      - name: The extension must have compiled
+        run: |
+          python - <<'PY' | tee "$EVIDENCE/extension.txt"
+          import sys
+
+          import evm
+          import evm.cuda as gpu
+
+          print(f"evm        {evm.__version__}")
+          print(f"have_cuda  {gpu.have_cuda}")
+          if not gpu.have_cuda:
+              sys.exit(
+                  f"FAIL: the extension did not build or does not import on a "
+                  f"machine with nvcc: {gpu.import_error!r}"
+              )
+          gpu.require_cuda()
+          print(f"module     {gpu._evm_cuda.__file__}")
+          PY
+
+      - name: Fetch the MIT sample clips
+        run: |
+          # tests/test_against_mit_reference.py skips without data/*.mp4, and
+          # actions/checkout wipes untracked files, so this runs every time.
+          # scripts/download_samples.py reports a failed fetch and still exits
+          # 0 — the zero-skip gate below is what actually catches a missing
+          # clip, not this step.
+          evm-magnify download face baby --with-references
+          ls -l data/
+
+      - name: Run the full suite
+        run: |
+          # -p no:randomly keeps the order comparable with the recorded
+          # baselines in benches/.
+          pytest tests/ -q -p no:randomly --junitxml="$EVIDENCE/junit.xml" \
+            2>&1 | tee "$EVIDENCE/pytest.txt"
+
+      - name: No test may be skipped on a GPU host
+        run: |
+          # This is the point of the whole job. tests/cuda/ skips itself when
+          # `import evm.cuda._evm_cuda` fails, and pytest still exits 0 — so a
+          # green run here would otherwise be indistinguishable from a run that
+          # silently tested nothing. On this machine the expected result is
+          # zero skips; anything else is a broken build or a missing clip.
+          python - <<'PY' | tee "$EVIDENCE/counts.txt"
+          import json
+          import os
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          evidence = pathlib.Path(os.environ["EVIDENCE"])
+          root = ET.parse(evidence / "junit.xml").getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+
+          n = {k: int(suite.get(k, 0)) for k in ("tests", "failures", "errors", "skipped")}
+          n["passed"] = n["tests"] - n["failures"] - n["errors"] - n["skipped"]
+          print(json.dumps(n, indent=2))
+          (evidence / "counts.json").write_text(json.dumps(n, indent=2) + "\n")
+
+          skipped = [
+              (f"{c.get('classname')}::{c.get('name')}", c.find("skipped").get("message", ""))
+              for c in suite.iter("testcase")
+              if c.find("skipped") is not None
+          ]
+          if skipped:
+              print(f"\n{len(skipped)} skipped test(s):")
+              for name, why in skipped:
+                  print(f"  {name}\n      {why}")
+              sys.exit(
+                  "FAIL: a GPU host must run every test. A skipped CUDA case "
+                  "means the extension is not importable here; a skipped "
+                  "reference case means data/ is missing a clip."
+              )
+          print("\nzero skips: every collected test actually ran")
+          PY
+
+      - name: Benchmark the two device-resident pipelines
+        run: |
+          # The numbers a release can point at. Both presets the harness covers:
+          # pulse = color_gdown_ideal, motion = motion_lpyr_iir, each in FP32
+          # and FP16 with the comparison table.
+          evm-magnify bench data/face.mp4 --preset pulse --precision all --iters 5 \
+            2>&1 | tee "$EVIDENCE/bench_pulse.txt"
+          evm-magnify bench data/baby.mp4 --preset motion --precision all --iters 5 \
+            2>&1 | tee "$EVIDENCE/bench_motion.txt"
+
+      - name: Publish the evidence
+        # always(): a failed run's evidence is the interesting kind.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-evidence-${{ github.run_id }}
+          path: ${{ env.EVIDENCE }}/
+          if-no-files-found: error

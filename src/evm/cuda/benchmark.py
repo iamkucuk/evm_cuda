@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import _evm_cuda
-from . import batched  # noqa: E402  (submodule; the pipelines live here)
+from . import batched  # submodule; the pipelines live here
 from ._common import read_frames
 
 
@@ -283,7 +283,7 @@ def run(
         return result
     except RuntimeError as e:                    # CUDA runtime errors (incl. OOM)
         if "out of memory" in str(e).lower():
-            result.notes = f"skipped (out of memory)"
+            result.notes = "skipped (out of memory)"
             return result
         raise                                    # genuine CUDA errors must surface
     finally:

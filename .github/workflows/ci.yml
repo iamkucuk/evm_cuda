@@ -1,0 +1,227 @@
+# CI — docs/dev/PLAN.md Phase 2, steps 2.1 and 2.5.
+#
+# What this file is for, in one sentence: it is the permanent regression guard for
+# the CUDA-optional build introduced in Phase 1. Hosted runners have no nvcc, so
+# every job here proves that `pip install .` still produces a working CPU-only
+# package, and that the test suite passes against the INSTALLED package.
+#
+# It reports skip counts, never bare "tests passed": on a runner with no GPU the
+# whole of tests/cuda/ skips, and the MIT-reference tests skip too (they need
+# data/*.mp4, which is gitignored). A green tick here says the packaging and the
+# CPU baseline are intact — it says nothing about the CUDA port. That is what
+# .claude/rules/development-practices.md §5 means by "report skip counts".
+name: CI
+
+# Both triggers on purpose: `push` covers work on a branch that has no pull
+# request yet, `pull_request` covers contributions from forks. A branch that has
+# both runs twice; the concurrency group below at least cancels superseded runs.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes the run in flight. Distinct from the
+# "pages" group used by deploy-pages.yml, which is untouched by this file.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # `shell: bash` is `bash --noprofile --norc -eo pipefail`; the implicit
+    # default is only `bash -e`, and the pytest steps below pipe into tee.
+    shell: bash
+
+jobs:
+  test:
+    name: ${{ matrix.os }} py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      # One red cell must never hide the state of the others.
+      fail-fast: false
+      matrix:
+        # The matrix matches what pyproject.toml actually claims, not more:
+        #
+        # * `requires-python = ">=3.9"` — so Linux runs every minor from the
+        #   declared floor to the newest release. 3.9 was additionally run by
+        #   hand on this project's macOS arm64 machine on 2026-08-09
+        #   (124 passed, 70 skipped), which is what justifies keeping the floor.
+        # * Classifiers list `POSIX :: Linux` and `MacOS` and deliberately no
+        #   Windows one ("never tested there" — pyproject.toml:42-43). Windows is
+        #   therefore NOT in this matrix. docs/dev/PLAN.md:270 asks for it; the
+        #   package metadata is the honest source and wins. A Windows job would
+        #   either advertise support that has never existed or sit red forever.
+        #   Adding Windows is a separate decision that starts with someone
+        #   running the suite there once.
+        # * macOS runs 3.13 and 3.14 only. actions/python-versions has current
+        #   darwin-arm64 builds for those two; for 3.9-3.12 its newest arm64
+        #   builds are 3.9.13, 3.10.11, 3.11.9 and 3.12.10, so a macOS job on
+        #   those minors would pin an interpreter one to four years stale and
+        #   test Apple-specific packaging rather than this project.
+        os: [ubuntu-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: macos-latest
+            python-version: "3.13"
+          - os: macos-latest
+            python-version: "3.14"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Caches ~/.cache/pip, keyed on the hash of pyproject.toml, so any
+          # dependency change invalidates it. It cannot mask a broken build of
+          # THIS package: pip does not cache wheels built from a local
+          # directory, and the install below is exactly that. Verified on
+          # 2026-08-09 — after `pip install .` under 3.9 the pip cache held no
+          # evm_cuda cp39 wheel, while an earlier install from an archive had
+          # left cp313 ones behind. That is also why the sdist job below turns
+          # caching off entirely.
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Duplicated in the sdist job below; three lines of apt are cheaper than a
+      # composite action, and .claude/rules/development-practices.md §2 rules out
+      # inventing an abstraction for it.
+      - name: Runtime libraries the OpenCV Linux wheel leaves to the system
+        if: runner.os == 'Linux'
+        # `import evm` imports cv2 (src/evm/cpu/magnify.py:37), so this is needed
+        # before anything, not only for the video tests. Reading DT_NEEDED out of
+        # the manylinux wheel on 2026-08-09 (cv2.abi3.so plus the 41 libraries
+        # vendored beside it) leaves exactly libGL.so.1, libSM.so.6, libICE.so.6
+        # and libXext.so.6 unresolved beyond the base system. The runner image
+        # does not declare them — they are absent from its toolset apt list — so
+        # install them instead of relying on some other package having pulled
+        # them in. libice6 arrives as a dependency of libsm6.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libsm6 libxext6
+
+      - name: No CUDA compiler on this runner (the invariant under test)
+        run: |
+          if command -v nvcc; then
+            echo "::error::nvcc is on PATH, so this job no longer tests the no-CUDA install path"
+            exit 1
+          fi
+          echo "nvcc absent, as expected: pip install . must still yield a working CPU-only package"
+
+      - name: Install the package the way a user would
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+
+      - name: What actually got installed
+        # Deliberately run from outside the checkout. The packages live under
+        # src/ and pyproject.toml sets no `pythonpath`, so a source-tree import
+        # could not masquerade as a successful install even from the repo root —
+        # running elsewhere makes that explicit instead of incidental.
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -c "import evm, inspect; print('evm', evm.__version__, 'from', inspect.getfile(evm))"
+          python -c "import evm.cuda as gpu; assert gpu.have_cuda is False, 'extension present on a runner without nvcc'; print('have_cuda =', gpu.have_cuda); print('import_error =', type(gpu.import_error).__name__)"
+          evm-magnify --help > /dev/null
+          echo "evm-magnify is on PATH"
+
+      - name: Test suite
+        run: python -m pytest tests/ -q -p no:randomly -rs | tee "$RUNNER_TEMP/pytest.log"
+
+      - name: Pass and skip counts
+        if: always()
+        env:
+          LABEL: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+        run: |
+          # `|| true` is load-bearing: under `set -e` a failing command
+          # substitution aborts the step at this line, so without it the
+          # message below is dead code and a missing log surfaces only as a
+          # raw `grep: No such file`. Swallow grep's status here and let the
+          # explicit test report the problem.
+          counts=$(grep -E '^([0-9]+ (passed|failed|error|skipped)|no tests ran)' "$RUNNER_TEMP/pytest.log" | tail -n 1 || true)
+          if [ -z "$counts" ]; then
+            echo "::error::no pytest summary line found in $RUNNER_TEMP/pytest.log"
+            exit 1
+          fi
+          echo "::notice title=$LABEL::$counts"
+          printf '### %s\n\n    %s\n\n' "$LABEL" "$counts" >> "$GITHUB_STEP_SUMMARY"
+          cat >> "$GITHUB_STEP_SUMMARY" <<'NOTE'
+          Skips are expected here and prove nothing about the GPU port: the whole of
+          `tests/cuda/` needs the compiled extension, and the MIT-reference tests need
+          `data/*.mp4`, which the checkout does not carry.
+          NOTE
+
+  sdist:
+    # A normal `pip install .` reads the git checkout, so it cannot catch a file
+    # that the source distribution forgets to ship. This job builds the sdist,
+    # installs from that tarball alone into a clean venv, and runs the suite from
+    # the unpacked sdist — never from the checkout.
+    name: sdist builds and installs standalone
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          # No pip cache in this job on purpose. Unlike a local-directory
+          # install, a wheel built from an archive IS cacheable, so a cached
+          # evm_cuda wheel from an earlier run could hide a broken sdist. The
+          # install step also passes --no-cache-dir for the same reason.
+
+      - name: Runtime libraries the OpenCV Linux wheel leaves to the system
+        # Same reason as in the test job above.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libsm6 libxext6
+
+      - name: Build the sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist --outdir "$RUNNER_TEMP/dist"
+
+      - name: What the sdist ships
+        run: |
+          sdist=$(ls "$RUNNER_TEMP"/dist/*.tar.gz)
+          echo "$sdist  ($(du -h "$sdist" | cut -f1))"
+          tar tzf "$sdist" | cut -d/ -f2,3 | sort -u | head -40
+
+      - name: Install from the sdist alone, into a clean venv
+        run: |
+          sdist=$(ls "$RUNNER_TEMP"/dist/*.tar.gz)
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --no-cache-dir "${sdist}[dev]"
+
+      - name: Run the suite from the unpacked sdist, not the checkout
+        run: |
+          sdist=$(ls "$RUNNER_TEMP"/dist/*.tar.gz)
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          tar xzf "$sdist" -C "$RUNNER_TEMP/unpacked"
+          cd "$RUNNER_TEMP/unpacked"/evm_cuda-*
+          echo "cwd: $PWD"
+          "$RUNNER_TEMP/venv/bin/python" -c "import evm, inspect; print('evm', evm.__version__, 'from', inspect.getfile(evm))"
+          "$RUNNER_TEMP/venv/bin/python" -m pytest tests/ -q -p no:randomly -rs | tee "$RUNNER_TEMP/pytest-sdist.log"
+
+      - name: Pass and skip counts
+        if: always()
+        run: |
+          # `|| true` for the same reason as in the test job above: without it
+          # `set -e` aborts at this line and the message below never prints.
+          counts=$(grep -E '^([0-9]+ (passed|failed|error|skipped)|no tests ran)' "$RUNNER_TEMP/pytest-sdist.log" | tail -n 1 || true)
+          if [ -z "$counts" ]; then
+            echo "::error::no pytest summary line found in $RUNNER_TEMP/pytest-sdist.log"
+            exit 1
+          fi
+          echo "::notice title=from sdist::$counts"
+          printf '### Installed from the sdist alone\n\n    %s\n\n' "$counts" >> "$GITHUB_STEP_SUMMARY"
+          cat >> "$GITHUB_STEP_SUMMARY" <<'NOTE'
+          The count should match the matrix jobs: both lack the compiled extension, and
+          both lack `data/*.mp4` (gitignored, so neither the checkout nor the sdist carries
+          the sample clips), so the same tests stand down in both.
+          NOTE

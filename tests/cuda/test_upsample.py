@@ -7,14 +7,13 @@ half-pixel centers + replicate (clamp-to-edge) border.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from conftest import have_cuda, skip_no_cuda  # noqa: E402
+from conftest import have_cuda, skip_no_cuda
 
 if have_cuda:
-    import cv2  # noqa: E402
-    from evm.cuda.batched import DeviceBuffer  # noqa: E402
-    from evm.cuda import _evm_cuda  # noqa: E402
+    import cv2
+    from evm.cuda.batched import DeviceBuffer
+    from evm.cuda import _evm_cuda
 
 
 @skip_no_cuda

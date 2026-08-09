@@ -19,12 +19,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from conftest import TOL, abs_err, have_cuda, skip_no_cuda  # noqa: E402
+from conftest import TOL, abs_err, have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda import _evm_cuda  # noqa: E402
-    from evm.cuda.batched import DeviceBuffer  # noqa: E402
-    from evm.cpu.filters import ideal_bandpass  # noqa: E402
+    from evm.cuda import _evm_cuda
+    from evm.cuda.batched import DeviceBuffer
+    from evm.cpu.filters import ideal_bandpass
 
 
 # ---------------------------------------------------------------------------

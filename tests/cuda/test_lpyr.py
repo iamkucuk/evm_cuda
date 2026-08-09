@@ -5,11 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.cpu.pyramids import build_lpyr, recon_lpyr, max_pyr_ht, BINOM5  # noqa: E402
-from conftest import TOL, abs_err, have_cuda, skip_no_cuda, BINOM5_CUDA  # noqa: E402
+from evm.cpu.pyramids import build_lpyr, max_pyr_ht
+from conftest import TOL, abs_err, have_cuda, skip_no_cuda, BINOM5_CUDA
 
 if have_cuda:
-    from evm.cuda import _evm_cuda  # noqa: E402
+    from evm.cuda import _evm_cuda
 
 
 @skip_no_cuda
@@ -54,7 +54,7 @@ def test_lpyr_bands_match_baseline(h, w):
 @pytest.mark.parametrize("h,w", [(64, 64), (45, 33)])
 def test_blur_dn_matches_baseline(h, w):
     """blur_dn downsampled output matches Python baseline at each nlevs."""
-    from evm.cpu.pyramids import blur_dn, BINOM5_SUM1
+    from evm.cpu.pyramids import blur_dn
     rng = np.random.default_rng(1)
     img = rng.random((h, w)).astype(np.float32)
     from conftest import BINOM5_SUM1_CUDA

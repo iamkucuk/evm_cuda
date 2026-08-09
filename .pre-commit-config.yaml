@@ -1,0 +1,48 @@
+# Pre-commit hooks (plan step 2.3). Optional for contributors, identical in
+# effect to .github/workflows/lint.yml so a green commit here is a green CI run.
+#
+#     pip install pre-commit && pre-commit install     # once
+#     pre-commit run --all-files                        # check the whole tree
+#
+# Every ruff setting lives in pyproject.toml, never here: the hooks below pass
+# --force-exclude, so `[tool.ruff.format] exclude` (the list of files not yet
+# formatted) is honoured identically by this hook, by CI, and by an editor.
+#
+# NO C++/CUDA FORMATTER, deliberately. clang-format (Apple build 21.0.0, the
+# one at /Library/Developer/CommandLineTools/usr/bin) was measured against
+# the 4698 lines of cuda/**/*.{cu,cuh,cpp} on 2026-08-09. Changed lines by
+# built-in style: LLVM 6695, Google 6290, Chromium 7261, Mozilla 8747, WebKit
+# 1894, Microsoft 4175, GNU 7474 (a style can change more lines than the file
+# has, since one rewrapped line counts as a delete plus an insert). Tuned
+# variants do not help: WebKit with IndentWidth 4, ColumnLimit 0,
+# PointerAlignment Left and every alignment and reflow knob disabled still
+# rewrites 1894 lines — 40% of the CUDA sources — because the residual is the
+# parameter alignment under the open paren in every kernel launcher
+# declaration. There is no configuration that leaves cuda/ alone, so adding the
+# hook would mean reformatting hand-tuned kernel code as a side effect of
+# turning on a linter. Revisit only as a deliberate, separately reviewed commit.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pinned to the same version as the `lint` extra in pyproject.toml and the
+    # pip install in .github/workflows/lint.yml. Bump all three together, or a
+    # commit that passes locally can still fail in CI.
+    rev: v0.16.2
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Verified on 2026-08-09: zero tracked text files carry trailing
+        # whitespace today, so this hook starts clean and only guards.
+        exclude: '^benches/'
+      - id: end-of-file-fixer
+        # benches/ is excluded because it is recorded evidence, not source:
+        # benches/kaggle_runs/*.log are console captures and
+        # benches/bench_rtx3090.json is a measurement record. Five of them end
+        # without a newline exactly as the run that produced them left them, and
+        # a formatting hook must not edit a measurement.
+        exclude: '^benches/'

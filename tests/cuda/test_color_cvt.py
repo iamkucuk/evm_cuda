@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-import evm  # noqa: E402
-from conftest import (  # noqa: E402
+import evm
+from conftest import (
     TOL, abs_err, have_cuda, skip_no_cuda,
     BINOM5_CUDA, BINOM5_SUM1_CUDA,
 )
 
 if have_cuda:
-    from evm.cuda import _evm_cuda  # noqa: E402
+    from evm.cuda import _evm_cuda
 
 
 @skip_no_cuda
@@ -72,4 +71,3 @@ def test_batched_bgr_u8_to_ntsc_f16_near_f32():
 
     err = abs_err(got, ref)
     assert err < 2e-3, f"fused half NTSC vs float NTSC err={err:.2e}"
-

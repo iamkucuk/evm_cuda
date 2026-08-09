@@ -41,6 +41,9 @@ from importlib.metadata import (
     PackageNotFoundError as _PackageNotFoundError,
     version as _version,
 )
+# Underscore-aliased like the two names above: ``__dir__`` below returns
+# ``globals()``, so a bare ``Any`` would show up in ``dir(evm)``.
+from typing import Any as _Any
 
 from .io import load_video, save_video, VideoInfo, rgb_to_yiq, yiq_to_rgb
 from .cpu import (
@@ -78,7 +81,7 @@ except _PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> _Any:
     # ``evm.cuda`` is resolved on first access, not at import time, so a
     # CPU-only machine importing ``evm`` never loads the CUDA wrapper.
     if name == "cuda":
