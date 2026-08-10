@@ -140,17 +140,21 @@ is claimed.
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
-| RTX 3090 24GB | 75.4 / 60.4 ms | 9.7 / 7.6 ms |
+| RTX 3090 24GB | 49.1 / 38.6 ms | 9.7 / 7.6 ms |
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
 | P100 16GB | OOM / 139.7 ms | 26.3 / 21.8 ms |
 | T4 16GB ‡ | OOM / 228.8 ms | 48.9 / 39.7 ms |
 
-† Measured before the up_conv work (smaller tiles, divide-free `reflect1`,
-even-tap loop) and not yet re-run. That change is worth about 1.2x on motion
-compute on the 3090 and nothing about it is architecture specific, so those
-two rows are pessimistic by roughly that much. Cross-GPU ratios below are
-left from the pre-change measurement and will shift once the others are re-run.
+† Measured before two later rounds of work on the motion path and not yet
+re-run: the up_conv change (smaller tiles, divide-free `reflect1`, even-tap
+loop), then an FP32 IIR state and the band combine folded into the up_conv
+store. Together those are worth 1.54x on motion compute on the 3090 — the
+only row re-measured — and none of it is architecture specific, so the other
+motion figures are pessimistic by roughly that much. Colour is unaffected by
+both rounds and its 3090 row re-measured unchanged, which is the check that
+the two sets of numbers are comparable. Cross-GPU ratios below are left from
+the pre-change measurement and will shift once the others are re-run.
 
 ‡ One run of `colab/evm_cuda_benchmark.ipynb` on Colab's shared hardware, with
 no stored JSON. Indicative only: repeated runs on that class of machine moved
@@ -167,7 +171,7 @@ Raw JSON:
 
 | Compare | RMSE | max LSB |
 |---------|-----:|--------:|
-| Motion FP16 vs CUDA FP32 (baby) | 0.00232 | 5 |
+| Motion FP16 vs CUDA FP32 (baby) | 0.00199 | 5 |
 | Color FP16 vs CUDA FP32 (face) | 0.00071 | 1 |
 
 End-to-end vs Python stays under RMSE < 0.01.

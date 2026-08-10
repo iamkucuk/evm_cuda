@@ -172,6 +172,12 @@ void launch_up_conv_rows_batched(const float* in, float* out,
                                  const float* filt, int filt_len,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream);
+void launch_up_conv_cols_batched_combine(const float* in, float* out,
+                                         const float* combine, float sign,
+                                         int H, int in_W, int out_W,
+                                         const float* filt, int filt_len,
+                                         int stride_in, int stride_out, int B,
+                                         cudaStream_t stream);
 void launch_up_conv_cols_batched(const float* in, float* out,
                                  int H, int in_W, int out_W,
                                  const float* filt, int filt_len,
@@ -213,6 +219,12 @@ void launch_up_conv_rows_batched_f16_halfacc(const __half* in, __half* out,
                                  const float* filt, int filt_len,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream);
+void launch_up_conv_cols_batched_f16_combine(const __half* in, __half* out,
+                                             const __half* combine, float sign,
+                                             int H, int in_W, int out_W,
+                                             const float* filt, int filt_len,
+                                             int stride_in, int stride_out,
+                                             int B, cudaStream_t stream);
 void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
                                  int H, int in_W, int out_W,
                                  const float* filt, int filt_len,
@@ -1258,7 +1270,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 const int hn = (h + 1) / 2;
                 const int wn = (w + 1) / 2;
                 float* lo2 = slots[i_lo2];
-                float* hi2 = slots[i_hi2];
                 float* lo  = slots[i_lo];
 
                 // smem fused down; separable up (fused up was a regression)
@@ -1268,13 +1279,13 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 evm::launch_up_conv_rows_batched(
                     lo2, lo, hn, h, wn, filt, filt_len,
                     hn * wn, h * wn, M, 0);
-                evm::launch_up_conv_cols_batched(
-                    lo, hi2, h, wn, w, filt, filt_len,
-                    h * wn, h * w, M, 0);
-
+                // Upsample straight into the band, subtracting as it stores.
+                // This replaces a write of hi2 plus a separate pass that read
+                // hi2 and cur back; hi2 is now unused at this level.
                 float* band_l = out_base + level_offsets[l];
-                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
-                evm::launch_band_subtract(cur, hi2, band_l, n_band, 0);
+                evm::launch_up_conv_cols_batched_combine(
+                    lo, band_l, cur, -1.0f, h, wn, w, filt, filt_len,
+                    h * wn, h * w, M, 0);
 
                 cur = lo2;
                 i_cur = i_lo2;
@@ -1339,7 +1350,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 const int hn = (h + 1) / 2;
                 const int wn = (w + 1) / 2;
                 __half* lo2 = slots[i_lo2];
-                __half* hi2 = slots[i_hi2];
                 __half* lo  = slots[i_lo];
 
                 evm::launch_corr_dn_fused_smem_batched_f16(
@@ -1348,13 +1358,11 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 evm::launch_up_conv_rows_batched_f16(
                     lo2, lo, hn, h, wn, filt, filt_len,
                     hn * wn, h * wn, M, 0);
-                evm::launch_up_conv_cols_batched_f16(
-                    lo, hi2, h, wn, w, filt, filt_len,
-                    h * wn, h * w, M, 0);
-
+                // Fused subtract, as in the FP32 build above.
                 __half* band_l = out_base + level_offsets[l];
-                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
-                evm::launch_band_subtract_f16_to_f16(cur, hi2, band_l, n_band, 0);
+                evm::launch_up_conv_cols_batched_f16_combine(
+                    lo, band_l, cur, -1.0f, h, wn, w, filt, filt_len,
+                    h * wn, h * w, M, 0);
 
                 cur = lo2;
                 i_cur = i_lo2;
@@ -1494,7 +1502,6 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 const int hn = (h + 1) / 2;
                 const int wn = (w + 1) / 2;
                 __half* lo2 = slots[i_lo2];
-                __half* hi2 = slots[i_hi2];
                 __half* lo  = slots[i_lo];
 
                 evm::launch_corr_dn_fused_smem_batched_f16_half2(
@@ -1504,13 +1511,11 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 evm::launch_up_conv_rows_batched_f16(
                     lo2, lo, hn, h, wn, filt, filt_len,
                     hn * wn, h * wn, M, 0);
-                evm::launch_up_conv_cols_batched_f16(
-                    lo, hi2, h, wn, w, filt, filt_len,
-                    h * wn, h * w, M, 0);
-
+                // Fused subtract, as in the FP32 build above.
                 __half* band_l = out_base + level_offsets[l];
-                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
-                evm::launch_band_subtract_f16_to_f16(cur, hi2, band_l, n_band, 0);
+                evm::launch_up_conv_cols_batched_f16_combine(
+                    lo, band_l, cur, -1.0f, h, wn, w, filt, filt_len,
+                    h * wn, h * w, M, 0);
 
                 cur = lo2;
                 i_cur = i_lo2;
@@ -1616,13 +1621,11 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 evm::launch_up_conv_rows_batched(
                     scratch_cur, scratch_res, ph, h, pw, filt, filt_len,
                     ph * pw, h * pw, M, 0);
-                evm::launch_up_conv_cols_batched(
-                    scratch_res, dst, h, pw, w, filt, filt_len,
-                    h * pw, h * w, M, 0);
-
-                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
-                evm::launch_band_add(bands_base + level_offsets[l], dst, dst,
-                                    n_band, 0);
+                // Upsample and add the band in the same store, rather than
+                // writing dst and immediately reading it back to add to it.
+                evm::launch_up_conv_cols_batched_combine(
+                    scratch_res, dst, bands_base + level_offsets[l], 1.0f,
+                    h, pw, w, filt, filt_len, h * pw, h * w, M, 0);
             }
 
             if (levels == 1) {
@@ -1674,12 +1677,10 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 evm::launch_up_conv_rows_batched_f16(
                     scratch_cur, scratch_res, ph, h, pw, filt, filt_len,
                     ph * pw, h * pw, M, 0);
-                evm::launch_up_conv_cols_batched_f16(
-                    scratch_res, dst, h, pw, w, filt, filt_len,
-                    h * pw, h * w, M, 0);
-                const int n_band = static_cast<int>(level_sizes_vec[l] * M);
-                evm::launch_band_add_f16(
-                    bands_base + level_offsets[l], dst, dst, n_band, 0);
+                // Fused add, as in the FP32 recon above.
+                evm::launch_up_conv_cols_batched_f16_combine(
+                    scratch_res, dst, bands_base + level_offsets[l], 1.0f,
+                    h, pw, w, filt, filt_len, h * pw, h * w, M, 0);
             }
 
             if (levels == 1) {

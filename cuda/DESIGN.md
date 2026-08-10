@@ -78,11 +78,11 @@ src/evm/cuda/              # Python wrapper package (it used to live in cuda/)
 | Operation | CUDA kernel | Grid / Block | Notes |
 |---|---|---|---|
 | Smem fused corr_dn (down) | `spatial.cu:corr_dn_fused_smem_batched` | `(⌈Wo/32⌉,⌈Ho/8⌉,B) / (32,8,1)` | Production build/blur; cols→rows in smem |
-| Separable up_conv | `spatial.cu:up_conv_{rows,cols}_batched` | `(⌈W/32⌉,⌈H/8⌉,B) / (32,8,1)` | Production recon/build up; fused up **not** wired |
-| Batched lpyr_build | `bindings.cpp:batched_lpyr_build` | host loop over levels | smem fused down + sep up + **contiguous** `band_subtract` |
-| Batched lpyr_recon | `bindings.cpp:batched_lpyr_recon` | host loop over levels | sep up + contiguous `band_add` |
+| Separable up_conv | `spatial.cu:up_conv_{rows,cols}_batched` | `(⌈W/32⌉,⌈H/8⌉,B) / (32,8,1)` | Production recon/build up; fused up **not** wired. `up_conv_cols_batched_combine` folds the band add/subtract into its store |
+| Batched lpyr_build | `bindings.cpp:batched_lpyr_build` | host loop over levels | smem fused down + sep up, the subtract **fused into** the up_conv store |
+| Batched lpyr_recon | `bindings.cpp:batched_lpyr_recon` | host loop over levels | sep up, the add **fused into** the up_conv store |
 | Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | smem fused down; frame-major (color) or as called |
-| Contiguous band ops | `lpyr.cu:band_subtract/band_add` | `(⌈n/256⌉) / (256,1,1)` | channel-outer affine; no offset table |
+| Contiguous band ops | `lpyr.cu:band_subtract/band_add` | `(⌈n/256⌉) / (256,1,1)` | channel-outer affine; no offset table. Still used by the per-frame and half-accumulate paths; the batched FP32/FP16 pipelines now fuse this into up_conv |
 | TN IIR (+scale) | `iir_bandpass.cu:iir_bandpass_tn_kernel` | `(⌈N/256⌉) / (256,1,1)` | motion Stage C; no transpose sandwich |
 | Scaled transpose | `transpose.cu:nt_to_thwc_kernel` (+scale) | `(⌈N/256⌉) / (256,1,1)` | color / legacy layout helpers |
 | Fused upsample+add+quant | `amplify_render.cu:upsample_add_quantize_kernel` | `(⌈MHW/256⌉) / (256,1,1)` | color pipeline render |
@@ -246,7 +246,10 @@ contiguous **`(T, N)`**. Stage C runs `batched_iir_bandpass_tn` **in place**
 
 Spatial scratch during build/recon is also channel-outer after
 `batched_to_planar_3ch_chan_outer` (`m' = c*n + f`), so band writes are
-contiguous (`band_subtract` / `band_add`), not irregular scatter.
+contiguous, not irregular scatter. That contiguity is what lets the batched
+pipelines fold the band subtract/add into the `up_conv_cols` store instead of
+running it as a second pass: the band a level combines with has exactly the
+index and stride the up_conv is already writing.
 
 **Color (cuFFT ideal bandpass):** still uses `(N,T)` via
 `thwc_to_nt` / plan-many with `istride=1, idist=T` — fastest batched 1-D

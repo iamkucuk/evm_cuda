@@ -393,13 +393,26 @@ __global__ void up_conv_rows_batched_kernel(
     out[b * slice_stride_out + yo * W + x] = cvt_out<Out>(acc);
 }
 
+// The last argument pair is what makes the pyramid's add/subtract pass
+// disappear. Both callers used to run this kernel, write a full-resolution
+// intermediate, and then launch a second kernel that read that intermediate
+// straight back to combine it with a band. At the finest pyramid level the
+// intermediate is 1.8 GB, so the round trip through memory cost a write and a
+// read of it for no arithmetic reason -- and these kernels are memory-bound at
+// roughly three quarters of what the card can sustain, so bytes are the whole
+// cost. Handing the band in here folds that combine into the store that was
+// happening anyway.
+//
+// `combine` is null for callers that just want the upsampled result.
 template <typename In, typename Out>
 __global__ void up_conv_cols_batched_kernel(
     const In* __restrict__ in,
     Out* __restrict__ out,
     int H, int in_W, int out_W,
     const float* filt, int filt_len,
-    int slice_stride_in, int slice_stride_out, int B)
+    int slice_stride_in, int slice_stride_out, int B,
+    const Out* __restrict__ combine = nullptr,
+    float combine_sign = 0.0f)
 {
     const int xo0 = blockIdx.x * SP_BX;
     const int y0  = blockIdx.y * SP_BY;
@@ -464,7 +477,13 @@ __global__ void up_conv_cols_batched_kernel(
             acc += f[k] * cvt_in<In>(sin[y * in_W + src]);
         }
     }
-    out[b * slice_stride_out + y * out_W + xo] = cvt_out<Out>(acc);
+    const int oi = b * slice_stride_out + y * out_W + xo;
+    if (combine != nullptr) {
+        // Same index and same stride as the store: the band a pyramid level
+        // combines with is exactly the shape being written here.
+        acc = fmaf(combine_sign, acc, cvt_in<Out>(combine[oi]));
+    }
+    out[oi] = cvt_out<Out>(acc);
 }
 
 // --- batched launchers (FP32 storage) --------------------------------------
@@ -511,6 +530,23 @@ void launch_up_conv_cols_batched(const float* in, float* out,
     dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
     up_conv_cols_batched_kernel<float, float><<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
+}
+
+// Upsample and combine in one pass: out = combine + sign * up_conv(in).
+// `sign` is -1 when building a pyramid (band = finer - upsampled coarser) and
+// +1 when reconstructing one (image = band + upsampled coarser). `combine` and
+// `out` must not alias; both callers pass distinct buffers.
+void launch_up_conv_cols_batched_combine(const float* in, float* out,
+                                         const float* combine, float sign,
+                                         int H, int in_W, int out_W,
+                                         const float* filt, int filt_len,
+                                         int stride_in, int stride_out, int B,
+                                         cudaStream_t stream) {
+    dim3 block(SP_BX, SP_BY, 1);
+    dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
+    up_conv_cols_batched_kernel<float, float><<<grid, block, 0, stream>>>(
+        in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B,
+        combine, sign);
 }
 
 // --- batched launchers (FP16 storage, FP32 compute) ------------------------
@@ -670,6 +706,23 @@ void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
     dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
     up_conv_cols_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
+}
+
+// The FP16 counterpart of launch_up_conv_cols_batched_combine. Folding the
+// combine in here also removes a rounding step: the intermediate used to be
+// rounded to half on the way out and read back before the band was applied,
+// where now the band meets a float accumulator.
+void launch_up_conv_cols_batched_f16_combine(const __half* in, __half* out,
+                                             const __half* combine, float sign,
+                                             int H, int in_W, int out_W,
+                                             const float* filt, int filt_len,
+                                             int stride_in, int stride_out,
+                                             int B, cudaStream_t stream) {
+    dim3 block(SP_BX, SP_BY, 1);
+    dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
+    up_conv_cols_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
+        in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B,
+        combine, sign);
 }
 
 void launch_up_conv_rows_batched_f16_halfacc(const __half* in, __half* out,
