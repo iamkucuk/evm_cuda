@@ -3,16 +3,44 @@
 The same magnification is implemented three times over. Which one runs is
 chosen automatically, and never changed behind your back.
 
-| Backend | Runs on | Written in | Speed |
-|---|---|---|---|
-| `cuda` | NVIDIA graphics processors | Hand-written CUDA, tuned | Fastest |
-| `opencl` | Apple, AMD, Intel and NVIDIA graphics processors; also processors, through a software driver | One set of OpenCL kernels | In between |
-| `cpu` | Anything | NumPy | Slowest, and the reference |
+| Backend | Runs on | Written in |
+|---|---|---|
+| `cuda` | NVIDIA graphics processors | Hand-written CUDA, tuned |
+| `metal` | Apple graphics processors | Metal compute kernels |
+| `vulkan` | Anything with a Vulkan driver: AMD, Intel, NVIDIA, Apple through a translation layer, mobile and embedded hardware | GLSL compiled to SPIR-V |
+| `opencl` | Anything with an OpenCL driver: Apple, AMD, Intel, NVIDIA; also processors, through a software driver | OpenCL kernels |
+| `cpu` | Anything | NumPy — the reference the others are checked against |
+
+Four different interfaces to graphics hardware, and they overlap: on this Mac,
+three of them work. That is on purpose. Which interface a given piece of
+hardware supports is not something this project controls, and it changes: Apple
+has deprecated OpenCL, Vulkan is what most new hardware ships with, and Metal
+is what Apple supports going forward. Covering several means a device that
+appears later has a path that needs no new code here.
+
+## Measured
+
+An Apple M2 Max, on the sample clips, against the same machine's processor.
+Single runs, so treat them as approximate.
+
+| Pipeline | Processor | Metal | Vulkan | OpenCL |
+|---|---:|---:|---:|---:|
+| Colour, `face.mp4`, 301 frames | 6,769 ms | 281 ms | 212 ms | 218 ms |
+| Motion, `baby.mp4`, 301 frames | 30,172 ms | 1,923 ms | 2,343 ms | 5,953 ms |
+
+All three agree with the reference to within one step of the final 8-bit
+rounding. There is no single winner: Vulkan is fastest on the colour pipeline
+and Metal on the motion one, and the ordering would differ on other hardware,
+which is why the choice is not hard-coded.
 
 ## How one is chosen
 
-`backend="auto"`, the default, tries them in the order above and uses the first
-that can run. The choice is reported through the `evm` logger, and can be asked
+`backend="auto"`, the default, tries them in the order in the table above and
+uses the first that can run: the tuned NVIDIA path first, then Apple's own
+interface, then Vulkan, then OpenCL, then the processor. Where several would
+work, the earlier one is the shorter path to the hardware — Vulkan on a Mac
+runs through a translation layer onto Metal, so using Metal directly removes a
+layer. The choice is reported through the `evm` logger, and can be asked
 for in advance:
 
 ```python
@@ -41,13 +69,13 @@ compared against it by the test suite, and it is the version compared against
 the original authors' published output. It is slow on purpose: it is written to
 be obviously correct, not fast.
 
-## Why the OpenCL one is slower than the CUDA one
+## Why the portable ones are slower than the CUDA one
 
 The CUDA backend fuses stages together and keeps intermediate results in fast
-local memory. The OpenCL backend runs each operation as its own kernel, because
-that is what allows one source file to be compiled by every vendor's driver. A
-few times slower, on hardware that previously had no acceleration at all, is the
-trade being made.
+local memory. The portable backends run each operation as its own piece of
+work, because that is what lets one source be compiled by every vendor's
+driver. Slower, on hardware that would otherwise have no acceleration at all,
+is the trade being made.
 
 ## Adding hardware this does not cover
 
@@ -65,11 +93,6 @@ pipeline; a backend may override one, and the CUDA backend does, but only for
 speed.
 
 ## What is deliberately not implemented
-
-**Vulkan and Metal.** Every device this project targets is reachable through an
-OpenCL driver, so a second and third set of kernels would add maintenance
-without adding a supported device. Two things would change that: Apple removing
-OpenCL, which it has deprecated, or a decision to support Android.
 
 **A PyTorch backend.** It would add a very large dependency to reach hardware
 already reached natively.

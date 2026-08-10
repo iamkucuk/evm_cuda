@@ -1,0 +1,12 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer A { float a[]; };
+layout(binding = 1) readonly buffer B { float b[]; };
+layout(binding = 2) writeonly buffer Dst { float dst[]; };
+layout(push_constant) uniform P { int count; } p;
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= p.count) return;
+    dst[i] = a[i] - b[i];
+}

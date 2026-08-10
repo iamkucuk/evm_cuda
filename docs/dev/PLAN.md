@@ -7,12 +7,11 @@
 >   almost entirely of actions only the project owner can take; see
 >   `docs/dev/release-checklist.md`.
 > - Departures from this plan, each recorded where it happened: the portable
->   backend was built with OpenCL rather than Halide, after testing rather than
->   from the recollection the plan rested on (phase 4V); Vulkan and Metal were
->   not implemented, because every device targeted is already reachable through
->   an OpenCL driver; and the phase-based method (phase 9) is checked against
->   constructed motion rather than the authors' published output, which is not
->   among the files this project can fetch.
+>   backends are hand-written kernels in each interface's own language rather
+>   than one source compiled by Halide, chosen after testing rather than from
+>   the recollection the plan rested on (phase 4V); and the phase-based method
+>   (phase 9) is checked against constructed motion rather than the authors'
+>   published output, which is not among the files this project can fetch.
 > - Section 3d (execution methodology) is binding and is enforced through
 >   `CLAUDE.md` and `.claude/rules/development-practices.md`, which sessions load
 >   automatically. This file is the reference for *what* to build; those two are the
@@ -339,15 +338,15 @@ build system because programs are compiled at run time by the driver, and is
 close enough to CUDA C that porting the existing kernels was mechanical. Halide
 was not used.
 
-**Vulkan and Metal are not implemented, deliberately.** Every piece of hardware
-this project targets is reachable through an OpenCL driver, so a second and
-third set of kernels would add code and maintenance without adding a single
-supported device. Two things would change that judgement, and both are written
-down here so the decision can be revisited on evidence rather than habit:
-Apple has deprecated OpenCL, so a Metal backend becomes necessary if Apple
-removes it; and Vulkan would be the route to Android, which this project does
-not currently target. Measured results on the Apple graphics processor are in
-`benches/apple_m2_max_opencl_2026-08-10.md`.
+**Vulkan and Metal are implemented.** An earlier revision of this file recorded
+a decision not to build them, on the reasoning that every device targeted was
+already reachable through OpenCL. That reasoning answered the wrong question:
+the requirement was that hardware appearing *later* should work, and OpenCL is
+deprecated on Apple, absent on Android, and not what new hardware ships with.
+Narrowing a stated requirement was not a decision this plan was entitled to
+make. Both backends now exist, both pass the same conformance suite against the
+NumPy reference, and all three portable backends are measured in
+`docs/concepts/backends.md`.
 
 Original plan text follows.
 

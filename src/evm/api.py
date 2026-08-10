@@ -294,6 +294,28 @@ def _register_builtin_backends() -> None:
         ),
     )
     _backend.register(
+        "metal",
+        # Apple's own interface. Registered ahead of OpenCL in the preference
+        # order because Apple has deprecated OpenCL: where both work, this is
+        # the one that will still be there later.
+        load=_load_metal,
+        probe=_probe_metal,
+        capabilities=Capabilities(
+            dtypes=("float32",), fft=True, streaming=True
+        ),
+    )
+    _backend.register(
+        "vulkan",
+        # The interface new hardware ships with, across vendors and operating
+        # systems. Registered so that a device appearing later has a path
+        # needing no new code here.
+        load=_load_vulkan,
+        probe=_probe_vulkan,
+        capabilities=Capabilities(
+            dtypes=("float32",), fft=True, streaming=True
+        ),
+    )
+    _backend.register(
         "opencl",
         # Only the primitive operations are written for OpenCL; the four
         # pipelines come from evm.backend.generic, which is the arrangement
@@ -308,6 +330,34 @@ def _register_builtin_backends() -> None:
             dtypes=("float32",), fft=True, streaming=False
         ),
     )
+
+
+def _probe_metal() -> str | None:
+    try:
+        from .metal import runtime as _metal_runtime
+    except ImportError as exc:
+        return f"evm.metal could not be imported: {exc!r}"
+    return _metal_runtime.unavailable_reason()
+
+
+def _load_metal() -> Any:
+    from .backend import generic
+    from .metal.ops import MetalOps
+    return generic.bind(MetalOps())
+
+
+def _probe_vulkan() -> str | None:
+    try:
+        from .vulkan import runtime as _vk_runtime
+    except ImportError as exc:
+        return f"evm.vulkan could not be imported: {exc!r}"
+    return _vk_runtime.unavailable_reason()
+
+
+def _load_vulkan() -> Any:
+    from .backend import generic
+    from .vulkan.ops import VulkanOps
+    return generic.bind(VulkanOps())
 
 
 def _probe_opencl() -> str | None:

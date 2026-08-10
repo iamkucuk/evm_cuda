@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer Src { float src[]; };
+layout(binding = 1) writeonly buffer Dst { float dst[]; };
+layout(push_constant) uniform P { int T; int N; float r1; float r2; } p;
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= p.N) return;
+    float low1 = src[i];
+    float low2 = src[i];
+    dst[i] = 0.0;
+    for (int t = 1; t < p.T; ++t) {
+        float x = src[t * p.N + i];
+        low1 = (1.0 - p.r1) * low1 + p.r1 * x;
+        low2 = (1.0 - p.r2) * low2 + p.r2 * x;
+        dst[t * p.N + i] = low1 - low2;
+    }
+}

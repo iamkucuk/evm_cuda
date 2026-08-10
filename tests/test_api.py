@@ -360,16 +360,21 @@ def test_an_unknown_precision_is_refused(frames, no_video_decode):
 
 def test_importing_evm_registers_the_built_in_backends():
     names = [info.name for info in backend.list_backends()]
-    # Preference order, not registration order: the hand-written CUDA code
-    # first, then the portable OpenCL kernels, then the NumPy reference.
-    assert names == ["cuda", "opencl", "cpu"], names
+    # Preference order, not registration order. The hand-written CUDA code
+    # first because it is the fastest; then Apple's own interface, then Vulkan,
+    # then OpenCL — each of those three reaches hardware the ones before it may
+    # not, and where several work the earlier one is the shorter path. The
+    # NumPy reference last, because it is the slowest and always available.
+    assert names == ["cuda", "metal", "vulkan", "opencl", "cpu"], names
     caps = {info.name: info.capabilities for info in backend.list_backends()}
     assert caps["cpu"].dtypes == ("float64",)      # the oracle's working dtype
     assert caps["cuda"].dtypes == ("float32", "float16")
-    assert caps["opencl"].dtypes == ("float32",)   # the portable kernels
-    # None of them can stream yet; that is a later phase, and claiming it
-    # before it exists would be a lie a caller could act on.
-    assert not any(c.streaming for c in caps.values())
+    for portable in ("opencl", "metal", "vulkan"):
+        assert caps[portable].dtypes == ("float32",), portable
+    # Streaming is claimed only by the backends that provide the running-average
+    # step it needs on the device. Claiming it elsewhere would be something a
+    # caller could act on and be wrong about.
+    assert {n for n, c in caps.items() if c.streaming} == {"metal", "vulkan"}
 
 
 def test_the_cpu_backend_is_always_available():
@@ -410,9 +415,10 @@ def test_asking_for_cuda_is_answered_honestly(frames, no_video_decode, caplog):
 
 def test_an_unknown_backend_name_lists_the_registered_ones(frames, no_video_decode):
     with pytest.raises(backend.UnknownBackendError) as exc:
-        evm.magnify(frames, preset="motion", backend="vulkan")
+        evm.magnify(frames, preset="motion", backend="nonesuch")
     message = str(exc.value)
-    assert "cpu" in message and "cuda" in message and "opencl" in message
+    for expected in ("cpu", "cuda", "opencl", "metal", "vulkan"):
+        assert expected in message, f"{expected} missing from {message!r}"
 
 
 def test_the_backend_actually_used_is_reported(frames, no_video_decode, caplog):

@@ -1,0 +1,32 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer Base { float base[]; };
+layout(binding = 1) readonly buffer Delta { float delta[]; };
+layout(binding = 2) buffer Dst { uint dst[]; };
+layout(binding = 3) readonly buffer Mat { float m[]; };
+layout(push_constant) uniform P { int count; } p;
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= p.count) return;
+    float c0 = base[3 * i + 0] + delta[3 * i + 0];
+    float c1 = base[3 * i + 1] + delta[3 * i + 1];
+    float c2 = base[3 * i + 2] + delta[3 * i + 2];
+
+    float r = clamp(m[0] * c0 + m[1] * c1 + m[2] * c2, 0.0, 1.0);
+    float g = clamp(m[3] * c0 + m[4] * c1 + m[5] * c2, 0.0, 1.0);
+    float b = clamp(m[6] * c0 + m[7] * c1 + m[8] * c2, 0.0, 1.0);
+
+    // Three bytes per pixel, written blue-green-red. Each is placed into its
+    // word with an atomic OR so that neighbouring pixels sharing a word cannot
+    // overwrite each other.
+    uint vals[3];
+    vals[0] = uint(round(b * 255.0));
+    vals[1] = uint(round(g * 255.0));
+    vals[2] = uint(round(r * 255.0));
+    for (int k = 0; k < 3; ++k) {
+        int index = 3 * i + k;
+        atomicOr(dst[index >> 2], vals[k] << (8 * (index & 3)));
+    }
+}

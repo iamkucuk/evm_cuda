@@ -1,0 +1,25 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer Src { uint src[]; };   // packed bytes
+layout(binding = 1) writeonly buffer Dst { float dst[]; };
+layout(binding = 2) readonly buffer Mat { float m[]; };
+layout(push_constant) uniform P { int count; } p;
+
+// The input is 8-bit; storage buffers address 32-bit words, so a byte is read
+// by picking it out of the word that contains it.
+float byte_at(int index) {
+    uint word = src[index >> 2];
+    return float((word >> (8 * (index & 3))) & 0xFFu);
+}
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= p.count) return;
+    float b = byte_at(3 * i + 0) / 255.0;
+    float g = byte_at(3 * i + 1) / 255.0;
+    float r = byte_at(3 * i + 2) / 255.0;
+    dst[3 * i + 0] = m[0] * r + m[1] * g + m[2] * b;
+    dst[3 * i + 1] = m[3] * r + m[4] * g + m[5] * b;
+    dst[3 * i + 2] = m[6] * r + m[7] * g + m[8] * b;
+}

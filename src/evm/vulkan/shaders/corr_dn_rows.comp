@@ -1,0 +1,39 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(binding = 0) readonly buffer Src { float src[]; };
+layout(binding = 1) writeonly buffer Dst { float dst[]; };
+layout(binding = 2) readonly buffer Filt { float filt[]; };
+layout(push_constant) uniform P {
+    int T; int H; int W; int C; int flen; int out_h; int out_w;
+} p;
+int reflect_index(int i, int n) {
+    if (n == 1) return 0;
+    int period = 2 * n - 2;
+    int m = i % period;
+    if (m < 0) m += period;
+    return (m < n) ? m : (period - m);
+}
+
+
+void main() {
+    int gid = int(gl_GlobalInvocationID.x);
+    int total = p.C * p.W * p.T * p.out_h;
+    if (gid >= total) return;
+    int c = gid % p.C;
+    int rest = gid / p.C;
+    int x = rest % p.W;
+    int idx = rest / p.W;
+    int t = idx / p.out_h;
+    int oy = idx - t * p.out_h;
+
+    int pad = p.flen / 2;
+    int y = oy * 2;
+    int in_frame = t * p.H * p.W * p.C;
+    int out_frame = t * p.out_h * p.W * p.C;
+    float acc = 0.0;
+    for (int k = 0; k < p.flen; ++k) {
+        int sy = reflect_index(y + k - pad, p.H);
+        acc += filt[k] * src[in_frame + (sy * p.W + x) * p.C + c];
+    }
+    dst[out_frame + (oy * p.W + x) * p.C + c] = acc;
+}

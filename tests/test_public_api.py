@@ -72,6 +72,8 @@ EXPECTED_ROOT = {
     "io",
     "cuda",
     "opencl",
+    "metal",
+    "vulkan",
     "api",
     # Live magnification. Bound as an attribute once anything imports it, and
     # documented as `from evm.stream import MotionStream`, so it is a path

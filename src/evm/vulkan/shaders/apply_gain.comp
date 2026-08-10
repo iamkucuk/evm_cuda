@@ -1,0 +1,12 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(binding = 0) buffer Data { float data[]; };
+layout(push_constant) uniform P { int count; float gy; float gi; float gq; } p;
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= p.count) return;
+    data[3 * i + 0] *= p.gy;
+    data[3 * i + 1] *= p.gi;
+    data[3 * i + 2] *= p.gq;
+}

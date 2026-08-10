@@ -1,0 +1,16 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer Src { float src[]; };
+layout(binding = 1) writeonly buffer Dst { float dst[]; };
+layout(binding = 2) readonly buffer Mat { float matrix[]; };
+layout(push_constant) uniform P { int T; int N; } p;
+void main() {
+    int gid = int(gl_GlobalInvocationID.x);
+    if (gid >= p.N * p.T) return;
+    int i = gid % p.N;
+    int t = gid / p.N;
+    float acc = 0.0;
+    for (int k = 0; k < p.T; ++k) acc += matrix[t * p.T + k] * src[k * p.N + i];
+    dst[t * p.N + i] = acc;
+}

@@ -1,15 +1,17 @@
-"""The portable backend, checked against the NumPy reference.
+"""One conformance suite, run against every backend that can run here.
 
-This is the backend that runs on hardware the hand-written CUDA code cannot
-reach: Apple, AMD and Intel graphics processors, and ordinary processors
-through a software driver. One set of kernels in ``src/evm/opencl/kernels.cl``
-is compiled by whatever driver is present, so what is verified here is not one
-vendor's result but the source every vendor compiles.
+These are the backends that reach hardware the hand-written CUDA code cannot:
+OpenCL for Apple, AMD and Intel graphics processors and for ordinary processors
+through a software driver; Metal for Apple hardware specifically; Vulkan where
+a driver is present. Each has its own kernels in its own language, and each is
+compared here against :mod:`evm.cpu.backend` — the same NumPy reference the
+CUDA tests use — so a result is only accepted if it agrees with the
+implementation that was checked against the original paper.
 
-These tests skip when no OpenCL driver is installed. Where they do run, they
-compare against :mod:`evm.cpu.backend`, the same NumPy reference the CUDA tests
-use, so a result is only accepted if it agrees with the implementation that was
-checked against the original paper.
+Every test is parameterised over whichever backends are available on the
+machine running it, and skips the rest with the reason. Adding a backend means
+adding one entry to the table below, not another file: a suite that has to be
+copied per backend is a suite that drifts per backend.
 
 Tolerances are looser than the CUDA suite's. These kernels compute in single
 precision against a double-precision reference and are written for portability
@@ -25,15 +27,53 @@ import pytest
 from evm.backend import generic
 from evm.cpu import backend as cpu_backend
 from evm.cpu import magnify as direct
+from evm.metal import runtime as metal_runtime
 from evm.opencl import runtime as cl_runtime
-
-_REASON = cl_runtime.unavailable_reason()
-skip_no_opencl = pytest.mark.skipif(
-    _REASON is not None, reason=f"OpenCL unavailable: {_REASON}"
-)
+from evm.vulkan import runtime as vk_runtime
 
 CPU = cpu_backend.OPS
 FPS = 30.0
+
+
+def _backends():
+    """Every portable backend, with why it cannot run if it cannot.
+
+    Building the list at collection time means a machine with no graphics
+    hardware still reports one skip per backend per test, naming the reason,
+    rather than silently testing nothing.
+    """
+    entries = []
+    for name, module, factory in (
+        (
+            "opencl",
+            cl_runtime,
+            lambda: __import__("evm.opencl.ops", fromlist=["OpenClOps"]).OpenClOps(),
+        ),
+        (
+            "metal",
+            metal_runtime,
+            lambda: __import__("evm.metal.ops", fromlist=["MetalOps"]).MetalOps(),
+        ),
+        (
+            "vulkan",
+            vk_runtime,
+            lambda: __import__("evm.vulkan.ops", fromlist=["VulkanOps"]).VulkanOps(),
+        ),
+    ):
+        reason = module.unavailable_reason()
+        entries.append(
+            pytest.param(
+                factory,
+                id=name,
+                marks=pytest.mark.skipif(
+                    reason is not None, reason=f"{name} unavailable: {reason}"
+                ),
+            )
+        )
+    return entries
+
+
+BACKENDS = _backends()
 
 # Single precision against double precision. Measured on an Apple M2 Max at
 # around 6e-7 for the worst operation (the coarsest pyramid band); this leaves
@@ -41,11 +81,10 @@ FPS = 30.0
 TOL = 5e-6
 
 
-@pytest.fixture(scope="module")
-def ops():
-    from evm.opencl.ops import OpenClOps
-
-    return OpenClOps()
+@pytest.fixture
+def ops(request):
+    """The operations for the backend this test run is parameterised on."""
+    return request.param()
 
 
 def _clip(seed: int = 11, frames: int = 40, size: int = 32) -> np.ndarray:
@@ -95,20 +134,29 @@ def _not_degenerate(a, what: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unavailable_reason_names_what_is_missing():
-    """A backend that cannot run must say which of two things to install."""
-    reason = cl_runtime.unavailable_reason()
+@pytest.mark.parametrize(
+    "module", [cl_runtime, metal_runtime, vk_runtime], ids=["opencl", "metal", "vulkan"]
+)
+def test_unavailable_reason_names_what_is_missing(module):
+    """A backend that cannot run must say what to do about it.
+
+    The two ways it can be missing need different fixes — a Python package that
+    can be installed, or a driver or piece of hardware that cannot — so the
+    message has to distinguish them rather than reporting a bare failure.
+    """
+    reason = module.unavailable_reason()
     if reason is None:
-        assert cl_runtime.available()
+        assert module.available()
     else:
-        assert "pyopencl" in reason or "driver" in reason or "devices" in reason, (
-            f"reason {reason!r} does not tell the reader what to do about it"
-        )
+        assert any(
+            word in reason
+            for word in ("install", "driver", "devices", "device", "macOS")
+        ), f"reason {reason!r} does not tell the reader what to do about it"
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 def test_the_device_identifies_itself(ops):
-    assert cl_runtime.device_name()
+    assert ops.name
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +164,7 @@ def test_the_device_identifies_itself(ops):
 # ---------------------------------------------------------------------------
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 def test_colour_conversion(ops):
     frames = _clip()
     got = ops.to_numpy(ops.bgr_u8_to_ntsc(ops.from_numpy(frames)))
@@ -125,7 +173,7 @@ def test_colour_conversion(ops):
     assert _err(got, expected) < TOL
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 @pytest.mark.parametrize("levels", [1, 2, 3])
 def test_blur_and_downsample(ops, levels):
     host = _f32()
@@ -136,7 +184,7 @@ def test_blur_and_downsample(ops, levels):
     assert _err(got, expected) < TOL
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 @pytest.mark.parametrize("levels", [2, 3])
 def test_pyramid_bands(ops, levels):
     host = _f32()
@@ -149,7 +197,7 @@ def test_pyramid_bands(ops, levels):
         assert _err(g, e) < TOL, f"band {i}"
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 def test_pyramid_reconstruction(ops):
     host = _f32()
     got = ops.to_numpy(ops.recon_lpyr(ops.build_lpyr(ops.from_numpy(host), 3)))
@@ -158,7 +206,7 @@ def test_pyramid_reconstruction(ops):
     assert _err(got, expected) < TOL
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 def test_fourier_bandpass(ops):
     """Done as a matrix multiply, so this also checks that shortcut is exact.
 
@@ -175,7 +223,7 @@ def test_fourier_bandpass(ops):
     assert _err(got, expected) < TOL
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 def test_butterworth_bandpass(ops):
     host = _f32()
     got = ops.to_numpy(ops.butter_bandpass(ops.from_numpy(host), 0.5, 3.0, FPS))
@@ -184,7 +232,7 @@ def test_butterworth_bandpass(ops):
     assert _err(got, expected) < TOL
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 def test_recursive_bandpass(ops):
     host = _f32()
     got = ops.to_numpy(ops.iir_bandpass(ops.from_numpy(host), 0.4, 0.05))
@@ -193,7 +241,7 @@ def test_recursive_bandpass(ops):
     assert _err(got, expected) < TOL
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 def test_upsampling(ops):
     host = _f32()
     got = ops.to_numpy(ops.upsample_bilinear(ops.from_numpy(host), 32, 40))
@@ -208,7 +256,7 @@ def test_upsampling(ops):
 # ---------------------------------------------------------------------------
 
 
-@skip_no_opencl
+@pytest.mark.parametrize("ops", BACKENDS, indirect=True)
 @pytest.mark.parametrize(
     "name,core,reference,params",
     [
@@ -259,24 +307,35 @@ def test_whole_pipeline_matches_the_reference(ops, name, core, reference, params
     )
 
 
-@skip_no_opencl
-def test_the_backend_is_selectable_by_name():
-    """What a user types must reach this backend and say that it did."""
+@pytest.mark.parametrize("name", ["opencl", "metal", "vulkan"])
+def test_the_backend_is_selectable_by_name(name):
+    """What a user types must reach that backend, or say why it cannot."""
     import evm
+    from evm.backend.registry import BackendUnavailableError
 
     clip = _clip(frames=24)
-    out = evm.magnify(clip, preset="motion", fps=FPS, backend="opencl")
+    try:
+        out = evm.magnify(clip, preset="motion", fps=FPS, backend=name)
+    except BackendUnavailableError as exc:
+        # Not a failure: this machine has no such device. What matters is that
+        # it said so rather than quietly running somewhere else.
+        assert name in str(exc)
+        pytest.skip(f"{name} unavailable here: {exc}")
     assert out.shape == clip.shape
     assert out.dtype == np.uint8
 
 
-def test_selecting_it_without_a_driver_explains_why():
+@pytest.mark.parametrize(
+    "name,module",
+    [("opencl", cl_runtime), ("metal", metal_runtime), ("vulkan", vk_runtime)],
+)
+def test_selecting_it_without_a_driver_explains_why(name, module):
     """Asking for a backend that cannot run must not fall back silently."""
     import evm
     from evm.backend.registry import BackendUnavailableError
 
-    if cl_runtime.available():
-        pytest.skip("OpenCL is available here, so there is no failure to check")
+    if module.available():
+        pytest.skip(f"{name} is available here, so there is no failure to check")
 
-    with pytest.raises(BackendUnavailableError, match="opencl"):
-        evm.magnify(_clip(frames=8), preset="motion", fps=FPS, backend="opencl")
+    with pytest.raises(BackendUnavailableError, match=name):
+        evm.magnify(_clip(frames=8), preset="motion", fps=FPS, backend=name)

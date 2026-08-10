@@ -1,0 +1,40 @@
+#version 450
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer Src { float src[]; };
+layout(binding = 1) writeonly buffer Dst { float dst[]; };
+layout(push_constant) uniform P {
+    int T; int in_h; int in_w; int out_h; int out_w; int C;
+} p;
+void main() {
+    int gid = int(gl_GlobalInvocationID.x);
+    int total = p.C * p.out_w * p.T * p.out_h;
+    if (gid >= total) return;
+    int c = gid % p.C;
+    int rest = gid / p.C;
+    int ox = rest % p.out_w;
+    int idx = rest / p.out_w;
+    int t = idx / p.out_h;
+    int oy = idx - t * p.out_h;
+
+    int in_frame = t * p.in_h * p.in_w * p.C;
+    int out_frame = t * p.out_h * p.out_w * p.C;
+
+    // Half-pixel centres, the convention the reference resize uses.
+    float fy = (float(oy) + 0.5) * (float(p.in_h) / float(p.out_h)) - 0.5;
+    float fx = (float(ox) + 0.5) * (float(p.in_w) / float(p.out_w)) - 0.5;
+    int y0 = int(floor(fy)); int x0 = int(floor(fx));
+    float wy = fy - float(y0); float wx = fx - float(x0);
+    int y1 = clamp(y0 + 1, 0, p.in_h - 1);
+    int x1 = clamp(x0 + 1, 0, p.in_w - 1);
+    y0 = clamp(y0, 0, p.in_h - 1);
+    x0 = clamp(x0, 0, p.in_w - 1);
+
+    float v00 = src[in_frame + (y0 * p.in_w + x0) * p.C + c];
+    float v01 = src[in_frame + (y0 * p.in_w + x1) * p.C + c];
+    float v10 = src[in_frame + (y1 * p.in_w + x0) * p.C + c];
+    float v11 = src[in_frame + (y1 * p.in_w + x1) * p.C + c];
+    float top = v00 + wx * (v01 - v00);
+    float bot = v10 + wx * (v11 - v10);
+    dst[out_frame + (oy * p.out_w + ox) * p.C + c] = top + wy * (bot - top);
+}
