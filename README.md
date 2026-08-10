@@ -65,18 +65,25 @@ stage, including every H2D/D2H transfer, is timed with `cudaDeviceSynchronize`
 (harness: `evm.cuda.benchmark`, 1 warmup, median of 7). We report the speedup
 at three inclusion levels because they answer different questions.
 
+The two motion rows were re-measured after the FP32 IIR state and the fused
+band combine landed; they are the median of three such runs. Everything else
+is from the original session. Colour re-measured at 9.9 ms against the 9.7 ms
+below, so the two sessions agree to about 2% — colour is the control here,
+since neither change touches a pipeline without a Laplacian pyramid.
+
 **Read the ratios with the reference in mind.** The "Python CPU" column below
 was measured on the machine that produced these numbers, and every ratio is
 relative to it. The same GPU timings against an Apple M2 Max — 6,347 ms colour
-and 28,303 ms motion for the same clips — give roughly 730x and 360x rather
-than 1,470x and 730x. The GPU side does not change; the comparison does.
+and 28,303 ms motion for the same clips — give roughly 835x and 765x for FP16
+compute rather than 1,470x and 1,200x. The GPU side does not change; the
+comparison does.
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
 |----------|-----------:|---------------:|--------------------:|---------------------:|
 | Color FP32 (`face.mp4`) | 11,194 ms | 9.7 ms (~1,150x) | 29.1 ms (~385x) | 72.9 ms (~155x) |
 | Color FP16 (`face.mp4`) | 11,194 ms | 7.6 ms (~1,470x) | 26.7 ms (~420x) | 71.0 ms (~160x) |
-| Motion FP32 (`baby.mp4`) | 44,190 ms | 75.4 ms (~590x) | 113.0 ms (~390x) | 188.4 ms (~235x) |
-| Motion FP16 (`baby.mp4`) | 44,190 ms | 60.4 ms (~730x) | 92.4 ms (~480x) | 164.8 ms (~270x) |
+| Motion FP32 (`baby.mp4`) | 44,190 ms | 47.5 ms (~930x) | 83.3 ms (~530x) | 164.4 ms (~270x) |
+| Motion FP16 (`baby.mp4`) | 44,190 ms | 36.9 ms (~1,200x) | 72.8 ms (~605x) | 154.0 ms (~285x) |
 
 - **① Compute only** is pure kernel time (data already on the GPU), e.g. as one
   stage inside a larger device-resident graph.
@@ -89,8 +96,8 @@ than 1,470x and 730x. The GPU side does not change; the comparison does.
 - **③ + H2D + D2H** is the full standalone "decode → magnify → encode" path,
   when you must materialize a viewable video on the host.
 
-For motion, the inference speedup (②, ~480x FP16) is within about 1.5x of the
-compute speedup (①, ~730x). The upload is a tax, but the GPU is still doing the
+For motion, the inference speedup (②, ~605x FP16) is within about 2x of the
+compute speedup (①, ~1,200x). The upload is a tax, but the GPU is still doing the
 work. For color, D2H alone is most of ③, so ② is the honest headline for any
 real invocation that keeps the result on device. Motion FP16 uses the same
 spatial templates as FP32 (dense half smem, float MAC); half storage, same
@@ -140,7 +147,7 @@ is claimed.
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
-| RTX 3090 24GB | 49.1 / 38.6 ms | 9.7 / 7.6 ms |
+| RTX 3090 24GB | 47.5 / 36.9 ms | 9.7 / 7.6 ms |
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
 | P100 16GB | OOM / 139.7 ms | 26.3 / 21.8 ms |
@@ -149,11 +156,14 @@ is claimed.
 † Measured before two later rounds of work on the motion path and not yet
 re-run: the up_conv change (smaller tiles, divide-free `reflect1`, even-tap
 loop), then an FP32 IIR state and the band combine folded into the up_conv
-store. Together those are worth 1.54x on motion compute on the 3090 — the
-only row re-measured — and none of it is architecture specific, so the other
-motion figures are pessimistic by roughly that much. Colour is unaffected by
-both rounds and its 3090 row re-measured unchanged, which is the check that
-the two sets of numbers are comparable. Cross-GPU ratios below are left from
+store. The 3090 is the only row re-measured. Building the same tree with just
+those last two changes reverted, and running both builds back to back on that
+card, gives 76.67 ms against 47.92 ms FP32 (1.60x) and 60.91 ms against
+36.83 ms FP16 (1.65x); the reverted build lands within 1.7% of the stored
+`bench_rtx3090.json`, so that file is a fair record of the older code. None of
+this is architecture specific, so the other motion figures are pessimistic by
+roughly that much. Colour came out unchanged across the same back-to-back pair
+(9.90 against 9.85 ms), which is the check that the numbers are comparable. Cross-GPU ratios below are left from
 the pre-change measurement and will shift once the others are re-run.
 
 ‡ One run of `colab/evm_cuda_benchmark.ipynb` on Colab's shared hardware, with
