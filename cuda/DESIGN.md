@@ -14,7 +14,7 @@ reference for the numerical contract.
 | Deploy | Any machine with NVIDIA GPU + CUDA toolkit | Standard CMake + nvcc build (`make build`) |
 | Mode | Batch — whole clip in device memory | Simplest, supports the FFT-based ideal filter natively |
 | GPU | Portable: `sm_60 sm_70 sm_80 sm_89 sm_90` | One `.so` covers P100 through H100 |
-| Precision | FP32 hot path + FP64 IIR accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
+| Precision | FP32 hot path (including the IIR state) + FP64 Butterworth accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
 
 Further mid-pipeline writeup:
 [`docs/blog_further_optimizations.md`](../docs/blog_further_optimizations.md).
@@ -32,7 +32,7 @@ cuda/
 │   ├── color_cvt.cu       # bgr_u8 <-> ntsc_f32 (per-pixel matvec + quantize)
 │   ├── spatial.cu         # corr_dn / up_conv (single-slice + batched variants)
 │   ├── transpose.cu       # (T,H,W,C) <-> (N,T), planar<->interleaved, scaled transpose
-│   ├── iir_bandpass.cu    # per-pixel FP64-state r1/r2 recursion
+│   ├── iir_bandpass.cu    # per-pixel FP32-state r1/r2 recursion
 │   ├── butter_bandpass.cu # 1st-order Butter via scipy coeffs (host)
 │   ├── ideal_bandpass.cu  # cuFFT C2C batched + mask kernel + 1/T normalize
 │   ├── lpyr.cu            # build/recon (single-slice) + contiguous band ops
@@ -105,8 +105,7 @@ same code as FP32, not a forked algorithm.
 **Motion FP16:** NTSC, planar, bands, filtered bands, and delta are `__half`
 end-to-end (no full float band stack). Stage A is fused `u8→YIQ→half`. Peak
 VRAM on baby.mp4 (301 frames, 544x960) measures 8.4 GB, against 16.3 GB for
-FP32, so FP16 motion fits a 16 GB card and FP32 motion does not. IIR state
-stays FP64. Fresh remeasure (1 warmup + median of 7):
+FP32, so FP16 motion fits a 16 GB card and FP32 motion does not. Fresh remeasure (1 warmup + median of 7):
 
 | GPU | Motion FP32 | Motion FP16 | ratio |
 |---|---:|---:|---:|
@@ -166,13 +165,38 @@ round-trip is `<1e-9`) but FP32 in `video.py` and the color pipeline. The
 CUDA port uses FP32 throughout the hot path with two specific FP64
 exceptions:
 
-1. **IIR/Butter accumulators** (`y1`, `y2` in `iir_bandpass_kernel`,
-   `yh_prev`/`yl_prev` in `butter_bandpass_kernel`) are FP64 in registers.
-   Rationale: a length-300 temporal recursion accumulates floating-point
-   error proportional to `sqrt(T) · eps`; FP32 `eps ≈ 1.2e-7` would yield
-   ~2e-6 worst-case, eating most of the `<1e-5` budget. FP64 keeps the
-   accumulator drift well under `1e-7`, leaving headroom for the per-step
-   rounding. Arrays stay FP32 — only the running state is FP64.
+1. **Butterworth accumulators** (`yh_prev`/`yl_prev` in
+   `butter_bandpass_kernel`) are FP64 in registers. Rationale: a length-300
+   temporal recursion accumulates floating-point error proportional to
+   `sqrt(T) · eps`; FP32 `eps ≈ 1.2e-7` predicts ~2e-6 worst-case, which would
+   eat most of the `<1e-5` budget. Arrays stay FP32 — only the running state
+   is FP64.
+
+   **The IIR kernels are the measured exception to that reasoning.** `y1` and
+   `y2` in `iir_bandpass_kernel` and `iir_bandpass_tn_kernel` were FP64 on the
+   same argument, and the argument turned out to be too pessimistic for this
+   filter: the r1/r2 form is a pair of leaky running averages, and a leaky
+   average forgets its own error rather than accumulating it, so the drift
+   never approaches the `sqrt(T)` bound. Measured over the dominant pyramid
+   level of baby.mp4 (T=291, 960x544), the largest difference between an FP32
+   state and an FP64 one is **4.023e-07**, against a `<1e-5` budget.
+
+   The reason to care is that FP64 is not free on the hardware this targets: a
+   GeForce card runs double-precision arithmetic at a sixty-fourth of its
+   single-precision rate, so the kernel was arithmetic-bound rather than
+   memory-bound. Same kernel, same access pattern, only the state type
+   changed:
+
+   | State | Time | Effective bandwidth |
+   |---|---:|---:|
+   | FP64 | 4.95 ms | 246 GB/s |
+   | FP32 | 1.50 ms | 809 GB/s |
+
+   Peak on that card is 936 GB/s, so the FP32 form is memory-bound, which is
+   where a filter this simple should be. In the full motion pipeline the stage
+   went from 24.65 ms to 6.36 ms. Butterworth keeps its FP64 state: it is a
+   true recursion with feedback on its own output, the argument above does
+   apply to it, and it is not on the hot path.
 
 2. **Ideal bandpass** (`cufftComplex` = `float2`). cuFFT's FP32 plan vs
    numpy's FP64 FFT is the reason this stage has the looser `<1e-4`

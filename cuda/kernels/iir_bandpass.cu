@@ -16,9 +16,29 @@
 //     at fixed t is contiguous in n (coalesced). Band buffers from lpyr are
 //     already (T,N) per channel.
 //
-// Grid: (ceil(N/256))  Block: (256, 1, 1). FP64 state regardless of storage.
+// Grid: (ceil(N/256))  Block: (256, 1, 1).
 //
-// Numerical contract (< 1e-5 vs Python): FP64 accumulators; I/O FP32/FP16.
+// Numerical contract (< 1e-5 vs Python), enforced by tests/cuda/conftest.py
+// TOL["iir"] and by the end-to-end comparison against the NumPy reference.
+//
+// The recursion state is FP32, not FP64. It was FP64, and the change is worth
+// recording because it is not obvious. On a GeForce card double-precision
+// arithmetic runs at a sixty-fourth of single-precision rate, and this kernel
+// is four multiply-adds per element with a serial dependency, so it was
+// arithmetic-bound rather than memory-bound. Measured on an RTX 3090, on the
+// dominant pyramid level of the motion pipeline (291 frames of 960x544):
+//
+//     FP64 state    4.95 ms    246 GB/s
+//     FP32 state    1.50 ms    809 GB/s   (peak is 936 GB/s)
+//
+// So the same work becomes memory-bound, which is as good as it can be, and
+// the whole stage runs about three times faster. The cost is accuracy: the two
+// differ by about 4e-7 over a 291-step recursion, which is twenty-five times
+// inside the 1e-5 the contract allows, and the suite checks the real figure on
+// real data rather than trusting that estimate.
+//
+// Vectorised loads were measured too and are not used: four elements per
+// thread gave 1.44 ms against 1.50 ms, which does not justify the extra code.
 
 #include "../include/evm_common.cuh"
 
@@ -38,17 +58,19 @@ __global__ void iir_bandpass_kernel(
     const In* x = in  + n * T;
     Out* o = out + n * T;
 
-    double y1 = static_cast<double>(cvt_in<In>(x[0]));
-    double y2 = static_cast<double>(cvt_in<In>(x[0]));
-    const double one_minus_r1 = 1.0 - r1;
-    const double one_minus_r2 = 1.0 - r2;
+    float y1 = cvt_in<In>(x[0]);
+    float y2 = y1;
+    const float one_minus_r1 = 1.0f - static_cast<float>(r1);
+    const float one_minus_r2 = 1.0f - static_cast<float>(r2);
+    const float f_r1 = static_cast<float>(r1);
+    const float f_r2 = static_cast<float>(r2);
 
     o[0] = cvt_out<Out>(0.0f);
     for (int t = 1; t < T; ++t) {
-        double xt = static_cast<double>(cvt_in<In>(x[t]));
-        y1 = one_minus_r1 * y1 + r1 * xt;
-        y2 = one_minus_r2 * y2 + r2 * xt;
-        o[t] = cvt_out<Out>(static_cast<float>(y1 - y2));
+        const float xt = cvt_in<In>(x[t]);
+        y1 = fmaf(one_minus_r1, y1, f_r1 * xt);
+        y2 = fmaf(one_minus_r2, y2, f_r2 * xt);
+        o[t] = cvt_out<Out>(y1 - y2);
     }
 }
 
@@ -64,18 +86,20 @@ __global__ void iir_bandpass_tn_kernel(
     const int n = blockIdx.x * blockDim.x + threadIdx.x;
     if (n >= N) return;
 
-    double y1 = static_cast<double>(cvt_in<In>(in[n]));  // t=0
-    double y2 = y1;
-    const double one_minus_r1 = 1.0 - r1;
-    const double one_minus_r2 = 1.0 - r2;
+    float y1 = cvt_in<In>(in[n]);   // t = 0
+    float y2 = y1;
+    const float one_minus_r1 = 1.0f - static_cast<float>(r1);
+    const float one_minus_r2 = 1.0f - static_cast<float>(r2);
+    const float f_r1 = static_cast<float>(r1);
+    const float f_r2 = static_cast<float>(r2);
 
     out[n] = cvt_out<Out>(0.0f);
     for (int t = 1; t < T; ++t) {
         const int idx = t * N + n;
-        double xt = static_cast<double>(cvt_in<In>(in[idx]));
-        y1 = one_minus_r1 * y1 + r1 * xt;
-        y2 = one_minus_r2 * y2 + r2 * xt;
-        out[idx] = cvt_out<Out>(static_cast<float>((y1 - y2) * scale));
+        const float xt = cvt_in<In>(in[idx]);
+        y1 = fmaf(one_minus_r1, y1, f_r1 * xt);
+        y2 = fmaf(one_minus_r2, y2, f_r2 * xt);
+        out[idx] = cvt_out<Out>((y1 - y2) * scale);
     }
 }
 

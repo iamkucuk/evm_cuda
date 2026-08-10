@@ -116,7 +116,17 @@ def test_backend_agrees_with_the_cpu_oracle(backend_name, preset_name, clip):
     fps = in_band_fps(spec, clip)
 
     oracle = evm.magnify(clip, preset=preset_name, backend="cpu", fps=fps)
-    got = evm.magnify(clip, preset=preset_name, backend=backend_name, fps=fps)
+    try:
+        got = evm.magnify(clip, preset=preset_name, backend=backend_name, fps=fps)
+    except ValueError as exc:
+        # Not every pipeline exists on every backend — the phase-based one is
+        # currently written only for the processor. Refusing is the correct
+        # behaviour, and is asserted on its own below; what must not happen is
+        # the backend quietly computing something else, which it did not.
+        if "no fp32 implementation" in str(exc):
+            pytest.skip(
+                f"{backend_name} has no {spec.pipeline!r} pipeline: {exc}")
+        raise
 
     assert got.shape == oracle.shape and got.dtype == oracle.dtype
     assert _mean_abs_lsb(oracle, clip) > 1.0, (
