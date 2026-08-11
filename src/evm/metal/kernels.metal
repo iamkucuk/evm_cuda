@@ -146,13 +146,14 @@ kernel void up_conv_rows(device const float* src [[buffer(0)]],
     size_t in_frame = (size_t)t * s.H * s.W * s.C;
     size_t out_frame = (size_t)t * s.out_h * s.W * s.C;
     float acc = 0.0f;
-    for (int k = 0; k < s.flen; ++k) {
-        int sy = reflect_index(oy + k - pad, up_h);
-        if ((sy & 1) == 0) {
-            int row = sy >> 1;
-            if (row < s.H)
-                acc += filt[k] * src[in_frame + (size_t)(row * s.W + x) * s.C + c];
-        }
+    // Only even samples of the upsampled axis carry data, and reflection
+    // preserves parity because the period 2n-2 is even. The surviving taps are
+    // therefore exactly those whose k matches (oy + pad) in parity -- three of
+    // five, or two -- so the rest need never be evaluated at all.
+    for (int k = (oy + pad) & 1; k < s.flen; k += 2) {
+        int row = reflect_index(oy + k - pad, up_h) >> 1;
+        if (row < s.H)
+            acc += filt[k] * src[in_frame + (size_t)(row * s.W + x) * s.C + c];
     }
     dst[out_frame + (size_t)(oy * s.W + x) * s.C + c] = acc;
 }
@@ -170,13 +171,14 @@ kernel void up_conv_cols(device const float* src [[buffer(0)]],
     size_t in_frame = (size_t)t * s.H * s.W * s.C;
     size_t out_frame = (size_t)t * s.H * s.out_w * s.C;
     float acc = 0.0f;
-    for (int k = 0; k < s.flen; ++k) {
-        int sx = reflect_index(ox + k - pad, up_w);
-        if ((sx & 1) == 0) {
-            int col = sx >> 1;
-            if (col < s.W)
-                acc += filt[k] * src[in_frame + (size_t)(y * s.W + col) * s.C + c];
-        }
+    // Only even samples of the upsampled axis carry data, and reflection
+    // preserves parity because the period 2n-2 is even. The surviving taps are
+    // therefore exactly those whose k matches (ox + pad) in parity -- three of
+    // five, or two -- so the rest need never be evaluated at all.
+    for (int k = (ox + pad) & 1; k < s.flen; k += 2) {
+        int col = reflect_index(ox + k - pad, up_w) >> 1;
+        if (col < s.W)
+            acc += filt[k] * src[in_frame + (size_t)(y * s.W + col) * s.C + c];
     }
     dst[out_frame + (size_t)(y * s.out_w + ox) * s.C + c] = acc;
 }

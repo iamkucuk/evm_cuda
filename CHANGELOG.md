@@ -73,6 +73,15 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   the intermediate result is no longer rounded to half precision and read back:
   motion RMSE falls from 0.00232 to 0.00199, with the largest single-level
   difference unchanged at 5.
+- The OpenCL, Apple and Vulkan backends no longer evaluate the filter taps that
+  cannot contribute when enlarging an image. Enlarging inserts a gap between
+  every pair of samples, so only taps landing on a real sample carry data —
+  three of five, or two — and which ones they are is fixed by whether the output
+  row or column is odd. They were all being evaluated and then discarded by a
+  test inside the loop. Measured on an Apple M2 Max, pyramid reconstruction runs
+  about 8% faster on Vulkan and about 3% faster on Apple's graphics interface,
+  with no measurable change on OpenCL. Pyramid construction is unaffected on all
+  three, being dominated by the shrinking step, which this does not touch.
 - The package moved to a `src/` layout under one root package, with
   `evm.cpu`, `evm.io` and `evm.cuda` as subpackages. Importing `evm_cuda` still
   works and warns.

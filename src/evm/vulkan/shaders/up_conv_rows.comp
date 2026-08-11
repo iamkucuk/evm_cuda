@@ -31,12 +31,13 @@ void main() {
     int in_frame = t * p.H * p.W * p.C;
     int out_frame = t * p.out_h * p.W * p.C;
     float acc = 0.0;
-    for (int k = 0; k < p.flen; ++k) {
-        int sy = reflect_index(oy + k - pad, up_h);
-        if ((sy & 1) == 0) {
-            int row = sy >> 1;
-            if (row < p.H) acc += filt[k] * src[in_frame + (row * p.W + x) * p.C + c];
-        }
+    // Only even samples of the upsampled axis carry data, and reflection
+    // preserves parity because the period 2n-2 is even. The surviving taps are
+    // therefore exactly those whose k matches (oy + pad) in parity -- three of
+    // five, or two -- so the rest need never be evaluated at all.
+    for (int k = (oy + pad) & 1; k < p.flen; k += 2) {
+        int row = reflect_index(oy + k - pad, up_h) >> 1;
+        if (row < p.H) acc += filt[k] * src[in_frame + (row * p.W + x) * p.C + c];
     }
     dst[out_frame + (oy * p.W + x) * p.C + c] = acc;
 }
