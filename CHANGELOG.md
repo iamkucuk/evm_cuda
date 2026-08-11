@@ -50,10 +50,11 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
 
 ### Changed
 
-- The motion pipeline runs 1.6 times faster on NVIDIA hardware, measured on an
-  RTX 3090 against the same code with the change removed: computation time
-  falls from 76.7 ms to 47.9 ms in 32-bit and from 60.9 ms to 36.8 ms in
-  16-bit. Two causes. The temporal filter kept its running state in 64-bit
+- The motion pipeline runs 1.9 times faster in 32-bit and 2.3 times faster in
+  16-bit on NVIDIA hardware, measured on an RTX 3090 against the same code with
+  the changes removed: computation time falls from 76.7 ms to 40.5 ms in
+  32-bit and from 60.9 ms to 27.0 ms in 16-bit. Three causes. The temporal
+  filter kept its running state in 64-bit
   floating point, which this class of card executes at a sixty-fourth of
   single-precision speed; the filter is a pair of decaying averages, which do
   not accumulate error the way the original reasoning assumed, and 32-bit state
@@ -61,7 +62,13 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   building and reconstructing an image pyramid wrote a full-resolution
   intermediate result and immediately read it back to add or subtract a
   detail level; that combination now happens inside the write that was already
-  taking place. The colour pipeline is unchanged, as it has no image pyramid.
+  taking place. Third, the two kernels that enlarge an image staged their input
+  in fast on-chip memory, which cost more than it saved: an enlarged pixel reads
+  only two or three inputs and neighbouring threads overlap, so the ordinary
+  cache already served them. Removing the staging and giving each thread four
+  output pixels took those two kernels from 55% of what the card's memory can
+  sustain to between 92% and 96%, with bit-identical output. The colour pipeline
+  is unchanged by all three, as it has no image pyramid.
 - Agreement between 16-bit and 32-bit output improved as a side effect, since
   the intermediate result is no longer rounded to half precision and read back:
   motion RMSE falls from 0.00232 to 0.00199, with the largest single-level

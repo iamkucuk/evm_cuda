@@ -1272,7 +1272,8 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 float* lo2 = slots[i_lo2];
                 float* lo  = slots[i_lo];
 
-                // smem fused down; separable up (fused up was a regression)
+                // Shared memory for the downsample, none for the upsample —
+                // measured, see cuda/DESIGN.md. Fused up was a regression.
                 evm::launch_corr_dn_fused_smem_batched(
                     cur, lo2, h, w, filt, filt_len,
                     h * w, hn * wn, M, 0);
@@ -1617,7 +1618,8 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 const int ph = sizes[l + 1].first, pw = sizes[l + 1].second;
                 float* dst = (l == 0) ? out_base : scratch_cur;
 
-                // Separable up (smem fused up regressed recon)
+                // Separable up, no shared memory (measured; see DESIGN.md).
+                // A single fused up kernel regressed recon.
                 evm::launch_up_conv_rows_batched(
                     scratch_cur, scratch_res, ph, h, pw, filt, filt_len,
                     ph * pw, h * pw, M, 0);

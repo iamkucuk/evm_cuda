@@ -189,6 +189,12 @@ void launch_up_conv_cols(const float* in, float* out,
 constexpr int SP_BX = 32;
 constexpr int SP_BY = 8;
 constexpr int SP_HALO = 2;
+
+// Output elements each thread produces in the two enlargement kernels, spaced
+// one warp apart so every store from a warp is still 32 consecutive values.
+// See the comment above up_conv_rows_batched_kernel for why they do this at
+// all, and why the spacing is a warp rather than adjacent elements.
+constexpr int SP_UNROLL = 4;
 // Horizontal tile width in input samples for corr_dn_cols / up_conv_cols:
 // output xo tile maps to centers 2*xo0 .. 2*(xo0+BX-1), plus ±HALO.
 constexpr int SP_X_IN = 2 * SP_BX + 2 * SP_HALO;  // 68
@@ -320,90 +326,42 @@ __global__ void up_conv_rows_batched_kernel(
     const float* filt, int filt_len,
     int slice_stride_in, int slice_stride_out, int B)
 {
-    const int x0  = blockIdx.x * SP_BX;
-    const int yo0 = blockIdx.y * SP_BY;
-    const int b   = blockIdx.z;
-    if (b >= B) return;
-
-    const int tx = threadIdx.x;
-    const int ty = threadIdx.y;
+    const int x0 = blockIdx.x * (SP_BX * SP_UNROLL);
+    const int yo = blockIdx.y * SP_BY + threadIdx.y;
+    const int b  = blockIdx.z;
+    if (b >= B || yo >= out_H) return;
 
     float f[5];
     #pragma unroll
     for (int k = 0; k < 5; ++k) f[k] = filt[k];
 
-    // Input rows needed: for yo in [yo0, yo0+BY), u = yo+k-2, r=reflect1(u,2*in_H),
-    // if even src=r/2. Worst-case src spans roughly yo0/2 ± a few.
-    // Load in_H neighborhood: from (yo0 - HALO)/2 to (yo0+BY-1+HALO)/2 with margin.
-    // Simpler: load a vertical strip of input rows covering [yo0-HALO, yo0+BY+HALO]
-    // mapped through even samples — load ceil range of in_H with halo.
-    // Use tile of (BY + 2*HALO + 2) input rows × BX cols — generous for pad=2.
-    // Tile height in INPUT rows. The input is half resolution, so BY output
-    // rows span BY/2 input rows, plus HALO each side and one row of margin
-    // for the odd-yo0 phase. The previous bound counted in output space and
-    // fetched about twice the rows it used.
-    constexpr int UY = SP_BY / 2 + SP_HALO + 2;  // 8
-    __shared__ In tile[UY][SP_BX];
-
     const In* sin = in + b * slice_stride_in;
-    // First input row we might need: floor((yo0 - HALO) / 2) - 1, clamp via reflect later
-    const int y_in0 = (yo0 - SP_HALO) / 2 - 1;
+    Out* srow_out = out + b * slice_stride_out + yo * W;
 
-    const int tile_elems = UY * SP_BX;
-    const int tid = ty * SP_BX + tx;
-    const int nthreads = SP_BX * SP_BY;
-    for (int i = tid; i < tile_elems; i += nthreads) {
-        const int ly = i / SP_BX;
-        const int lx = i - ly * SP_BX;
-        const int gx = x0 + lx;
-        const int gy = reflect1(y_in0 + ly, in_H);
-        In v = cvt_out<In>(0.0f);
-        if (gx >= 0 && gx < W) {
-            v = sin[gy * W + gx];
-        }
-        tile[ly][lx] = v;
-    }
-    __syncthreads();
-
-    const int x  = x0 + tx;
-    const int yo = yo0 + ty;
-    if (x >= W || yo >= out_H) return;
-
-    const int pad = SP_HALO;
-    const int up_H = 2 * in_H;
-    float acc = 0.0f;
     // Only taps landing on an even upsampled index contribute. The period
-    // 2*(n-1) is even, so reflection preserves parity and (r & 1) equals
-    // ((yo + k) & 1), known before the loop. Start at k = yo&1 and stride by
-    // 2: three taps when yo is even, two when it is odd, and no branch.
+    // 2*(n-1) is even, so reflection preserves parity and the parity of the
+    // output row decides which taps survive: three when it is even, two when
+    // odd. Both are known before any pixel is touched, so the source rows are
+    // resolved once here rather than once per pixel.
+    const int up_H = 2 * in_H;
+    int src[3];
+    int taps = 0;
     #pragma unroll
-    for (int k = (yo & 1); k < 5; k += 2) {
-        int u_idx = yo + (k - pad);
-        int r = reflect1(u_idx, up_H);
-        int src = r >> 1;
-        // Map src to tile row: src - y_in0
-        int ly = src - y_in0;
-        if (ly >= 0 && ly < UY) {
-            acc += f[k] * cvt_in<In>(tile[ly][tx]);
-        } else {
-            // Border rows outside the tile.
-            acc += f[k] * cvt_in<In>(sin[src * W + x]);
-        }
+    for (int k = (yo & 1); k < 5; k += 2)
+        src[taps++] = reflect1(yo + (k - SP_HALO), up_H) >> 1;
+
+    #pragma unroll
+    for (int j = 0; j < SP_UNROLL; ++j) {
+        const int x = x0 + j * SP_BX + threadIdx.x;
+        if (x >= W) continue;
+        float acc = 0.0f;
+        int k = (yo & 1);
+        for (int q = 0; q < taps; ++q, k += 2)
+            acc += f[k] * cvt_in<In>(sin[src[q] * W + x]);
+        srow_out[x] = cvt_out<Out>(acc);
     }
-    out[b * slice_stride_out + yo * W + x] = cvt_out<Out>(acc);
 }
 
-// The last argument pair is what makes the pyramid's add/subtract pass
-// disappear. Both callers used to run this kernel, write a full-resolution
-// intermediate, and then launch a second kernel that read that intermediate
-// straight back to combine it with a band. At the finest pyramid level the
-// intermediate is 1.8 GB, so the round trip through memory cost a write and a
-// read of it for no arithmetic reason -- and these kernels are memory-bound at
-// roughly three quarters of what the card can sustain, so bytes are the whole
-// cost. Handing the band in here folds that combine into the store that was
-// happening anyway.
-//
-// `combine` is null for callers that just want the upsampled result.
 template <typename In, typename Out>
 __global__ void up_conv_cols_batched_kernel(
     const In* __restrict__ in,
@@ -414,76 +372,37 @@ __global__ void up_conv_cols_batched_kernel(
     const Out* __restrict__ combine = nullptr,
     float combine_sign = 0.0f)
 {
-    const int xo0 = blockIdx.x * SP_BX;
-    const int y0  = blockIdx.y * SP_BY;
+    const int xo0 = blockIdx.x * (SP_BX * SP_UNROLL);
+    const int y   = blockIdx.y * SP_BY + threadIdx.y;
     const int b   = blockIdx.z;
-    if (b >= B) return;
-
-    const int tx = threadIdx.x;
-    const int ty = threadIdx.y;
+    if (b >= B || y >= H) return;
 
     float f[5];
     #pragma unroll
     for (int k = 0; k < 5; ++k) f[k] = filt[k];
 
-    constexpr int UX = SP_BX + 2 * SP_HALO + 2;  // 14 input cols in tile? need more
-    // For horizontal up_conv, input x needed ~ xo/2 ± halo. Tile width ~ BX/2 + halo + margin
-    // Use UX = SP_BX + 4 (generous for BX=32 outputs spanning ~16 input centers + pad)
-    // Actually outputs xo0..xo0+31 need src up to ~xo0/2+16+2. Width ~ BX/2+HALO+2 ~ 20.
-    // Use 24.
-    // Tile width in INPUT columns, same reasoning as UY in up_conv_rows.
-    // Widening this to a warp multiple (32) was measured and is slower on
-    // both sm_80 and sm_86: the extra tile elements cost more than the
-    // alignment saves.
-    constexpr int UXW = SP_BX / 2 + SP_HALO + 2;  // 20
-    __shared__ In tile[SP_BY][UXW];
-
-    const In* sin = in + b * slice_stride_in;
-    const int x_in0 = (xo0 - SP_HALO) / 2 - 1;
-
-    const int tile_elems = SP_BY * UXW;
-    const int tid = ty * SP_BX + tx;
-    const int nthreads = SP_BX * SP_BY;
-    for (int i = tid; i < tile_elems; i += nthreads) {
-        const int ly = i / UXW;
-        const int lx = i - ly * UXW;
-        const int gy = y0 + ly;
-        const int gx = reflect1(x_in0 + lx, in_W);
-        In v = cvt_out<In>(0.0f);
-        if (gy >= 0 && gy < H) {
-            v = sin[gy * in_W + gx];
-        }
-        tile[ly][lx] = v;
-    }
-    __syncthreads();
-
-    const int xo = xo0 + tx;
-    const int y  = y0 + ty;
-    if (xo >= out_W || y >= H) return;
-
-    const int pad = SP_HALO;
+    const In* srow = in + b * slice_stride_in + y * in_W;
+    const int obase = b * slice_stride_out + y * out_W;
     const int up_W = 2 * in_W;
-    float acc = 0.0f;
-    // Same parity hoist as up_conv_rows.
+
     #pragma unroll
-    for (int k = (xo & 1); k < 5; k += 2) {
-        int u_idx = xo + (k - pad);
-        int r = reflect1(u_idx, up_W);
-        int src = r >> 1;
-        int lx = src - x_in0;
-        if (lx >= 0 && lx < UXW) {
-            acc += f[k] * cvt_in<In>(tile[ty][lx]);
-        } else {
-            acc += f[k] * cvt_in<In>(sin[y * in_W + src]);
+    for (int j = 0; j < SP_UNROLL; ++j) {
+        const int xo = xo0 + j * SP_BX + threadIdx.x;
+        if (xo >= out_W) continue;
+        float acc = 0.0f;
+        // Same parity argument as the row kernel: two or three live taps,
+        // decided before the loop, no branch inside it.
+        #pragma unroll
+        for (int k = (xo & 1); k < 5; k += 2)
+            acc += f[k] * cvt_in<In>(srow[reflect1(xo + (k - SP_HALO), up_W) >> 1]);
+        const int oi = obase + xo;
+        if (combine != nullptr) {
+            // Same index and same stride as the store: the band a pyramid
+            // level combines with is exactly the shape being written here.
+            acc = fmaf(combine_sign, acc, cvt_in<Out>(combine[oi]));
         }
+        out[oi] = cvt_out<Out>(acc);
     }
-    const int oi = b * slice_stride_out + y * out_W + xo;
-    if (combine != nullptr) {
-        // Same index and same stride as the store: the band a pyramid level
-        // combines with is exactly the shape being written here.
-        acc = fmaf(combine_sign, acc, cvt_in<Out>(combine[oi]));
-    }
-    out[oi] = cvt_out<Out>(acc);
 }
 
 // --- batched launchers (FP32 storage) --------------------------------------
@@ -516,7 +435,7 @@ void launch_up_conv_rows_batched(const float* in, float* out,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
-    dim3 grid(div_up(W, SP_BX), div_up(out_H, SP_BY), B);
+    dim3 grid(div_up(W, SP_BX * SP_UNROLL), div_up(out_H, SP_BY), B);
     up_conv_rows_batched_kernel<float, float><<<grid, block, 0, stream>>>(
         in, out, in_H, out_H, W, filt, filt_len, stride_in, stride_out, B);
 }
@@ -527,7 +446,7 @@ void launch_up_conv_cols_batched(const float* in, float* out,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
-    dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
+    dim3 grid(div_up(out_W, SP_BX * SP_UNROLL), div_up(H, SP_BY), B);
     up_conv_cols_batched_kernel<float, float><<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
 }
@@ -543,7 +462,7 @@ void launch_up_conv_cols_batched_combine(const float* in, float* out,
                                          int stride_in, int stride_out, int B,
                                          cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
-    dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
+    dim3 grid(div_up(out_W, SP_BX * SP_UNROLL), div_up(H, SP_BY), B);
     up_conv_cols_batched_kernel<float, float><<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B,
         combine, sign);
@@ -692,7 +611,7 @@ void launch_up_conv_rows_batched_f16(const __half* in, __half* out,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
-    dim3 grid(div_up(W, SP_BX), div_up(out_H, SP_BY), B);
+    dim3 grid(div_up(W, SP_BX * SP_UNROLL), div_up(out_H, SP_BY), B);
     up_conv_rows_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
         in, out, in_H, out_H, W, filt, filt_len, stride_in, stride_out, B);
 }
@@ -703,7 +622,7 @@ void launch_up_conv_cols_batched_f16(const __half* in, __half* out,
                                  int stride_in, int stride_out, int B,
                                  cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
-    dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
+    dim3 grid(div_up(out_W, SP_BX * SP_UNROLL), div_up(H, SP_BY), B);
     up_conv_cols_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B);
 }
@@ -719,7 +638,7 @@ void launch_up_conv_cols_batched_f16_combine(const __half* in, __half* out,
                                              int stride_in, int stride_out,
                                              int B, cudaStream_t stream) {
     dim3 block(SP_BX, SP_BY, 1);
-    dim3 grid(div_up(out_W, SP_BX), div_up(H, SP_BY), B);
+    dim3 grid(div_up(out_W, SP_BX * SP_UNROLL), div_up(H, SP_BY), B);
     up_conv_cols_batched_kernel<__half, __half><<<grid, block, 0, stream>>>(
         in, out, H, in_W, out_W, filt, filt_len, stride_in, stride_out, B,
         combine, sign);

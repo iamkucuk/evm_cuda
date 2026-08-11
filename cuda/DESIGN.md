@@ -78,8 +78,8 @@ src/evm/cuda/              # Python wrapper package (it used to live in cuda/)
 | Operation | CUDA kernel | Grid / Block | Notes |
 |---|---|---|---|
 | Smem fused corr_dn (down) | `spatial.cu:corr_dn_fused_smem_batched` | `(⌈Wo/32⌉,⌈Ho/8⌉,B) / (32,8,1)` | Production build/blur; cols→rows in smem |
-| Separable up_conv | `spatial.cu:up_conv_{rows,cols}_batched` | `(⌈W/32⌉,⌈H/8⌉,B) / (32,8,1)` | Production recon/build up; fused up **not** wired. `up_conv_cols_batched_combine` folds the band add/subtract into its store |
-| Batched lpyr_build | `bindings.cpp:batched_lpyr_build` | host loop over levels | smem fused down + sep up, the subtract **fused into** the up_conv store |
+| Separable up_conv | `spatial.cu:up_conv_{rows,cols}_batched` | `(⌈W/128⌉,⌈H/8⌉,B) / (32,8,1)` | Production recon/build up; fused up **not** wired. **No shared memory** — see below. Four outputs per thread, spaced one warp apart. `up_conv_cols_batched_combine` folds the band add/subtract into its store |
+| Batched lpyr_build | `bindings.cpp:batched_lpyr_build` | host loop over levels | smem fused down + sep up (no smem), the subtract **fused into** the up_conv store |
 | Batched lpyr_recon | `bindings.cpp:batched_lpyr_recon` | host loop over levels | sep up, the add **fused into** the up_conv store |
 | Batched blur_dn | `bindings.cpp:batched_blur_dn_color` | host loop over nlevs | smem fused down; frame-major (color) or as called |
 | Contiguous band ops | `lpyr.cu:band_subtract/band_add` | `(⌈n/256⌉) / (256,1,1)` | channel-outer affine; no offset table. Still used by the per-frame and half-accumulate paths; the batched FP32/FP16 pipelines now fuse this into up_conv |
@@ -162,6 +162,47 @@ The stored numbers stand; this is a confirmation, not a remeasure to publish.
 Color face FP16 is left out on purpose: on this host it is bimodal, three
 standalone repeats gave 7.33 / 11.82 / 11.70 ms against a stored 7.63 ms, so a
 single sample proves nothing. Anything measured here needs several repeats.
+
+## Why the enlargement kernels use no shared memory
+
+The two enlargement kernels (`up_conv_rows_batched`, `up_conv_cols_batched`)
+staged their input in `__shared__` tiles, as the downsample kernel beside them
+still does. That was measured and reversed: for these two kernels the staging
+cost more than it saved.
+
+The reason is the access pattern. An enlargement output reads only two or three
+inputs — the 5-tap filter is halved by parity, since only taps landing on an
+even upsampled index survive — and neighbouring threads read overlapping
+inputs. The cache already serves that overlap. Staging it in shared memory buys
+nothing, and costs a barrier plus a load loop in which the tile shape rather
+than the warp decides the access: the column kernel's 20-wide tile left 96 of
+256 threads idle during the load and split each warp's reads across two short
+unaligned segments.
+
+Measured on an RTX 3090 at the largest pyramid level of baby.mp4
+(291 frames, 544x960, 3 channels), against a measured read+write ceiling of
+863 GB/s. All variants produce bit-identical output.
+
+| Variant | Enlarge rows | Enlarge columns |
+|---|---:|---:|
+| Shared tile, one output per thread (the old form) | 474 GB/s (55%) | 471 GB/s (55%) |
+| No shared memory, one output per thread | 720 GB/s (83%) | 671 GB/s (78%) |
+| Shared tile, four outputs per thread | — | 683 GB/s (79%) |
+| No shared memory, four outputs adjacent, 16-byte stores | 862 GB/s (100%) | 864 GB/s (100%) |
+| **No shared memory, four outputs one warp apart (shipped)** | **825 GB/s (96%)** | **797 GB/s (92%)** |
+
+The adjacent-output form with 16-byte stores is the fastest, and is not what
+ships. It requires the width to be divisible by four, which two pyramid levels
+of a 544x960 clip are not (widths 15 and 30), so it would need a second kernel
+and a scalar fallback for those levels, plus separate treatment for `__half`.
+The shipped form spaces each thread's four outputs one warp apart, so every
+store from a warp is still 32 consecutive values, no alignment is required, and
+one kernel serves every level and both storage types. That trades roughly six
+percentage points for not having three kernels where one will do.
+
+The downsample kernel keeps its shared tile: it reads a 2x2 neighbourhood plus
+halo per output and genuinely reuses staged data, and it measures 94% of the
+ceiling as it stands.
 
 ## Precision rationale
 

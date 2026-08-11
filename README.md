@@ -65,25 +65,27 @@ stage, including every H2D/D2H transfer, is timed with `cudaDeviceSynchronize`
 (harness: `evm.cuda.benchmark`, 1 warmup, median of 7). We report the speedup
 at three inclusion levels because they answer different questions.
 
-The two motion rows were re-measured after the FP32 IIR state and the fused
-band combine landed; they are the median of three such runs. Everything else
-is from the original session. Colour re-measured at 9.9 ms against the 9.7 ms
-below, so the two sessions agree to about 2% — colour is the control here,
-since neither change touches a pipeline without a Laplacian pyramid.
+The two motion rows were re-measured after three rounds of work on that path:
+an FP32 IIR state, the band combine folded into the up_conv store, and shared
+memory taken out of the two enlargement kernels. They are the median of three
+such runs. Everything else is from the original session. Colour re-measured at
+9.9 ms against the 9.7 ms below, so the two sessions agree to about 2% —
+colour is the control here, since none of the three changes touches a pipeline
+without a Laplacian pyramid.
 
 **Read the ratios with the reference in mind.** The "Python CPU" column below
 was measured on the machine that produced these numbers, and every ratio is
 relative to it. The same GPU timings against an Apple M2 Max — 6,347 ms colour
-and 28,303 ms motion for the same clips — give roughly 835x and 765x for FP16
-compute rather than 1,470x and 1,200x. The GPU side does not change; the
+and 28,303 ms motion for the same clips — give roughly 835x and 1,050x for
+FP16 compute rather than 1,470x and 1,635x. The GPU side does not change; the
 comparison does.
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
 |----------|-----------:|---------------:|--------------------:|---------------------:|
 | Color FP32 (`face.mp4`) | 11,194 ms | 9.7 ms (~1,150x) | 29.1 ms (~385x) | 72.9 ms (~155x) |
 | Color FP16 (`face.mp4`) | 11,194 ms | 7.6 ms (~1,470x) | 26.7 ms (~420x) | 71.0 ms (~160x) |
-| Motion FP32 (`baby.mp4`) | 44,190 ms | 47.5 ms (~930x) | 83.3 ms (~530x) | 164.4 ms (~270x) |
-| Motion FP16 (`baby.mp4`) | 44,190 ms | 36.9 ms (~1,200x) | 72.8 ms (~605x) | 154.0 ms (~285x) |
+| Motion FP32 (`baby.mp4`) | 44,190 ms | 40.5 ms (~1,090x) | 74.1 ms (~595x) | 151.1 ms (~290x) |
+| Motion FP16 (`baby.mp4`) | 44,190 ms | 27.0 ms (~1,635x) | 61.1 ms (~725x) | 138.7 ms (~320x) |
 
 - **① Compute only** is pure kernel time (data already on the GPU), e.g. as one
   stage inside a larger device-resident graph.
@@ -147,7 +149,7 @@ is claimed.
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
-| RTX 3090 24GB | 47.5 / 36.9 ms | 9.7 / 7.6 ms |
+| RTX 3090 24GB | 40.5 / 27.0 ms | 9.7 / 7.6 ms |
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
 | P100 16GB | OOM / 139.7 ms | 26.3 / 21.8 ms |
