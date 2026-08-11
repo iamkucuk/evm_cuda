@@ -103,6 +103,14 @@ docs = [
 ]
 dev = [
     "pytest>=7.0",
+    # Coverage is reported, not gated, and the reason is structural: no single
+    # machine can run this whole library. A machine with an NVIDIA card has no
+    # Apple graphics interface; a Mac has no NVIDIA extension. Each run
+    # therefore reports a number near 65% while showing the other backend's
+    # files at zero, and a threshold would only measure which machine ran it.
+    # The union across machines is what matters, and reading it is a human job
+    # until the per-machine reports are merged.
+    "pytest-cov>=4.0",
 ]
 # Pinned, not floating: a new ruff release adds rules, and a lint gate that can
 # turn red without anybody editing code is a gate people learn to ignore.

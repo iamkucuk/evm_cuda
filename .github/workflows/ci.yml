@@ -129,8 +129,15 @@ jobs:
           evm-magnify --help > /dev/null
           echo "evm-magnify is on PATH"
 
+      # Coverage is printed, never gated. This runner has no NVIDIA compiler and
+      # no Apple graphics interface, so the files for those backends read as
+      # zero here however well they are tested elsewhere. A threshold would fail
+      # on which machine ran, not on whether anything is tested.
       - name: Test suite
-        run: python -m pytest tests/ -q -p no:randomly -rs | tee "$RUNNER_TEMP/pytest.log"
+        run: |
+          python -m pip install pytest-cov
+          python -m pytest tests/ -q -p no:randomly -rs \
+            --cov=evm --cov-report=term | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Pass and skip counts
         if: always()

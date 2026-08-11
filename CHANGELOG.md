@@ -50,6 +50,22 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
 
 ### Changed
 
+- The motion pipeline runs 1.6 times faster on NVIDIA hardware, measured on an
+  RTX 3090 against the same code with the change removed: computation time
+  falls from 76.7 ms to 47.9 ms in 32-bit and from 60.9 ms to 36.8 ms in
+  16-bit. Two causes. The temporal filter kept its running state in 64-bit
+  floating point, which this class of card executes at a sixty-fourth of
+  single-precision speed; the filter is a pair of decaying averages, which do
+  not accumulate error the way the original reasoning assumed, and 32-bit state
+  differs from 64-bit by at most 4.023e-07 against an allowed 1e-5. Separately,
+  building and reconstructing an image pyramid wrote a full-resolution
+  intermediate result and immediately read it back to add or subtract a
+  detail level; that combination now happens inside the write that was already
+  taking place. The colour pipeline is unchanged, as it has no image pyramid.
+- Agreement between 16-bit and 32-bit output improved as a side effect, since
+  the intermediate result is no longer rounded to half precision and read back:
+  motion RMSE falls from 0.00232 to 0.00199, with the largest single-level
+  difference unchanged at 5.
 - The package moved to a `src/` layout under one root package, with
   `evm.cpu`, `evm.io` and `evm.cuda` as subpackages. Importing `evm_cuda` still
   works and warns.
