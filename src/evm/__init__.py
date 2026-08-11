@@ -75,7 +75,7 @@ from .api import magnify
 from .presets import PRESETS, Preset
 
 try:
-    __version__ = _version("evm-cuda")
+    __version__ = _version("evm-magnify")
 except _PackageNotFoundError:
     # Running straight from a source checkout (not pip-installed). Say so
     # rather than inventing a number that could be mistaken for a release.

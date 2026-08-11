@@ -44,3 +44,9 @@ kaggle/tests_kernel/
 # The generated documentation site. Built by `mkdocs build`, published by
 # .github/workflows/deploy-pages.yml; never committed.
 site/
+
+# Coverage data. Written by pytest-cov on every run; never committed.
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

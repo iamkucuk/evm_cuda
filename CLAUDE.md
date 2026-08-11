@@ -6,9 +6,16 @@ compute the same four pipelines — NVIDIA (hand-written CUDA C++), OpenCL, Appl
 graphics interface, Vulkan, and the baseline itself. Every backend is validated
 against the baseline, which is the correctness oracle for all of them.
 
-The distributable package is named `evm-cuda` on PyPI and imports as `evm`. The name
-predates the other four backends; only the NVIDIA one needs a compiled extension, and
-`pip install .` succeeds with no NVIDIA compiler present.
+The distribution installs as `evm-magnify` and imports as `evm`. It was called
+`evm-cuda` until 2026-08-11; the rename cost nothing because it had never been
+published. `evm` alone was unavailable — that name belongs to an unrelated project on
+PyPI, the Extreme Value Machine — and `evm-magnify` matches the terminal command this
+package installs. Only the NVIDIA backend needs a compiled extension; `pip install .`
+succeeds with no NVIDIA compiler present.
+
+Three similar-looking names are NOT the distribution and must not be renamed with it:
+the compiled extension `_evm_cuda`, the deprecated shim package `src/evm_cuda/`, and
+the conda environment called `evm-cuda` on the GPU machine.
 
 **The library restructure is essentially complete** on branch `library-restructure`.
 The plan is `docs/dev/PLAN.md`. If you are executing a plan step, find it before

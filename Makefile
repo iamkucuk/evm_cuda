@@ -22,7 +22,7 @@
 #
 # There is no PYTHONPATH here any more: `evm` and the deprecated `evm_cuda`
 # shim come from the editable install, which is the same code path a user gets
-# from `pip install evm-cuda`.
+# from `pip install evm-magnify`.
 
 .PHONY: help check-env install-dev build clean download \
         test test-baseline test-cuda \
@@ -63,7 +63,7 @@ check-env: ## Fail unless $(PYTHON) is an isolated env (venv or named conda env)
 	"\n  REFUSING TO INSTALL into " + sys.executable + "\n" \
 	"  prefix: " + p + "\n" \
 	"  That is not a virtual environment or a named conda env, so this would\n" \
-	"  install evm-cuda into a system or conda-base interpreter.\n\n" \
+	"  install evm-magnify into a system or conda-base interpreter.\n\n" \
 	"  Activate the project environment, or name the interpreter:\n" \
 	"      source .venv/bin/activate && make <target>\n" \
 	"      make <target> PYTHON=.venv/bin/python\n")'
@@ -96,7 +96,7 @@ build: check-env ## Rebuild the package (compiles _evm_cuda when nvcc is present
 #     build and the whole point after a manual one.
 #
 # The wheel's own copy under site-packages/evm/cuda/ is outside the repo and
-# stays out of scope: `pip uninstall evm-cuda` owns that one. No *.pyd glob —
+# stays out of scope: `pip uninstall evm-magnify` owns that one. No *.pyd glob —
 # Windows is untested and has never produced one here.
 clean: ## Delete build artifacts from the source tree (.so + cuda/build)
 	rm -f $(ROOT)/src/evm/cuda/_evm_cuda*.so

@@ -122,7 +122,7 @@ def register(
             this callable, never at registration time.
         probe: called on every selection attempt; returns ``None`` if the
             backend can run here, otherwise a one-line reason ("extension not
-            built", "no CUDA device", "install evm-cuda[torch]").
+            built", "no CUDA device", "install evm-magnify[torch]").
         capabilities: advertised without loading anything.
 
     Raises:

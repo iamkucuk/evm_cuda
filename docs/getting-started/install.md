@@ -1,7 +1,7 @@
 # Installing
 
 ```bash
-pip install evm-cuda
+pip install evm-magnify
 ```
 
 That is the whole thing on any machine. It always gives you a working library
@@ -16,7 +16,7 @@ the machine.
 
 ```bash
 nvcc --version          # if this prints a version, the extension will be built
-pip install evm-cuda
+pip install evm-magnify
 ```
 
 If `nvcc` is absent the install still succeeds and prints a message saying the
@@ -41,7 +41,7 @@ print(evm.cuda.have_cuda)
 These are reached through OpenCL, which needs one extra Python package:
 
 ```bash
-pip install "evm-cuda[opencl]"
+pip install "evm-magnify[opencl]"
 ```
 
 The driver itself comes from your operating system or your graphics vendor, not

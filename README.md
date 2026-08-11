@@ -19,7 +19,7 @@ processor, on NVIDIA hardware through hand-written CUDA, and on Apple, AMD and
 Intel hardware through OpenCL.
 
 ```bash
-pip install evm-cuda
+pip install evm-magnify
 ```
 
 ```python

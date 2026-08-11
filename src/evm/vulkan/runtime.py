@@ -72,7 +72,7 @@ def unavailable_reason() -> str | None:
     except ImportError:
         return (
             "the Vulkan bindings are not installed; install this project's "
-            "'vulkan' extra (pip install evm-cuda[vulkan])"
+            "'vulkan' extra (pip install evm-magnify[vulkan])"
         )
     if not any(_SHADERS.glob("*.spv")):
         return (

@@ -52,7 +52,7 @@ def unavailable_reason() -> str | None:
     except ImportError:
         return (
             "the Metal bindings are not installed; install this project's "
-            "'metal' extra (pip install evm-cuda[metal])"
+            "'metal' extra (pip install evm-magnify[metal])"
         )
     if Metal.MTLCreateSystemDefaultDevice() is None:
         return "Metal reported no default device"

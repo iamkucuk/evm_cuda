@@ -82,6 +82,12 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   about 8% faster on Vulkan and about 3% faster on Apple's graphics interface,
   with no measurable change on OpenCL. Pyramid construction is unaffected on all
   three, being dominated by the shrinking step, which this does not touch.
+- The distribution installs as `evm-magnify`, not `evm-cuda`. It computes on five
+  backends, only one of which is NVIDIA, and the old name said otherwise. Nothing
+  breaks: the name had never been published, so no existing install refers to it,
+  and the import is unchanged — `import evm` as before. The optional extras move
+  with it, so `pip install "evm-magnify[opencl]"` replaces the old spelling. Plain
+  `evm` was not available on PyPI; it belongs to an unrelated project.
 - The package moved to a `src/` layout under one root package, with
   `evm.cpu`, `evm.io` and `evm.cuda` as subpackages. Importing `evm_cuda` still
   works and warns.

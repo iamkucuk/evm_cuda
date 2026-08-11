@@ -43,7 +43,7 @@ def unavailable_reason() -> str | None:
     except ImportError:
         return (
             "pyopencl is not installed; install this project's 'opencl' "
-            "extra (pip install evm-cuda[opencl])"
+            "extra (pip install evm-magnify[opencl])"
         )
     try:
         platforms = cl.get_platforms()

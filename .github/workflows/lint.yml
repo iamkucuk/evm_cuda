@@ -36,7 +36,7 @@ jobs:
 
       # Installs the package as well as the two tools, and that is the point:
       # mypy needs numpy's bundled type information to say anything true about
-      # this code, and installing evm-cuda is the only way to get the runtime
+      # this code, and installing evm-magnify is the only way to get the runtime
       # dependencies without listing them a second time here. On a runner with
       # no nvcc this is the CPU-only install, which cuda/CMakeLists.txt handles
       # by defining no target.
