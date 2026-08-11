@@ -1,11 +1,11 @@
-# Build backend: scikit-build-core. It drives cuda/CMakeLists.txt, which builds
+# Build backend: scikit-build-core. It drives src/evm/cuda/CMakeLists.txt, which builds
 # the optional _evm_cuda extension. That CMakeLists configures cleanly and
 # defines no target when there is no CUDA compiler, so `pip install .` succeeds
 # on any machine and produces a working CPU-only package; with nvcc present the
 # same command also compiles and installs the GPU extension.
 [build-system]
 # pybind11 is a build requirement, not a runtime one. Without it here,
-# cuda/CMakeLists.txt falls back to downloading pybind11 from GitHub during the
+# src/evm/cuda/CMakeLists.txt falls back to downloading pybind11 from GitHub during the
 # build, which turns `pip install` into something that needs network access and
 # a working git. Declaring it lets pip supply it from a wheel instead.
 requires = ["scikit-build-core>=1.0", "pybind11>=2.10"]
@@ -136,20 +136,39 @@ Issues = "https://github.com/iamkucuk/eulerian-video-magnification-cuda/issues"
 # [build-system].requires, so a later scikit-build-core release cannot silently
 # change how this project builds.
 minimum-version = "build-system.requires"
-# The CMake project lives in cuda/. `cmake.version` is deliberately left unset:
-# scikit-build-core then reads the requirement from that file's
-# cmake_minimum_required(VERSION 3.24) instead of duplicating the number here.
-cmake.source-dir = "cuda"
+# The CMake project lives beside the Python it builds for, in src/evm/cuda/,
+# so every backend's kernels are found in that backend's directory.
+# `cmake.version` is deliberately left unset: scikit-build-core then reads the
+# requirement from that file's cmake_minimum_required(VERSION 3.24) instead of
+# duplicating the number here.
+cmake.source-dir = "src/evm/cuda"
 # Pure-Python packages are copied from src/ as-is. The compiled extension is
 # placed beside them by `install(TARGETS _evm_cuda LIBRARY DESTINATION evm/cuda)`
-# in cuda/CMakeLists.txt, so it lands at evm/cuda/_evm_cuda*.so in the wheel.
+# in src/evm/cuda/CMakeLists.txt, so it lands at evm/cuda/_evm_cuda*.so.
 wheel.packages = ["src/evm", "src/evm_cuda"]
+# The NVIDIA sources live inside the package so that each backend's kernels sit
+# in that backend's directory, but they are BUILD inputs: nvcc turns them into
+# the extension at install time and nothing reads them afterwards. They are
+# excluded from the wheel for that reason, and kept in the sdist below, which
+# is what someone building from source needs. The other backends' kernels are
+# the opposite case — their drivers compile them at run time — so those ship.
+wheel.exclude = [
+    "evm/src/evm/cuda/CMakeLists.txt",
+    "evm/src/evm/cuda/DESIGN.md",
+    "evm/src/evm/cuda/bindings.cpp",
+    "evm/src/evm/cuda/kernels/*",
+    "evm/src/evm/cuda/include/*",
+]
 # The kernels are not Python files, so they need naming explicitly or the wheel
 # would install a package whose backends have nothing to compile or run: the
 # Vulkan shaders are compiled ahead of time into SPIR-V and shipped so that
 # installing needs no shader compiler, while the OpenCL and Metal kernels are
 # compiled by their own drivers at run time from these sources.
 sdist.include = [
+    "src/evm/cuda/CMakeLists.txt",
+    "src/evm/cuda/bindings.cpp",
+    "src/evm/cuda/kernels/*.cu",
+    "src/evm/cuda/include/*.cuh",
     "src/evm/vulkan/shaders/*.spv",
     "src/evm/vulkan/shaders/*.comp",
     "src/evm/opencl/*.cl",

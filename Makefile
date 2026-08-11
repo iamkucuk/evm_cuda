@@ -85,13 +85,13 @@ build: check-env ## Rebuild the package (compiles _evm_cuda when nvcc is present
 
 # Two things a build can leave inside the checkout, both gitignored:
 #
-#   src/evm/cuda/_evm_cuda*.so — cuda/CMakeLists.txt sets LIBRARY_OUTPUT_DIRECTORY
+#   src/evm/cuda/_evm_cuda*.so — src/evm/cuda/CMakeLists.txt sets LIBRARY_OUTPUT_DIRECTORY
 #     to ../src/evm/cuda, and pip builds in-tree, so BOTH `pip install .` and
 #     `pip install -e .` write it there (measured on the GPU box 2026-08-09:
 #     _evm_cuda.cpython-312-x86_64-linux-gnu.so, identical in both modes).
 #   cuda/build/ — NOT produced by pip: scikit-build-core configures CMake in a
 #     temporary directory. It is produced by the direct CMake entry point that
-#     cuda/CMakeLists.txt:3 documents (`cmake -S cuda -B cuda/build`), which is
+#     src/evm/cuda/CMakeLists.txt:3 documents (`cmake -S cuda -B cuda/build`), which is
 #     why .gitignore still lists it. Removing it here is a no-op after a pip
 #     build and the whole point after a manual one.
 #

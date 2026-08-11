@@ -207,7 +207,7 @@ output video (magnified)
 
 The CUDA port implements each stage as one or more kernels, with the entire
 pipeline running device-resident (zero per-frame host-device transfers).
-See [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel-by-kernel mapping and
+See [`src/evm/cuda/DESIGN.md`](src/evm/cuda/DESIGN.md) for the kernel-by-kernel mapping and
 [`docs/internals/blog_speedup.md`](docs/internals/blog_speedup.md) for the full optimization story.
 
 ## Quick start
@@ -271,18 +271,17 @@ No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++.
 │   ├── stream.py         # live magnification over a running capture
 │   ├── backend/          # the backend interface, registry, generic pipelines
 │   ├── cpu/              # NumPy baseline (the correctness oracle for the rest)
-│   ├── cuda/             # NVIDIA wrapper: batched, pipelines, benchmark, ops
-│   │                     #   (CMake writes _evm_cuda*.so in here)
+│   ├── cuda/             # NVIDIA: wrapper (batched, pipelines, benchmark, ops)
+│   │   ├── kernels/      #   10 .cu files (color, spatial, lpyr, iir, render...)
+│   │   ├── include/      #   shared device headers
+│   │   ├── bindings.cpp  #   pybind11 + DeviceMemPool + sticky scratch
+│   │   ├── CMakeLists.txt#   CUDA-optional, driven by scikit-build-core
+│   │   └── DESIGN.md     #   kernel map, tolerances, production path
 │   ├── opencl/           # kernels.cl + runtime, array, ops
 │   ├── metal/            # kernels.metal + the same three
 │   ├── vulkan/           # shaders/*.comp with committed *.spv + the same three
 │   └── io/               # video decode/encode + the shared H.264 writer
 ├── src/evm_cuda/         # deprecated shim, forwards to evm.cuda
-├── cuda/                 # NVIDIA CUDA sources, compiled by CMake at install
-│   ├── kernels/          # 10 .cu files (color, spatial, lpyr, iir, render...)
-│   ├── bindings.cpp      # pybind11 + DeviceMemPool + sticky scratch
-│   ├── CMakeLists.txt    # CUDA-optional, driven by scikit-build-core
-│   └── DESIGN.md         # kernel map, tolerances, production path
 ├── docs/                 # the documentation site (mkdocs), incl. internals/
 │                         #   with the two optimisation writeups, img/, video/
 ├── scripts/              # sample download, profilers, dev helpers

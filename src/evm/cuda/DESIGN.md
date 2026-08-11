@@ -17,7 +17,7 @@ reference for the numerical contract.
 | Precision | FP32 hot path (including the IIR state) + FP64 Butterworth accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
 
 Further mid-pipeline writeup:
-[`docs/blog_further_optimizations.md`](../docs/internals/blog_further_optimizations.md).
+[`docs/blog_further_optimizations.md`](../../../docs/internals/blog_further_optimizations.md).
 
 ## Repository layout
 

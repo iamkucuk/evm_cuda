@@ -10,7 +10,7 @@ section 3d of that plan, committed here so every session loads them. They are no
 - The check is a real command, not a claim. Examples in this repo:
   `.venv/bin/python -m pytest tests/ -q -p no:randomly` (279 passed, 101 skipped on 2026-08-11),
   `pytest tests/cuda/ -q` on a GPU host, `scripts/dev/verify_install.sh` for packaging work.
-- Non-Python work gets a check too: a `cuda/CMakeLists.txt` change is tested by a scripted
+- Non-Python work gets a check too: a `src/evm/cuda/CMakeLists.txt` change is tested by a scripted
   fresh-venv install, a docs change by `mkdocs build --strict` plus running its snippets.
 - Phase 0 exists to build this net (golden fixtures, `tests/test_reference_lock.py`, recorded
   baselines in `benches/`). Later red-green cycles run inside it.
@@ -47,7 +47,7 @@ section 3d of that plan, committed here so every session loads them. They are no
   missing backend reports *why* (missing extra, no driver, no device). A ~700x CPU/GPU cliff
   must never be reached by accident.
 - No bare `except`. Every CUDA runtime call is wrapped in `CUDA_CHECK`
-  (`cuda/include/evm_check.cuh`), which throws `std::runtime_error` so pybind11 surfaces it as
+  (`src/evm/cuda/include/evm_check.cuh`), which throws `std::runtime_error` so pybind11 surfaces it as
   a catchable Python exception — "a silent error can never propagate into a tolerance
   failure". Keep that posture in Python: raise, don't degrade.
 - Report skip counts, never just passes. On this Mac the honest line is
@@ -67,7 +67,7 @@ section 3d of that plan, committed here so every session loads them. They are no
 
 ## 7. The NVIDIA GPU code leads; the other backends follow it
 
-- Performance work starts in the NVIDIA GPU code — `cuda/kernels/*.cu` and `cuda/bindings.cpp`.
+- Performance work starts in the NVIDIA GPU code — `src/evm/cuda/kernels/*.cu` and `src/evm/cuda/bindings.cpp`.
   That is what this project exists to make fast, and it is where a measurement is worth taking.
 - **A change to the NVIDIA code is not finished when it lands.** Once it is accepted, check
   whether the same change applies to every other backend, and apply it where it does:

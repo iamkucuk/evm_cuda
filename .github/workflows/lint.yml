@@ -38,7 +38,7 @@ jobs:
       # mypy needs numpy's bundled type information to say anything true about
       # this code, and installing evm-magnify is the only way to get the runtime
       # dependencies without listing them a second time here. On a runner with
-      # no nvcc this is the CPU-only install, which cuda/CMakeLists.txt handles
+      # no nvcc this is the CPU-only install, which src/evm/cuda/CMakeLists.txt handles
       # by defining no target.
       - name: Install the package and the lint tools
         run: python -m pip install ".[lint]"

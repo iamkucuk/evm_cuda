@@ -1,7 +1,7 @@
 """EVM CUDA port — Python wrapper package.
 
 This package wraps the compiled `_evm_cuda` extension (built by
-`cuda/CMakeLists.txt`) and exposes the four magnification pipelines as
+`src/evm/cuda/CMakeLists.txt`) and exposes the four magnification pipelines as
 drop-in replacements for the Python baseline `evm.magnify_*`.
 
 Layout:

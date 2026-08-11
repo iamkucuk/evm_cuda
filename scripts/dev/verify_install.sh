@@ -3,7 +3,7 @@
 # verify_install.sh — prove that `pip install .` produces a working package.
 #
 # Plan step 1.15. This is the check that judges every packaging change:
-# cuda/CMakeLists.txt, pyproject.toml and the Makefile are all "tested" by
+# src/evm/cuda/CMakeLists.txt, pyproject.toml and the Makefile are all "tested" by
 # running this script, per .claude/rules/development-practices.md.
 #
 # What it does:

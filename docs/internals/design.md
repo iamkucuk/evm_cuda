@@ -4,7 +4,7 @@ The detailed notes on how the CUDA kernels are laid out — which kernel does
 what, the tolerance allowed for each stage against the NumPy reference, and why
 each choice of precision and memory layout was made — live beside the code they
 describe, in
-[`cuda/DESIGN.md`](https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/cuda/DESIGN.md).
+[`src/evm/cuda/DESIGN.md`](https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/src/evm/cuda/DESIGN.md).
 
 They are kept there rather than copied here on purpose. They are read while
 changing the kernels, they refer to the files around them, and a second copy in

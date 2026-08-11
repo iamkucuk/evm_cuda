@@ -1273,7 +1273,7 @@ PYBIND11_MODULE(_evm_cuda, m) {
                 float* lo  = slots[i_lo];
 
                 // Shared memory for the downsample, none for the upsample —
-                // measured, see cuda/DESIGN.md. Fused up was a regression.
+                // measured, see src/evm/cuda/DESIGN.md. Fused up was a regression.
                 evm::launch_corr_dn_fused_smem_batched(
                     cur, lo2, h, w, filt, filt_len,
                     h * w, hn * wn, M, 0);
