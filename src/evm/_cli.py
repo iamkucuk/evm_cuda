@@ -120,7 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="evm-magnify",
         description=(
             "Eulerian Video Magnification: reveal subtle colour and motion "
-            "changes in video (MIT SIGGRAPH 2012, CUDA-accelerated)."
+            "changes in video (MIT SIGGRAPH 2012), on your processor or "
+            "any graphics hardware present."
         ),
     )
     sub = p.add_subparsers(dest="command", required=True, metavar="{magnify,download,bench}")

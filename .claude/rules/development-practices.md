@@ -8,8 +8,8 @@ section 3d of that plan, committed here so every session loads them. They are no
 - Start each plan step by writing, or pointing at, the failing check named in that phase's
   success criteria. No implementation file is created before that check exists.
 - The check is a real command, not a claim. Examples in this repo:
-  `.venv/bin/python -m pytest tests/ -q -p no:randomly` (48 passed, 63 skipped on 2026-08-09),
-  `pytest tests/cuda/ -q` on a GPU host, `dev/verify_install.sh` for packaging work.
+  `.venv/bin/python -m pytest tests/ -q -p no:randomly` (279 passed, 101 skipped on 2026-08-11),
+  `pytest tests/cuda/ -q` on a GPU host, `scripts/dev/verify_install.sh` for packaging work.
 - Non-Python work gets a check too: a `cuda/CMakeLists.txt` change is tested by a scripted
   fresh-venv install, a docs change by `mkdocs build --strict` plus running its snippets.
 - Phase 0 exists to build this net (golden fixtures, `tests/test_reference_lock.py`, recorded
@@ -36,7 +36,7 @@ section 3d of that plan, committed here so every session loads them. They are no
   the conformance suite, the backend registry, and the reference constants
   (`DROP_LAST`, `EXAGGERATION_FACTOR`, `BINOM5`, `BINOM5_SUM1`). Import them; never retype a
   literal that can be imported. New duplication needs a stated reason in the commit message.
-- **The named exception:** the FP32/FP16 pipeline bodies in `cuda/evm_cuda/batched.py` and the
+- **The named exception:** the FP32/FP16 pipeline bodies in `src/evm/cuda/batched.py` and the
   templated kernels may stay duplicated where merging them risks numeric drift — the README's
   accuracy claims (motion FP16 vs FP32 RMSE 0.00199) are load-bearing. Correctness outranks
   DRY. Comment the exception at the site.
@@ -51,7 +51,8 @@ section 3d of that plan, committed here so every session loads them. They are no
   a catchable Python exception — "a silent error can never propagate into a tolerance
   failure". Keep that posture in Python: raise, don't degrade.
 - Report skip counts, never just passes. On this Mac the honest line is
-  "48 passed, 63 skipped" — the 63 are the whole CUDA suite and prove nothing.
+  "279 passed, 101 skipped" — those skips include the whole NVIDIA suite and prove
+  nothing about it. No single machine runs every backend.
 - `tests/cuda/conftest.py:TOL` and `tests/test_against_mit_reference.py` are append-only.
   Loosening a tolerance is its own separately reviewed commit carrying the measurement.
 

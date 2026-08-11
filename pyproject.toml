@@ -14,7 +14,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "evm-cuda"
 version = "0.1.0"
-description = "CUDA-accelerated Eulerian Video Magnification for revealing subtle temporal changes in video."
+description = "Reveal colour and motion changes in video too small to see — on processors and on graphics hardware from any vendor."
 readme = "README.md"
 requires-python = ">=3.9"
 # PEP 639 form, replacing the deprecated `license = { text = ... }` table that

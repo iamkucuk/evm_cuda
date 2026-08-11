@@ -4,6 +4,8 @@
 [![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)](#)
 [![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia&logoColor=white)](#)
 [![OpenCL](https://img.shields.io/badge/OpenCL-Apple%20%7C%20AMD%20%7C%20Intel-orange)](#)
+[![Metal](https://img.shields.io/badge/Metal-Apple-silver?logo=apple&logoColor=white)](#)
+[![Vulkan](https://img.shields.io/badge/Vulkan-any%20vendor-red?logo=vulkan&logoColor=white)](#)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/colab/evm_cuda_benchmark.ipynb)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
@@ -127,9 +129,9 @@ capacity, not a measured multi-stream harness.
 Standalone motion FP16 peaks around 8 to 9 GB VRAM (measured), so it fits many
 16 GB cards when the process is not holding residual allocations from other
 configs. Per-stage breakdown and multi-GPU numbers (A100 / H100 / P100) live in
-[blog_speedup.md](docs/blog_speedup.md); the mid-pipeline arc (TN IIR, sticky
+[blog_speedup.md](docs/internals/blog_speedup.md); the mid-pipeline arc (TN IIR, sticky
 scratch, free-list pool, smem downsample) is in
-[blog_further_optimizations.md](docs/blog_further_optimizations.md).
+[blog_further_optimizations.md](docs/internals/blog_further_optimizations.md).
 
 ### On hardware that is not NVIDIA
 
@@ -206,7 +208,7 @@ output video (magnified)
 The CUDA port implements each stage as one or more kernels, with the entire
 pipeline running device-resident (zero per-frame host-device transfers).
 See [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel-by-kernel mapping and
-[`docs/blog_speedup.md`](docs/blog_speedup.md) for the full optimization story.
+[`docs/blog_speedup.md`](docs/internals/blog_speedup.md) for the full optimization story.
 
 ## Quick start
 

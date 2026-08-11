@@ -11,7 +11,7 @@ EVM_Matlab-1.1.zip:
 The spatial (binom5 + reflect1 corrDn/upConv) and temporal (ideal / 1st-order
 Butterworth / direct r1-r2 IIR) kernels reproduce matlabPyrTools and the
 reference bandpassing bit-for-bit, so this package is the correctness oracle
-for the CUDA port.
+for every other backend — NVIDIA, OpenCL, Apple and Vulkan alike.
 
 For a one-liner, :func:`evm.magnify` takes a path, an array, or any iterable of
 frames, a preset name, and picks a backend::

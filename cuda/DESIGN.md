@@ -17,7 +17,7 @@ reference for the numerical contract.
 | Precision | FP32 hot path (including the IIR state) + FP64 Butterworth accumulators + optional FP16 storage | FP32 matches Python tolerances; FP16 halves VRAM for memory-constrained GPUs |
 
 Further mid-pipeline writeup:
-[`docs/blog_further_optimizations.md`](../docs/blog_further_optimizations.md).
+[`docs/blog_further_optimizations.md`](../docs/internals/blog_further_optimizations.md).
 
 ## Repository layout
 
@@ -97,9 +97,10 @@ src/evm/cuda/              # Python wrapper package (it used to live in cuda/)
 
 Both pipelines support an FP16 storage path (`magnify_color_gdown_ideal_fp16`
 and `magnify_motion_lpyr_iir_fp16` in `batched.py`). Batched spatial kernels are
-templated on storage type `In`/`Out`. Shared tiles use `__shared__ In tile`, so
-half storage stays dense in smem; MAC is float via `cvt_in`/`cvt_out` at the
-arithmetic edge. Instantiating `<__half,__half>` is the production FP16 path —
+templated on storage type `In`/`Out`. Where a kernel does stage data — the
+downsample kernels; the enlargement kernels no longer do, see below — the tile is
+declared `__shared__ In tile`, so half storage stays dense in it; MAC is float
+via `cvt_in`/`cvt_out` at the arithmetic edge. Instantiating `<__half,__half>` is the production FP16 path —
 same code as FP32, not a forked algorithm.
 
 **Motion FP16:** NTSC, planar, bands, filtered bands, and delta are `__half`

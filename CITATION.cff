@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "Eulerian Video Magnification on CUDA"
+title: "Eulerian Video Magnification, on processors and any graphics hardware"
 message: >-
   If you use this software in work you publish, please cite both this
   implementation and the original method it implements.
@@ -11,11 +11,13 @@ repository-code: "https://github.com/iamkucuk/eulerian-video-magnification-cuda"
 url: "https://iamkucuk.github.io/eulerian-video-magnification-cuda/"
 abstract: >-
   An implementation of Eulerian Video Magnification that amplifies colour and
-  motion changes in video too small to see. Includes a NumPy implementation
-  checked against the original authors' published output, a hand-written CUDA
-  version for NVIDIA hardware, and a portable OpenCL version for Apple, AMD and
-  Intel hardware, each compared against the NumPy reference by an automated
-  test suite.
+  motion changes in video too small to see, together with the phase-based
+  follow-up method. Includes a NumPy implementation checked against the original
+  authors' published output, a hand-written CUDA version for NVIDIA hardware,
+  and three portable versions — OpenCL, Apple's Metal, and Vulkan — that reach
+  Apple, AMD and Intel hardware and any future device with a standard driver.
+  Every version is compared against the NumPy reference by an automated test
+  suite.
 keywords:
   - eulerian video magnification
   - motion magnification
