@@ -8,6 +8,30 @@ A follow-up to [Implementing Eulerian Video Magnification on CUDA](blog_speedup.
 > `evm_cuda.benchmark` below is imported today as `evm.cuda.benchmark`. Nothing
 > else here has been edited.
 
+> **Note on what has changed since (added 2026-08-11).** Three later changes to
+> the NVIDIA motion path supersede specific claims below. The body is left as
+> written, because its value is the reasoning at the time; the corrections are:
+>
+> - The temporal filter's running state is now FP32, not FP64. Where this post
+>   says the accumulator stays FP64, that is no longer true. The r1/r2 form is a
+>   pair of decaying averages, which do not accumulate error the way FP64 was
+>   chosen to guard against: FP32 state differs from FP64 by at most 4.023e-07
+>   against an allowed 1e-5, and the stage went from 24.65 ms to 6.36 ms because
+>   a GeForce card runs FP64 at a sixty-fourth of single-precision speed.
+> - Building and reconstructing a pyramid no longer runs a separate pass to add
+>   or subtract a band. That combination now happens inside the upsample write
+>   that was already taking place.
+> - The two kernels that enlarge an image no longer stage their input in shared
+>   memory. Measured, that staging was costing them about 45% of the card's
+>   memory bandwidth; without it they run at 92-96% of what the card sustains,
+>   with bit-identical output.
+>
+> Together these make motion compute on an RTX 3090 **40.5 ms in FP32 and
+> 27.0 ms in FP16**, against the figures in the tables below. FP16 agreement
+> with FP32 is now RMSE 0.00199 rather than 0.00232. Colour is unaffected by all
+> three and its figures still hold. `README.md` and `cuda/DESIGN.md` carry the
+> current numbers.
+
 The first writeup covered the stack that made a correct CUDA port fast:
 device-resident pipelines, batched spatial launches, cuFFT plan caching,
 multi-element render, and FP16 storage. After that work, motion on an H100
@@ -33,7 +57,8 @@ frames at 960x544, 9 levels, FP32 motion *compute only*):
 | After DeviceBuffer free-list + smem fused downsample | ~96-104 ms |
 | Total (series) | about 9x mid-pipeline compute |
 | After up_conv tile / reflect / taps | ~76 ms |
-| **Current production (remeasured)** | **3090 75.4/60.4 (FP32/FP16 motion); A100 54.4/48.2 and H100 35.8/34.5 predate Level 7** |
+| **End of this series (remeasured)** | **3090 75.4/60.4 (FP32/FP16 motion); A100 54.4/48.2 and H100 35.8/34.5 predate Level 7** |
+| **Current production (2026-08-11)** | **3090 40.5/27.0 (FP32/FP16 motion), after the three changes listed in the note above; the other GPUs have not been re-run** |
 
 H2D/D2H and encode are reported, but they were not the target. After this
 series, transfer often exceeds mid-pipeline compute on file-to-file runs, so
@@ -752,7 +777,7 @@ from one shared body.
 | True half bands + dense smem (remeasured) | **3090 90.4/75.1; A100 54.4/48.2; H100 35.8/34.5** | **~10× / ~12× on 3090** |
 | Level 7: up_conv tile / reflect / taps | **3090 75.4/60.4** | **~12× / ~15× on 3090** |
 
-### Current production stage table (3090, baby motion)
+### Stage table at the end of this series (3090, baby motion)
 
 Fresh process per config; 1 warmup + median of 7 (`benches/bench_rtx3090.json`).
 
@@ -766,6 +791,27 @@ Fresh process per config; 1 warmup + median of 7 (`benches/bench_rtx3090.json`).
 | **Compute** | **75.4** | **60.4** | **0.80** |
 | H2D+D2H | 113.1 | 104.4 | 0.92 |
 | **TOTAL** | **188.4** | **164.8** | **0.87** |
+
+### Current production stage table (3090, baby motion, 2026-08-11)
+
+The same measurement after the three later changes described in the note at the
+top of this post. Same harness and same method: fresh process per config,
+1 warmup and median of 7.
+
+| Stage | FP32 (ms) | FP16 (ms) | ratio | vs the table above (FP32) |
+|---|---:|---:|---:|---|
+| A) NTSC | 2.7 | 1.8 | 0.67 | unchanged |
+| B) lpyr_build | 17.6 | 12.3 | 0.70 | band subtract fused into the upsample write; no shared memory in the two enlargement kernels |
+| C) IIR | 6.1 | 3.7 | 0.61 | FP32 running state instead of FP64 |
+| D1) recon | 9.3 | 7.2 | 0.77 | band add fused into the upsample write; same enlargement change |
+| D2) render | 4.6 | 2.5 | 0.54 | unchanged |
+| **Compute** | **40.3** | **27.5** | **0.68** | **1.87x / 2.20x faster** |
+| H2D+D2H | 117.9 | 110.9 | 0.94 | untouched; PCIe on this host drifts several percent between sessions |
+| **TOTAL** | **158.2** | **138.4** | **0.87** | |
+
+The two stages that were not touched — colour conversion and render — come out
+within measurement noise of the earlier table, which is what makes the other
+three rows comparable rather than a difference between sessions.
 
 Compute is freshly measured; H2D/D2H are held at the earlier session's values
 because that path is unchanged and PCIe on this host drifts several percent

@@ -10,6 +10,30 @@ and the optimization strategies that address them.
 > `evm_cuda.benchmark` below is imported today as `evm.cuda.benchmark`. Nothing
 > else here has been edited.
 
+> **Note on what has changed since (added 2026-08-11).** Three later changes to
+> the NVIDIA motion path supersede specific claims below. The body is left as
+> written, because its value is the reasoning at the time; the corrections are:
+>
+> - The temporal filter's running state is now FP32, not FP64. Where this post
+>   says the accumulator stays FP64, that is no longer true. The r1/r2 form is a
+>   pair of decaying averages, which do not accumulate error the way FP64 was
+>   chosen to guard against: FP32 state differs from FP64 by at most 4.023e-07
+>   against an allowed 1e-5, and the stage went from 24.65 ms to 6.36 ms because
+>   a GeForce card runs FP64 at a sixty-fourth of single-precision speed.
+> - Building and reconstructing a pyramid no longer runs a separate pass to add
+>   or subtract a band. That combination now happens inside the upsample write
+>   that was already taking place.
+> - The two kernels that enlarge an image no longer stage their input in shared
+>   memory. Measured, that staging was costing them about 45% of the card's
+>   memory bandwidth; without it they run at 92-96% of what the card sustains,
+>   with bit-identical output.
+>
+> Together these make motion compute on an RTX 3090 **40.5 ms in FP32 and
+> 27.0 ms in FP16**, against the figures in the tables below. FP16 agreement
+> with FP32 is now RMSE 0.00199 rather than 0.00232. Colour is unaffected by all
+> three and its figures still hold. `README.md` and `cuda/DESIGN.md` carry the
+> current numbers.
+
 ## The algorithm
 
 [Eulerian Video Magnification][evm] (Wu et al., 2012) reveals subtle
