@@ -7,7 +7,7 @@
 [![Metal](https://img.shields.io/badge/Metal-Apple-silver?logo=apple&logoColor=white)](#)
 [![Vulkan](https://img.shields.io/badge/Vulkan-any%20vendor-red?logo=vulkan&logoColor=white)](#)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-orange?logo=c%2B%2B&logoColor=white)](#)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/colab/evm_cuda_benchmark.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iamkucuk/eulerian-video-magnification-cuda/blob/main/scripts/cloud/colab_benchmark.ipynb)
 [![License: BSD-3-Clause-NC](https://img.shields.io/badge/License-BSD--3--NC-yellow.svg)](LICENSE)
 
 **Amplify changes in video that are too small to see: the flush of blood
@@ -170,7 +170,7 @@ roughly that much. Colour came out unchanged across the same back-to-back pair
 (9.90 against 9.85 ms), which is the check that the numbers are comparable. Cross-GPU ratios below are left from
 the pre-change measurement and will shift once the others are re-run.
 
-‡ One run of `colab/evm_cuda_benchmark.ipynb` on Colab's shared hardware, with
+‡ One run of `scripts/cloud/colab_benchmark.ipynb` on Colab's shared hardware, with
 no stored JSON. Indicative only: repeated runs on that class of machine moved
 by tens of percent.
 
@@ -281,7 +281,6 @@ No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++.
 │   ├── metal/            # kernels.metal + the same three
 │   ├── vulkan/           # shaders/*.comp with committed *.spv + the same three
 │   └── io/               # video decode/encode + the shared H.264 writer
-├── src/evm_cuda/         # deprecated shim, forwards to evm.cuda
 ├── docs/                 # the documentation site (mkdocs), incl. internals/
 │                         #   with the two optimisation writeups, img/, video/
 ├── scripts/              # sample download, profilers, dev helpers

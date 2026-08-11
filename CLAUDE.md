@@ -13,9 +13,9 @@ PyPI, the Extreme Value Machine — and `evm-magnify` matches the terminal comma
 package installs. Only the NVIDIA backend needs a compiled extension; `pip install .`
 succeeds with no NVIDIA compiler present.
 
-Three similar-looking names are NOT the distribution and must not be renamed with it:
-the compiled extension `_evm_cuda`, the deprecated shim package `src/evm_cuda/`, and
-the conda environment called `evm-cuda` on the GPU machine.
+Two similar-looking names are NOT the distribution and must not be renamed with it:
+the compiled extension `_evm_cuda`, and the conda environment called `evm-cuda` on the
+GPU machine.
 
 **The library restructure is essentially complete** on branch `library-restructure`.
 The plan is `docs/dev/PLAN.md`. If you are executing a plan step, find it before
@@ -32,7 +32,7 @@ writing code; if you are doing performance work, read Rule 7 in
 | NVIDIA kernels | raw CUDA C++ / nvcc + cuFFT — no PyTorch, CuPy or Numba | `src/evm/cuda/kernels/*.cu` |
 | Other backends | OpenCL (pyopencl), Apple (PyObjC), Vulkan (vulkan + MoltenVK on macOS); each an optional extra | `pyproject.toml` extras |
 | Bindings | pybind11 (found, else FetchContent v2.13.6) | `src/evm/cuda/CMakeLists.txt:126-136` |
-| Build backend | scikit-build-core, `cmake.source-dir = "cuda"` | `pyproject.toml:6-8, 83-95` |
+| Build backend | scikit-build-core, `cmake.source-dir = "src/evm/cuda"` | `pyproject.toml` |
 | Build | CMake >= 3.24 + Ninja, C++17; **CUDA optional** | `src/evm/cuda/CMakeLists.txt:15, 41-62` |
 | CUDA arches | `native` by default, `EVM_CUDA_ARCHS=all` → `60;70;80;89;90` | `src/evm/cuda/CMakeLists.txt:80-98` |
 | Tests | pytest + pytest-cov (reported, never gated — no machine runs every backend) | `pyproject.toml` |
@@ -82,17 +82,21 @@ src/evm/          The installed package. `import evm` re-exports the processor
   io/             video.py (decode/encode + RGB<->YIQ), h264.py (the single libx264
                   encoder every backend calls, so they write byte-identical
                   containers), capture.py (camera/file capture for streaming).
-src/evm_cuda/     Deprecated shim forwarding to `evm.cuda`; warns on import. See gotcha 4.
 tests/            380 tests collected in total. Processor tests (filters, pyramids,
                   pipeline, video encode, MIT reference), the public-API surface lock,
                   the cross-backend conformance suite, plus the Phase 0 net —
                   test_reference_lock.py (freezes the constants and TOL) and
                   test_golden.py against fixtures/golden_*.npz.
 tests/cuda/       98 of those 380, skipped unless _evm_cuda is built. conftest.py holds TOL.
-scripts/          run_evm.py, download_samples.py, profile_full_comparison.py,
-                  render_cuda_videos.py, fp16/bound microbenchmarks.
+scripts/          The tools: run_evm.py, download_samples.py,
+                  profile_full_comparison.py, render_cuda_videos.py.
 scripts/dev/      make_golden_fixtures.py (regenerates tests/fixtures/golden_*.npz) and
                   verify_install.sh (the packaging check — see Commands).
+scripts/cloud/    Benchmark harnesses for someone else's GPU: colab_benchmark.ipynb
+                  (the README badge points at it on main) and kaggle/.
+scripts/experiments/  One-off measurements whose answers are recorded in
+                  docs/internals/. Kept so those claims can be re-checked; nothing
+                  runs them. See the README there.
 docs/             A mkdocs-material site, built with `mkdocs build --strict` and
                   published from the built output. index.md, getting-started/,
                   concepts/ (incl. backends.md), recipes/, comparison.md,
@@ -106,8 +110,6 @@ docs/dev/         PLAN.md — the library-restructure plan. packaging-notes.md �
                   instructions. Also gpu-runner.md and release-checklist.md.
 benches/          Stored benchmark JSON per GPU (rtx3090/a100/h100/p100) + baseline test
                   runs + kaggle_runs/ console logs.
-colab/            evm_cuda_benchmark.ipynb — the README badge points at it on main.
-kaggle/           Free-GPU harness run_gpu_comparison.py; results_*/ are gitignored.
 data/             Sample clips, gitignored except .gitkeep. `make download` fills it.
 output/           Scratch renders, gitignored.
 ```
@@ -218,14 +220,10 @@ the operator's explicit approval first.
    real check on the packaging.
 3. **MIT-reference tests need `data/*.mp4`** (`face.mp4`, `baby.mp4`, `face_mit_ref.mp4`,
    `baby_mit_ref.mp4`); they skip without them. `make download` fetches all four.
-4. **The `evm_cuda` shim forwards attributes, not submodule imports.** `import evm_cuda` and
-   `evm_cuda.have_cuda` work; `import evm_cuda.benchmark` raises `ModuleNotFoundError`. It is
-   deliberate — aliasing submodules into `sys.modules` would load them a second time under a
-   second name and give `DeviceMemPool` two independent sets of state. Fix callers, not the
-   shim: write `from evm.cuda import benchmark`. Submodule *attributes* (`evm_cuda.benchmark`,
-   `evm_cuda.batched`) resolve only where `_evm_cuda` is built; on this Mac they raise
-   `AttributeError`, because `evm.cuda.__getattr__` turns the extension's `ImportError` into
-   one (`src/evm/cuda/__init__.py:61-66`).
+4. **`evm.cuda` resolves lazily** (PEP 562). Importing `evm` on a machine with no
+   NVIDIA card never touches the compiled extension; asking for `evm.cuda` there raises
+   an `AttributeError` carrying the reason, because `evm.cuda.__getattr__` turns the
+   extension's `ImportError` into one (`src/evm/cuda/__init__.py:61-66`).
 5. **`DROP_LAST = 10` is applied inside the frame readers, not at the API boundary**:
    `src/evm/cpu/magnify.py:50` used in `_read_frames` (`:121`), and
    `src/evm/cuda/_common.py:31` reading `_evm_cuda.drop_last` (defined as `kDropLast` in

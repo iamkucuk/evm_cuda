@@ -153,7 +153,7 @@ PRESETS: Mapping[str, Preset] = MappingProxyType(
             ),
         ),
         # No "breathing" preset. The only breathing material in this repository
-        # is baby.mp4 (README.md:34, colab/evm_cuda_benchmark.ipynb), and it is
+        # is baby.mp4 (README.md:34, scripts/cloud/colab_benchmark.ipynb), and it is
         # rendered with exactly the call above: "breathing" would be a second
         # name for "motion" with identical numbers. Presets earn their place by
         # carrying parameters, not by renaming a row.

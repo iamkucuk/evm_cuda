@@ -145,19 +145,21 @@ cmake.source-dir = "src/evm/cuda"
 # Pure-Python packages are copied from src/ as-is. The compiled extension is
 # placed beside them by `install(TARGETS _evm_cuda LIBRARY DESTINATION evm/cuda)`
 # in src/evm/cuda/CMakeLists.txt, so it lands at evm/cuda/_evm_cuda*.so.
-wheel.packages = ["src/evm", "src/evm_cuda"]
+wheel.packages = ["src/evm"]
 # The NVIDIA sources live inside the package so that each backend's kernels sit
 # in that backend's directory, but they are BUILD inputs: nvcc turns them into
 # the extension at install time and nothing reads them afterwards. They are
 # excluded from the wheel for that reason, and kept in the sdist below, which
 # is what someone building from source needs. The other backends' kernels are
 # the opposite case — their drivers compile them at run time — so those ship.
+# Paths here are relative to the WHEEL root, where the package installs as
+# evm/cuda/ — not to the source tree, which is src/evm/cuda/.
 wheel.exclude = [
-    "evm/src/evm/cuda/CMakeLists.txt",
-    "evm/src/evm/cuda/DESIGN.md",
-    "evm/src/evm/cuda/bindings.cpp",
-    "evm/src/evm/cuda/kernels/*",
-    "evm/src/evm/cuda/include/*",
+    "evm/cuda/CMakeLists.txt",
+    "evm/cuda/DESIGN.md",
+    "evm/cuda/bindings.cpp",
+    "evm/cuda/kernels/*",
+    "evm/cuda/include/*",
 ]
 # The kernels are not Python files, so they need naming explicitly or the wheel
 # would install a package whose backends have nothing to compile or run: the
@@ -280,14 +282,14 @@ ignore = [
 # pre-commit hook and an editor's format-on-save all read this key, so none of
 # them can disagree about which files are in scope.
 exclude = [
-    "colab/evm_cuda_benchmark.ipynb",
-    "kaggle/run_gpu_comparison.py",
-    "scripts/bound_microbench.py",
+    "scripts/cloud/colab_benchmark.ipynb",
+    "scripts/cloud/kaggle/run_gpu_comparison.py",
+    "scripts/experiments/bound_microbench.py",
     "scripts/dev/make_golden_fixtures.py",
     "scripts/download_samples.py",
-    "scripts/measure_fp16_experiments.py",
+    "scripts/experiments/measure_fp16_experiments.py",
     "scripts/profile_full_comparison.py",
-    "scripts/prove_fp16_cost.py",
+    "scripts/experiments/prove_fp16_cost.py",
     "scripts/render_cuda_videos.py",
     "src/evm/__init__.py",
     "src/evm/_cli.py",

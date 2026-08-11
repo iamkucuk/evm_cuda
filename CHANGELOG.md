@@ -88,9 +88,12 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   and the import is unchanged — `import evm` as before. The optional extras move
   with it, so `pip install "evm-magnify[opencl]"` replaces the old spelling. Plain
   `evm` was not available on PyPI; it belongs to an unrelated project.
-- The package moved to a `src/` layout under one root package, with
-  `evm.cpu`, `evm.io` and `evm.cuda` as subpackages. Importing `evm_cuda` still
-  works and warns.
+- The package moved to a `src/` layout under one root package, with `evm.cpu`,
+  `evm.io`, `evm.cuda` and the other backends as subpackages. A compatibility
+  alias named `evm_cuda` existed briefly during that move and has been removed:
+  the old name was only ever reachable inside this repository through a
+  `PYTHONPATH` setting, the distribution was never published under it, so there
+  is no installed copy anywhere for it to keep working.
 - The licence now states its permitted uses explicitly — research, teaching,
   personal use, and inclusion in freely distributed open-source software —
   rather than leaving them to be inferred. The non-commercial restriction is

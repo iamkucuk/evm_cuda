@@ -1,7 +1,7 @@
 # Kaggle run logs
 
 Raw console logs from benchmark and test runs executed on Kaggle GPU instances,
-produced by `kaggle/run_gpu_comparison.py`. Each is the notebook's own JSON
+produced by `scripts/cloud/kaggle/run_gpu_comparison.py`. Each is the notebook's own JSON
 stream log: a list of `{stream_name, time, data}` records in execution order.
 
 | File | What the run did |

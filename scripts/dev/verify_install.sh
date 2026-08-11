@@ -68,16 +68,6 @@ if missing:
 print(f"public API     {len(evm.__all__)} names, all present")
 
 # The deprecated top-level shim must keep working and must say it is deprecated.
-import warnings
-
-with warnings.catch_warnings(record=True) as caught:
-    warnings.simplefilter("always")
-    import evm_cuda
-
-    evm_cuda.have_cuda
-if not any(issubclass(w.category, DeprecationWarning) for w in caught):
-    sys.exit("FAIL: evm_cuda shim did not emit a DeprecationWarning")
-print("evm_cuda shim  imports and warns")
 PYCHECK
 
 step "4/5  CPU pipeline + CUDA state"
