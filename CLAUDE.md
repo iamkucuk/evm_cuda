@@ -126,6 +126,13 @@ downsample for color, Laplacian pyramid for motion) → temporal bandpass (ideal
 FP16 (the hot path); `pipelines.py` is per-frame and is the only home of motion-lpyr-ideal
 and motion-lpyr-butter.
 
+**The NVIDIA GPU code is the primary optimisation target; the other backends follow it.**
+Performance work starts in `cuda/kernels/*.cu`. Once a change there is accepted, check whether
+it applies to each other backend and carry it over if it does — OpenCL
+`src/evm/opencl/kernels.cl`, Metal `src/evm/metal/kernels.metal`, Vulkan
+`src/evm/vulkan/shaders/*.comp`, Python `src/evm/cpu/`. Say which backends it reached and
+which it does not apply to. Rule 7 of `.claude/rules/development-practices.md` is binding here.
+
 **Planned backend interface** (`docs/dev/PLAN.md` section 3c) — two levels, and they are the
 *only* sanctioned abstraction layers in this restructure:
 

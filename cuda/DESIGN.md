@@ -113,7 +113,12 @@ FP32, so FP16 motion fits a 16 GB card and FP32 motion does not. Fresh remeasure
 | A100 80GB | **54.4 ms** | **48.2 ms** | **0.89×** |
 | H100 80GB | **35.8 ms** | **34.5 ms** | **0.96×** |
 
-Accuracy vs CUDA FP32 (baby): RMSE **0.00232**, max **5** LSB.
+Accuracy vs CUDA FP32 (baby): RMSE **0.00199**, max **5** LSB.
+
+The three timing rows above predate two later rounds of work on the motion path — the
+up_conv retune, then the FP32 IIR state and the band combine folded into the up_conv
+store. They are kept as the record of that measurement; `README.md` carries the current
+RTX 3090 figures, and the other two GPUs have not been re-run.
 
 **Color FP16:** NTSC + planar blur scratch are `__half`. Final Gaussian gdown
 converts to FP32 for cuFFT; `filt` stays FP32. First blur level reads the

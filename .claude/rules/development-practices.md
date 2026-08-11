@@ -38,7 +38,7 @@ section 3d of that plan, committed here so every session loads them. They are no
   literal that can be imported. New duplication needs a stated reason in the commit message.
 - **The named exception:** the FP32/FP16 pipeline bodies in `cuda/evm_cuda/batched.py` and the
   templated kernels may stay duplicated where merging them risks numeric drift — the README's
-  accuracy claims (motion FP16 vs FP32 RMSE 0.00232) are load-bearing. Correctness outranks
+  accuracy claims (motion FP16 vs FP32 RMSE 0.00199) are load-bearing. Correctness outranks
   DRY. Comment the exception at the site.
 
 ## 5. Fail loud
@@ -63,3 +63,23 @@ section 3d of that plan, committed here so every session loads them. They are no
   (e.g. `Phase 1 step 1.6: make CUDA optional in CMake`), so history maps one-to-one onto
   `docs/dev/PLAN.md`. Unrelated changes in that commit are not permitted.
 - Do not commit unless the operator asked for it; the orchestrating session commits.
+
+## 7. The NVIDIA GPU code leads; the other backends follow it
+
+- Performance work starts in the NVIDIA GPU code — `cuda/kernels/*.cu` and `cuda/bindings.cpp`.
+  That is what this project exists to make fast, and it is where a measurement is worth taking.
+- **A change to the NVIDIA code is not finished when it lands.** Once it is accepted, check
+  whether the same change applies to every other backend, and apply it where it does:
+
+  | Backend | Where its kernels live |
+  |---|---|
+  | OpenCL | `src/evm/opencl/kernels.cl` |
+  | Apple Metal | `src/evm/metal/kernels.metal` |
+  | Vulkan | `src/evm/vulkan/shaders/*.comp` |
+  | Processor (Python) | `src/evm/cpu/pyramids.py`, `src/evm/cpu/filters.py` |
+
+- State which backends the change was carried to and which it does not apply to, with the
+  reason. "Does not apply, because that backend has no separate upsample kernel" is a complete
+  answer; saying nothing is not.
+- Carry it in its own commit, separate from the NVIDIA change, so a numeric regression on one
+  backend cannot be mistaken for a fault in the original.
