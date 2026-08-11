@@ -313,7 +313,15 @@ exclude = [
 # evm.presets and every module of evm.backend already pass strict unchanged.
 # --------------------------------------------------------------------------
 [tool.mypy]
-files = ["src/evm"]
+# Where the packages live. Without this, a test importing `evm.cpu.ops` is
+# resolved against the installed copy rather than the source tree, and mypy
+# reports the submodule as missing when it is right there in src/.
+mypy_path = "src"
+# The tests and helper scripts are checked too, not just the shipped library.
+# A test that calls a function with the wrong argument types still passes if it
+# never reaches that line, so the checker is the only thing that catches it.
+# They are held to a lighter standard than src/evm — see the override below.
+files = ["src/evm", "tests", "scripts"]
 # Pinned rather than "whatever interpreter is running", so a local run and CI
 # cannot reach different verdicts.
 #
@@ -380,3 +388,18 @@ warn_return_any = true
 no_implicit_reexport = true
 strict_equality = true
 extra_checks = true
+
+# Tests and helper scripts are checked for real mistakes — undefined attributes,
+# wrong argument types, impossible returns — but not held to the strict flags
+# the library is. Requiring full annotations on test functions buys nothing: a
+# test's job is to be a readable assertion about behaviour, and pytest already
+# fails it if the behaviour is wrong.
+[[tool.mypy.overrides]]
+# The tests and scripts have no __init__.py, so mypy names them `test_foo` and
+# `run_evm`, not `tests.test_foo`. Matching on that shape is what makes this
+# override apply at all — `tests.*` silently matched nothing.
+module = ["test_*", "conftest", "run_evm", "download_samples", "profile_*", "render_*", "bound_*", "measure_*", "prove_*", "make_golden_fixtures"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+warn_return_any = false

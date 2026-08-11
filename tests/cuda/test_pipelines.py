@@ -30,7 +30,8 @@ TMP = ROOT / "output" / "_test"
 def _write_synth(path: Path, frames: np.ndarray, fps: float = 30.0) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     t, h, w, _ = frames.shape
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    # Present at run time; absent from opencv's bundled type information.
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
     vw = cv2.VideoWriter(str(path), fourcc, fps, (w, h), isColor=True)
     u8 = np.clip(np.round(frames * 255), 0, 255).astype(np.uint8)
     for i in range(t):

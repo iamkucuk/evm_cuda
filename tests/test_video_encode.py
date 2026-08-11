@@ -26,6 +26,10 @@ def _codec_and_pixfmt(path: Path) -> tuple[str, str]:
         stream = container.streams.video[0]
         codec = stream.codec_context.name
         pix_fmt = stream.codec_context.pix_fmt
+    # pix_fmt is declared optional. Every file this helper is pointed at is one
+    # this project just wrote, so a missing pixel format is a real failure and
+    # should say so here rather than further down as a confusing comparison.
+    assert pix_fmt is not None, f"{path} has no pixel format"
     return codec, pix_fmt
 
 

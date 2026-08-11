@@ -47,7 +47,11 @@ class Recorder:
         # pipeline that no longer accepts what the CLI sends it.
         import evm.cpu.magnify as cpu
 
-        fn.__signature__ = __import__("inspect").signature(getattr(cpu, name))
+        # Setting __signature__ is how inspect.signature is redirected at
+        # run time; the type system has no way to express it.
+        fn.__signature__ = __import__("inspect").signature(  # type: ignore[attr-defined]
+            getattr(cpu, name)
+        )
         return fn
 
 

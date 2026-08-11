@@ -1,0 +1,31 @@
+# Keeps the two things this project pins from going stale.
+#
+# The workflow actions are pinned to commit hashes, which is what stops a moved
+# tag from running unreviewed code with this repository's credentials. The cost
+# of that is that nothing updates them; this is what updates them, as a pull
+# request that can be read before it is merged.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies"]
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deps"
+    labels: ["dependencies"]
+    # ruff and mypy are pinned exactly on purpose (see pyproject.toml): a new
+    # release adds rules, and a lint gate that turns red without anybody
+    # editing code is one people learn to ignore. Let Dependabot propose those
+    # bumps, but as their own pull request so the rule churn is reviewed alone.
+    groups:
+      runtime:
+        patterns: ["*"]
+        exclude-patterns: ["ruff", "mypy"]

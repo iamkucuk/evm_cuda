@@ -19,7 +19,7 @@ import pytest
 from conftest import TOL, abs_err, have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cpu import ops as cpu_ops
+    import evm.cpu.ops as cpu_ops
     from evm.cuda import ops as gpu_ops
     from evm.cuda.array import DeviceArray
 

@@ -30,7 +30,8 @@ def _write_synth_video(path: Path, frames: np.ndarray, fps: float = 30.0) -> Non
     """Write a (T,H,W,3) float [0,1] array as a BGR uint8 mp4."""
     path.parent.mkdir(parents=True, exist_ok=True)
     t, h, w, _ = frames.shape
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    # Present at run time; absent from opencv's bundled type information.
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
     vw = cv2.VideoWriter(str(path), fourcc, fps, (w, h), isColor=True)
     u8 = np.clip(np.round(frames * 255), 0, 255).astype(np.uint8)
     for i in range(t):

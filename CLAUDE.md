@@ -171,6 +171,14 @@ downsample for color, Laplacian pyramid for motion) → temporal bandpass (ideal
 FP16 (the hot path); `pipelines.py` is per-frame and is the only home of motion-lpyr-ideal
 and motion-lpyr-butter.
 
+**Why the NVIDIA sources sit in `cuda/` and every other backend's sit inside the
+package.** It looks inconsistent and is not. The OpenCL, Metal and Vulkan kernels are
+read at *run* time by a driver, so they have to ship in the wheel — 30 such files do.
+The CUDA sources are compiled by nvcc at *install* time, so none of them ship: a built
+wheel contains zero `.cu` files. Putting them under `src/evm/cuda/` would place
+build-only inputs inside the installed package and need an exclusion rule to undo. The
+split follows what the files are for. Moving them is not a tidying job.
+
 **The NVIDIA GPU code is the primary optimisation target; the other backends follow it.**
 Performance work starts in `cuda/kernels/*.cu`. Once a change there is accepted, check whether
 it applies to each other backend and carry it over if it does — OpenCL

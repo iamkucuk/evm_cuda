@@ -96,6 +96,10 @@ def write_lossless_video(path: str | Path, frames_bgr: np.ndarray, fps: float) -
         stream = container.add_stream(
             "ffv1", rate=Fraction(fps).limit_denominator(1_000_000)
         )
+        # add_stream is typed as returning a video, audio or subtitle stream.
+        # "ffv1" is a video codec, so this narrows to the one the next lines
+        # assume, and says so if that ever stops being true.
+        assert isinstance(stream, av.video.stream.VideoStream)
         stream.height, stream.width = frames_bgr.shape[1:3]
         stream.pix_fmt = "bgr0"
         for i in range(frames_bgr.shape[0]):

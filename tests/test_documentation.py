@@ -42,8 +42,10 @@ UNRUNNABLE = {
 
 def _python_blocks(path: Path) -> list[tuple[int, str]]:
     """Every fenced Python block in a page, with the line it starts on."""
-    blocks, lines = [], path.read_text().splitlines()
-    inside, start, body = False, 0, []
+    blocks: list[tuple[int, str]] = []
+    lines = path.read_text().splitlines()
+    body: list[str] = []
+    inside, start = False, 0
     for number, line in enumerate(lines, start=1):
         if not inside and re.match(r"^```(python|py)\s*$", line.strip()):
             inside, start, body = True, number, []

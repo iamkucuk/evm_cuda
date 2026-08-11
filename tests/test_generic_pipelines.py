@@ -18,8 +18,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.backend import generic
-from evm.cpu import backend as cpu_backend
+import evm.backend.generic as generic
+import evm.cpu.backend as cpu_backend
 from evm.cpu import magnify as direct
 
 OPS = cpu_backend.OPS

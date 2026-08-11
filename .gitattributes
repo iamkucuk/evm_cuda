@@ -1,0 +1,35 @@
+# Line endings and binary detection, declared rather than guessed.
+#
+# Git infers "binary" from content, and gets it right most of the time. The
+# cost of the rare miss is high here: a compiled Vulkan shader or a test
+# fixture that had line endings rewritten on checkout is silently corrupt, and
+# the failure surfaces far from the cause. So the file types are stated.
+
+# Text files: normalise to LF in the repository, whatever the editor wrote.
+* text=auto eol=lf
+
+# Shell scripts and Makefiles break outright with CRLF, so pin them.
+*.sh          text eol=lf
+Makefile      text eol=lf
+
+# GPU kernel sources are text and read by a compiler at build or run time.
+*.cu          text eol=lf
+*.cuh         text eol=lf
+*.cl          text eol=lf
+*.metal       text eol=lf
+*.comp        text eol=lf
+*.glsl        text eol=lf
+
+# Binary. Never converted, never diffed as text.
+*.spv         binary
+*.npz         binary
+*.mp4         binary
+*.gif         binary
+*.png         binary
+*.jpg         binary
+*.ipynb       binary linguist-language=Python
+
+# Keep the language statistics on the shelf honest: generated, vendored and
+# non-source material should not count as the project's implementation.
+docs/**       linguist-documentation
+benches/**    linguist-generated

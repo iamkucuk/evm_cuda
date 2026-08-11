@@ -12,6 +12,7 @@ Two guarantees:
 from __future__ import annotations
 
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 
@@ -19,9 +20,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 from conftest import skip_no_cuda  # noqa: E402
 
+# Both are None on a machine with no compiled extension; every test below is
+# guarded by skip_no_cuda, so nothing dereferences them there. Annotated as
+# optional because that is what they are — the checker cannot see the guard.
+benchmark: ModuleType | None
+batched: ModuleType | None
 try:
-    from evm.cuda import benchmark
-    from evm.cuda import batched
+    from evm.cuda import batched, benchmark
 except Exception:
     benchmark = None
     batched = None
