@@ -208,7 +208,7 @@ output video (magnified)
 The CUDA port implements each stage as one or more kernels, with the entire
 pipeline running device-resident (zero per-frame host-device transfers).
 See [`cuda/DESIGN.md`](cuda/DESIGN.md) for the kernel-by-kernel mapping and
-[`docs/blog_speedup.md`](docs/internals/blog_speedup.md) for the full optimization story.
+[`docs/internals/blog_speedup.md`](docs/internals/blog_speedup.md) for the full optimization story.
 
 ## Quick start
 
@@ -227,7 +227,7 @@ make run-color         # pulse magnification on face.mp4
 make run-motion        # motion magnification on baby.mp4
 
 # Test
-make test              # 92 tests (32 Python baseline + 60 CUDA parametrized)
+make test              # 380 tests; 98 need an NVIDIA GPU and skip without one
 
 # Profile
 make profile           # CPU vs FP32 vs FP16 comparison
@@ -258,32 +258,37 @@ No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++.
   via `cvt_in`/`cvt_out` helpers; compute stays FP32, storage halves
 - Multiple-elements-per-thread render and transpose kernels process
   4 pixels per thread to pipeline independent memory reads (22% speedup)
-- 92 tests (67 functions, parametrized to 92 cases) covering every kernel,
-  end-to-end RMSE checks, and MIT reference comparison
+- 380 tests covering every kernel, every backend against the NumPy
+  baseline, end-to-end RMSE checks, and MIT reference comparison
 
 ## Project structure
 
 ```
-evm_cuda/
+.
 ├── src/evm/              # the installed package (`import evm`)
-│   ├── cpu/              # NumPy baseline (the correctness oracle)
-│   ├── io/               # video decode/encode + the shared H.264 writer
-│   └── cuda/             # GPU wrapper: batched, pipelines, benchmark
-│                         #   (CMake writes _evm_cuda*.so in here)
+│   ├── api.py            # magnify() — the one entry point
+│   ├── presets.py        # named parameter sets;  _cli.py — evm-magnify
+│   ├── stream.py         # live magnification over a running capture
+│   ├── backend/          # the backend interface, registry, generic pipelines
+│   ├── cpu/              # NumPy baseline (the correctness oracle for the rest)
+│   ├── cuda/             # NVIDIA wrapper: batched, pipelines, benchmark, ops
+│   │                     #   (CMake writes _evm_cuda*.so in here)
+│   ├── opencl/           # kernels.cl + runtime, array, ops
+│   ├── metal/            # kernels.metal + the same three
+│   ├── vulkan/           # shaders/*.comp with committed *.spv + the same three
+│   └── io/               # video decode/encode + the shared H.264 writer
 ├── src/evm_cuda/         # deprecated shim, forwards to evm.cuda
-├── cuda/                 # CUDA sources
-│   ├── kernels/          # .cu files (color, spatial, lpyr, iir, render...)
+├── cuda/                 # NVIDIA CUDA sources, compiled by CMake at install
+│   ├── kernels/          # 10 .cu files (color, spatial, lpyr, iir, render...)
 │   ├── bindings.cpp      # pybind11 + DeviceMemPool + sticky scratch
 │   ├── CMakeLists.txt    # CUDA-optional, driven by scikit-build-core
 │   └── DESIGN.md         # kernel map, tolerances, production path
-├── docs/
-│   ├── blog_speedup.md                 # first optimization writeup
-│   ├── blog_further_optimizations.md   # layout, pool, smem (unified)
-│   ├── img/                            # demo images
-│   └── video/                          # Pages demo clips
-├── scripts/              # CLI + profilers
-├── tests/                # 32 Python + 60 CUDA cases (92 collected)
-├── kaggle/               # free-GPU benchmark harness
+├── docs/                 # the documentation site (mkdocs), incl. internals/
+│                         #   with the two optimisation writeups, img/, video/
+├── scripts/              # sample download, profilers, dev helpers
+├── tests/                # 380 collected; 98 of them need an NVIDIA GPU
+├── benches/              # stored benchmark results per GPU
+├── colab/ and kaggle/    # free-GPU benchmark harnesses
 ├── pyproject.toml        # one distribution, `pip install .`, CUDA optional
 └── Makefile              # build, test, run, profile targets
 ```
@@ -293,8 +298,8 @@ evm_cuda/
 If you use this work in your research, please cite it:
 
 ```bibtex
-@misc{kucuk2026evm_cuda,
-  title     = {Eulerian Video Magnification on {CUDA}},
+@misc{kucuk2026evm,
+  title     = {Eulerian Video Magnification, on processors and any graphics hardware},
   author    = {Kucuk, Furkan},
   year      = {2026},
   url       = {https://github.com/iamkucuk/eulerian-video-magnification-cuda},
