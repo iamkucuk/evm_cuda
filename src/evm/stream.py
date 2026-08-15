@@ -76,7 +76,7 @@ class MotionStream:
         r2: float = 0.05,
         chrom_attenuation: float = 0.1,
         exaggeration_factor: float = EXAGGERATION_FACTOR,
-        backend: str = "cpu",
+        backend: str = "auto",
     ) -> None:
         if r1 <= r2:
             raise ValueError(
@@ -89,6 +89,8 @@ class MotionStream:
         self.r2 = float(r2)
         self.chrom_attenuation = float(chrom_attenuation)
 
+        if backend == "auto":
+            backend = _fastest_streaming_backend()
         self.backend_name, self._impl = registry.select(backend)
         self._ops = _operations_for(self.backend_name, self._impl)
 
@@ -226,6 +228,30 @@ def _subtract(ops: Any, left: Any, right: Any) -> Any:
     if isinstance(left, np.ndarray):
         return left - right
     return ops.from_numpy(ops.to_numpy(left) - ops.to_numpy(right))
+
+
+def _fastest_streaming_backend() -> str:
+    """The first backend in preference order that can actually stream.
+
+    Plain ``select("auto")`` is wrong here. It walks the same order the
+    whole-clip pipelines use, which puts the hand-written NVIDIA backend first
+    — and that backend implements the four whole-clip pipelines but not the
+    frame-at-a-time operations, so on an NVIDIA machine automatic selection
+    would choose a backend that cannot do this at all.
+
+    Skipping those leaves the ordinary preference order, which is what this
+    walks. Until 2026-08-11 the default was the processor instead, on the
+    stated grounds that launching many small pieces of work per frame costs
+    more than it saves. Measured on an Apple M2 Max that is not so, at either
+    size tried: 227.6 frames per second on Apple's interface against 57.9 on
+    the processor at 320x240, and 58.8 against 8.1 at 720p.
+    """
+    for info in registry.list_backends():
+        if info.available and info.capabilities.streaming:
+            return info.name
+    # Unreachable in practice: the NumPy baseline is always available and
+    # streams. Naming it explicitly beats returning None and failing later.
+    return "cpu"
 
 
 def _operations_for(name: str, impl: Any) -> Any:

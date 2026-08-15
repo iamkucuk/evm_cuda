@@ -52,11 +52,17 @@ amplified = evm.magnify(frames, preset="motion")
 
 A careful reimplementation, not a demonstration. The method is defined by the
 authors' original MATLAB code; the version here is written in NumPy, checked
-against the authors' own published output, and then reimplemented twice more —
-once in CUDA for NVIDIA hardware, once in OpenCL for everything else — with
-every step of both compared against the NumPy version by an automated test
-suite. The comparison is the point: a magnification you cannot check is a
-picture, not a measurement.
+against the authors' own published output, and then reimplemented five more
+times — hand-written CUDA for NVIDIA hardware, OpenCL, Vulkan, Apple's Metal,
+and PyTorch — with every step of every one compared against the NumPy version
+by an automated test suite. The comparison is the point: a magnification you
+cannot check is a picture, not a measurement.
+
+That the five agree with a NumPy reference which itself agrees with the
+original authors' published output is what makes the numbers here worth
+something. Six independent implementations of the same definitions, written in
+six languages against five different pieces of hardware, converging to within
+one step of the final 8-bit value.
 
 Speed, measured rather than estimated, is on the [performance](performance.md)
 page.

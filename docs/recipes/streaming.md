@@ -44,25 +44,35 @@ the same.
 
 ## Speed, measured
 
-On an Apple M2 Max, using the processor:
+Measured 2026-08-11, frames pushed one at a time as a camera would deliver
+them.
 
-| Frame size | Rate |
-|---|---:|
-| 320x240 | 56 frames a second |
-| 640x480 | 21 frames a second |
-| 960x544 | 13 frames a second |
+At 720p (1280x720), which is what most webcams produce:
 
-So a small camera feed runs comfortably faster than real time; a large one does
-not.
+| Machine and backend | frames per second | Keeps up with 30 fps? |
+|---|---:|---|
+| RTX 3090, PyTorch | 107.6 | yes |
+| Apple M2 Max, Metal | 58.8 | yes |
+| Apple M2 Max, PyTorch | 44.6 | yes |
+| Apple M2 Max, Vulkan | 20.5 | no |
+| Apple M2 Max, processor | 8.1 | no |
+| Apple M2 Max, OpenCL | 3.9 | no |
 
-**Use the processor for this, not the graphics processor.** That is the
-opposite of the advice for whole clips, and it is measured rather than assumed:
-at 320x240 the graphics path manages 6 frames a second against the processor's
-56. Magnifying one frame at a time launches a few dozen small pieces of work,
-and the cost of launching them does not shrink with the frame, so it dominates.
-Over a whole clip that cost is paid once instead of once per frame, which is why
-the graphics backends win there by a wide margin. `MotionStream` therefore
-defaults to the processor rather than to whatever `"auto"` would choose.
+At 320x240, on an Apple M2 Max: Metal 227.6, PyTorch 84.6, the processor 57.9.
+
+**Use a graphics backend**, which is what the default now does. An earlier
+version of this page advised the opposite — that launching many small pieces of
+work per frame costs more than it saves — and measurement does not support it
+at either size tried: Apple's interface is about four times the processor's
+rate at 320x240 and about seven times at 720p.
+
+**The hand-written NVIDIA backend cannot stream.** It implements the four
+whole-clip pipelines but not the frame-at-a-time operations, and says so rather
+than failing partway through a frame. That is why `MotionStream` does not
+simply take whatever `"auto"` would choose for a whole clip: it walks the same
+preference order but skips backends that cannot stream. On an NVIDIA machine
+that means PyTorch, which is both the only option there and the fastest
+streaming measured in this project.
 
 ## Keeping up with a camera
 

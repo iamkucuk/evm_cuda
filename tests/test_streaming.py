@@ -129,3 +129,27 @@ def test_it_reports_which_backend_it_is_using():
     stream = MotionStream(32, 32, backend="cpu", **PARAMS)
     assert stream.backend_name == "cpu"
     assert "cpu" in repr(stream)
+
+
+def test_the_default_backend_can_actually_stream():
+    """Automatic selection must not choose a backend that cannot stream.
+
+    The whole-clip preference order puts the hand-written NVIDIA backend first,
+    and that backend implements the four whole-clip pipelines but not the
+    frame-at-a-time operations. Taking that order unfiltered would make the
+    default unusable on exactly the machines this project is fastest on.
+    """
+    import numpy as np
+
+    from evm.backend import registry
+    from evm.stream import MotionStream
+
+    stream = MotionStream(32, 48)
+    chosen = next(i for i in registry.list_backends() if i.name == stream.backend_name)
+    assert chosen.available, f"default chose {chosen.name}, which cannot run here"
+    assert chosen.capabilities.streaming, (
+        f"default chose {chosen.name}, which does not claim it can stream"
+    )
+    # And it works, not merely claims to.
+    out = stream.push(np.zeros((32, 48, 3), dtype=np.uint8))
+    assert out.shape == (32, 48, 3) and out.dtype == np.uint8

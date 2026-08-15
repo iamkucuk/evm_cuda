@@ -1,43 +1,83 @@
 # Backends and hardware
 
-The same magnification is implemented three times over. Which one runs is
-chosen automatically, and never changed behind your back.
+The same magnification is implemented six times over. Which one runs is chosen
+automatically, and never changed behind your back.
 
-| Backend | Runs on | Written in |
-|---|---|---|
-| `cuda` | NVIDIA graphics processors | Hand-written CUDA, tuned |
-| `metal` | Apple graphics processors | Metal compute kernels |
-| `vulkan` | Anything with a Vulkan driver: AMD, Intel, NVIDIA, Apple through a translation layer, mobile and embedded hardware | GLSL compiled to SPIR-V |
-| `opencl` | Anything with an OpenCL driver: Apple, AMD, Intel, NVIDIA; also processors, through a software driver | OpenCL kernels |
-| `cpu` | Anything | NumPy — the reference the others are checked against |
+| Backend | Runs on | Written in | Needs |
+|---|---|---|---|
+| `cuda` | NVIDIA graphics processors | Hand-written CUDA, tuned | a compiler at install |
+| `metal` | Apple graphics processors | Metal compute kernels | `[metal]` |
+| `vulkan` | Anything with a Vulkan driver: AMD, Intel, NVIDIA, Apple through a translation layer, mobile and embedded hardware | GLSL compiled to SPIR-V | `[vulkan]` |
+| `opencl` | Anything with an OpenCL driver: Apple, AMD, Intel, NVIDIA; also processors, through a software driver | OpenCL kernels | `[opencl]` |
+| `torch` | Wherever PyTorch runs: NVIDIA, Apple, and processors | PyTorch tensor operations | `[torch]` |
+| `cpu` | Anything | NumPy — the reference the others are checked against | nothing |
 
-Four different interfaces to graphics hardware, and they overlap: on this Mac,
-three of them work. That is on purpose. Which interface a given piece of
-hardware supports is not something this project controls, and it changes: Apple
-has deprecated OpenCL, Vulkan is what most new hardware ships with, and Metal
-is what Apple supports going forward. Covering several means a device that
-appears later has a path that needs no new code here.
+Five different ways to reach a graphics processor, and they overlap: on an
+Apple laptop, four of them work. That is on purpose. Which interface a given
+piece of hardware supports is not something this project controls, and it
+changes: Apple has deprecated OpenCL, Vulkan is what most new hardware ships
+with, and Metal is what Apple supports going forward. Covering several means a
+device that appears later has a path that needs no new code here.
+
+Only `cuda` and `cpu` are installed by default. The rest are optional extras,
+so nothing is downloaded for hardware you do not have:
+
+```bash
+pip install "evm-magnify[metal]"      # or [vulkan], [opencl], [torch]
+```
 
 ## Measured
 
-An Apple M2 Max, on the sample clips, against the same machine's processor.
-Single runs, so treat them as approximate.
+Apple M2 Max, the sample clips, magnification only — reading and writing the
+video are excluded. One warm-up run, then the best of two. Measured
+2026-08-11.
 
-| Pipeline | Processor | Metal | Vulkan | OpenCL |
-|---|---:|---:|---:|---:|
-| Colour, `face.mp4`, 301 frames | 6,769 ms | 281 ms | 212 ms | 218 ms |
-| Motion, `baby.mp4`, 301 frames | 30,172 ms | 1,923 ms | 2,343 ms | 5,953 ms |
+| Backend | Colour, `face.mp4` | Motion, `baby.mp4` | Against the processor |
+|---|---:|---:|---:|
+| OpenCL | 217 ms | 1,020 ms | 32x / 23x |
+| Vulkan | 255 ms | 1,462 ms | 28x / 16x |
+| Metal | 362 ms | 1,698 ms | 19x / 14x |
+| PyTorch | 653 ms | 2,320 ms | 11x / 10x |
+| Processor (NumPy) | 7,014 ms | 23,634 ms | — |
 
-All three agree with the reference to within one step of the final 8-bit
-rounding. There is no single winner: Vulkan is fastest on the colour pipeline
-and Metal on the motion one, and the ordering would differ on other hardware,
-which is why the choice is not hard-coded.
+Every one agrees with the reference to within one step of the final 8-bit
+rounding.
+
+**There is no single winner, and the ordering is not stable.** OpenCL is
+fastest here on both pipelines, and on a 60-frame clip Apple's own interface
+was faster than OpenCL — the ranking changes with clip length, and would change
+again on other hardware. That is why the choice is not hard-coded, and why
+these numbers describe one machine rather than the backends in general.
+
+## Live streaming is a different question
+
+Whole-clip speed says nothing about keeping up with a camera. Pushing 720p
+frames one at a time, the same day:
+
+| Machine and backend | frames per second |
+|---|---:|
+| RTX 3090, PyTorch | 107.6 |
+| Apple M2 Max, Metal | 58.8 |
+| Apple M2 Max, PyTorch | 44.6 |
+| Apple M2 Max, Vulkan | 20.5 |
+| Apple M2 Max, processor | 8.1 |
+| RTX 3090, processor | 6.3 |
+| Apple M2 Max, OpenCL | 3.9 |
+
+Two things worth knowing before choosing. OpenCL is fastest on whole clips here
+and slowest on live frames — batching is where it wins. And the hand-written
+NVIDIA backend **cannot stream at all**: it implements the four whole-clip
+pipelines but not the frame-at-a-time operations, and says so rather than
+failing partway through. On NVIDIA hardware, PyTorch is currently the only way
+to magnify a live stream.
 
 ## How one is chosen
 
 `backend="auto"`, the default, tries them in the order in the table above and
 uses the first that can run: the tuned NVIDIA path first, then Apple's own
-interface, then Vulkan, then OpenCL, then the processor. Where several would
+interface, then Vulkan, then OpenCL, then PyTorch, then the processor. PyTorch
+sits second to last because it reaches no hardware the others miss, so it
+should never be preferred over a native backend for whole-clip work. Where several would
 work, the earlier one is the shorter path to the hardware — Vulkan on a Mac
 runs through a translation layer onto Metal, so using Metal directly removes a
 layer. The choice is reported through the `evm` logger, and can be asked
@@ -92,10 +132,26 @@ compares them against the NumPy reference. There is no need to reimplement any
 pipeline; a backend may override one, and the CUDA backend does, but only for
 speed.
 
-## What is deliberately not implemented
+## Why a PyTorch backend exists as well
 
-**A PyTorch backend.** It would add a very large dependency to reach hardware
-already reached natively.
+It was planned as optional and nearly skipped, on the reasoning that it reaches
+no hardware the native backends miss. That reasoning holds for whole-clip work,
+where it is the slowest of the graphics backends and the hand-written NVIDIA
+code is 2.8 times faster on the same card. It does not hold for everything
+else, and three things it does are not covered by any other backend:
+
+- **It is the only way to stream on NVIDIA hardware**, and the fastest streaming
+  measured in this project at 107.6 frames per second on 720p.
+- **It keeps results as tensors**, so magnification can sit inside a larger
+  tensor computation with no round trip through the host.
+- **It is an independent implementation**: written in a different library from
+  the same definitions, so its agreement with the NumPy reference is evidence
+  about the definitions rather than about one way of expressing them.
+
+PyTorch is never imported unless this backend is asked for. A machine without
+it is unaffected.
+
+## What is deliberately not implemented
 
 **Devices with no standard driver.** Some accelerators are only reachable
 through a vendor-specific compiler. Nothing general-purpose can target those,
