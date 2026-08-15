@@ -234,7 +234,21 @@ def _ordered_entries() -> list[_Entry]:
 
 
 def _probe(entry: _Entry) -> str | None:
-    reason = entry.probe()
+    try:
+        reason = entry.probe()
+    except Exception as exc:
+        # A probe exists to answer "can this run here", and a machine where the
+        # answer is no is exactly where its own imports are most likely to
+        # misbehave. One backend's probe raising must not stop the caller
+        # finding out about the other five. This was not hypothetical: the
+        # Vulkan bindings raise OSError rather than ImportError when no SDK is
+        # present, which crashed list_backends() outright on any Mac without
+        # MoltenVK until 2026-08-11.
+        return (
+            f"probing this backend raised {type(exc).__name__}: {exc}. That is "
+            f"itself a reason it cannot run here, but it is also a fault in the "
+            f"probe, which should return a reason rather than raise."
+        )
     if reason is not None and not isinstance(reason, str):
         # A falsy non-None return would read as "available" and silently hand
         # the caller a backend that cannot run. Refuse it instead.

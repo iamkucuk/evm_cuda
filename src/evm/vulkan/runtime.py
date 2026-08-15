@@ -74,6 +74,20 @@ def unavailable_reason() -> str | None:
             "the Vulkan bindings are not installed; install this project's "
             "'vulkan' extra (pip install evm-magnify[vulkan])"
         )
+    except Exception as exc:
+        # Importing the bindings is not only a Python import: the module looks
+        # for the Vulkan SDK on the way in, and raises OSError rather than
+        # ImportError when it cannot find one. That escaped this function and
+        # propagated out of evm.backend.list_backends(), so merely asking which
+        # backends exist crashed on a machine with the bindings installed and
+        # no SDK — a Mac without MoltenVK, which is the common case. Reporting
+        # it as a reason is the whole job of this function.
+        return (
+            f"the Vulkan bindings are installed but could not be loaded "
+            f"({type(exc).__name__}: {exc}). On macOS this needs MoltenVK: "
+            f"brew install molten-vk vulkan-loader. Elsewhere it comes with "
+            f"the graphics driver."
+        )
     if not any(_SHADERS.glob("*.spv")):
         return (
             f"the compiled shaders are missing from {_SHADERS}; "
