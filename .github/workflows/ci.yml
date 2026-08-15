@@ -325,7 +325,17 @@ jobs:
           sdist=$(ls "$RUNNER_TEMP"/dist/*.tar.gz)
           mkdir -p "$RUNNER_TEMP/unpacked"
           tar xzf "$sdist" -C "$RUNNER_TEMP/unpacked"
-          cd "$RUNNER_TEMP/unpacked"/evm_cuda-*
+          # Found rather than spelled out. This line used to name the
+          # distribution directly, and when the distribution was renamed the
+          # `cd` failed and this job went red for eight commits before anyone
+          # looked. An archive contains exactly one top-level directory, so
+          # locate it and say so loudly if that stops being true.
+          unpacked=$(find "$RUNNER_TEMP/unpacked" -mindepth 1 -maxdepth 1 -type d)
+          if [ "$(printf '%s\n' "$unpacked" | grep -c .)" -ne 1 ]; then
+            echo "::error::expected one directory in the unpacked archive, found: $unpacked"
+            exit 1
+          fi
+          cd "$unpacked"
           echo "cwd: $PWD"
           "$RUNNER_TEMP/venv/bin/python" -c "import evm, inspect; print('evm', evm.__version__, 'from', inspect.getfile(evm))"
           "$RUNNER_TEMP/venv/bin/python" -m pytest tests/ -q -p no:randomly -rs | tee "$RUNNER_TEMP/pytest-sdist.log"
