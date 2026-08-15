@@ -1,0 +1,39 @@
+# Read the Docs build configuration.
+#
+# This is a second home for the same site GitHub Pages already publishes, not a
+# different set of pages: both build `mkdocs.yml` from this repository. What it
+# adds is versions. Read the Docs builds every tag and keeps each one, so a
+# reader on an older release sees that release's documentation instead of the
+# current one — which matters as soon as there is more than one release, and
+# not before. It also builds every pull request, so documentation can be read
+# before it is merged rather than after it is published.
+#
+# Connecting the repository at readthedocs.org is an account action and cannot
+# be done from here. This file is what that connection needs to find.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+
+mkdocs:
+  configuration: mkdocs.yml
+  # The same bar the GitHub Pages workflow applies: a broken internal link or an
+  # unrecognised setting fails the build rather than publishing quietly.
+  fail_on_warning: true
+
+python:
+  install:
+    # The project itself, not only the documentation tools. The API reference is
+    # generated from the code's own docstrings, so the package has to be
+    # importable for those pages to have anything in them.
+    #
+    # This works on a machine with no NVIDIA compiler, which Read the Docs is:
+    # the CMake configuration defines no target when there is no compiler and
+    # the install still produces a working processor-only package. That is the
+    # same path `scripts/dev/verify_install.sh` exercises.
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs

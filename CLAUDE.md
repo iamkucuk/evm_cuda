@@ -100,9 +100,13 @@ scripts/experiments/  One-off measurements whose answers are recorded in
                   docs/internals/. Kept so those claims can be re-checked; nothing
                   runs them. See the README there.
 docs/             A mkdocs-material site, built with `mkdocs build --strict` and
-                  published from the built output. index.md, getting-started/,
-                  concepts/ (incl. backends.md), recipes/, comparison.md,
-                  performance.md, stability.md, img/, video/.
+                  published twice from one configuration: GitHub Pages on every
+                  push to the default branch (`.github/workflows/deploy-pages.yml`),
+                  and Read the Docs on every pull request and tag
+                  (`.readthedocs.yaml`), which is what gives per-version pages.
+                  index.md, getting-started/, concepts/ (incl. backends.md),
+                  recipes/, comparison.md, performance.md, stability.md,
+                  img/, video/.
 docs/internals/   design.md and the two written accounts of the optimisation work,
                   blog_speedup.md and blog_further_optimizations.md. Both carry dated
                   notes saying which later changes superseded them; bodies are a
