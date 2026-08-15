@@ -316,6 +316,24 @@ def _register_builtin_backends() -> None:
         ),
     )
     _backend.register(
+        "torch",
+        # Not how this project reaches any vendor's hardware — the OpenCL,
+        # Vulkan and Apple backends do that without asking for a
+        # machine-learning framework. It earns its place by running wherever
+        # PyTorch is already set up, and by keeping results as tensors so
+        # magnification can sit inside a larger tensor computation. Last in the
+        # preference order before the baseline, so it is never chosen over a
+        # native backend.
+        load=_load_torch,
+        probe=_probe_torch,
+        # Single precision. Apple's GPU has no float64 at all, and the other
+        # devices gain nothing from it here. The frequency filter is a true
+        # transform on every device PyTorch supports.
+        capabilities=Capabilities(
+            dtypes=("float32",), fft=True, streaming=True
+        ),
+    )
+    _backend.register(
         "opencl",
         # Only the primitive operations are written for OpenCL; the four
         # pipelines come from evm.backend.generic, which is the arrangement
@@ -372,6 +390,20 @@ def _load_opencl() -> Any:
     from .backend import generic
     from .opencl.ops import OpenClOps
     return generic.bind(OpenClOps())
+
+
+def _probe_torch() -> str | None:
+    try:
+        from .torch_backend import runtime as _torch_runtime
+    except ImportError as exc:
+        return f"evm.torch_backend could not be imported: {exc!r}"
+    return _torch_runtime.unavailable_reason()
+
+
+def _load_torch() -> Any:
+    from .backend import generic
+    from .torch_backend.ops import TorchOps
+    return generic.bind(TorchOps())
 
 
 _register_builtin_backends()

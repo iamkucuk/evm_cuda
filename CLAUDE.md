@@ -1,10 +1,10 @@
 # evm
 
 Eulerian Video Magnification (MIT SIGGRAPH 2012, Wu et al.), plus the phase-based
-follow-up (SIGGRAPH 2013): a NumPy/SciPy reference baseline and five backends that
+follow-up (SIGGRAPH 2013): a NumPy/SciPy reference baseline and six backends that
 compute the same four pipelines — NVIDIA (hand-written CUDA C++), OpenCL, Apple's
-graphics interface, Vulkan, and the baseline itself. Every backend is validated
-against the baseline, which is the correctness oracle for all of them.
+graphics interface, Vulkan, PyTorch, and the baseline itself. Every backend is
+validated against the baseline, which is the correctness oracle for all of them.
 
 The distribution installs as `evm-magnify` and imports as `evm`. It was called
 `evm-cuda` until 2026-08-11; the rename cost nothing because it had never been
@@ -30,7 +30,7 @@ writing code; if you are doing performance work, read Rule 7 in
 | Numerics | numpy>=1.26, scipy>=1.11 | `pyproject.toml:54-60` |
 | Video I/O | opencv-python>=4.8 (decode), av>=14.0.0 (libx264 encode) | `pyproject.toml:54-60` |
 | NVIDIA kernels | raw CUDA C++ / nvcc + cuFFT — no PyTorch, CuPy or Numba | `src/evm/cuda/kernels/*.cu` |
-| Other backends | OpenCL (pyopencl), Apple (PyObjC), Vulkan (vulkan + MoltenVK on macOS); each an optional extra | `pyproject.toml` extras |
+| Other backends | OpenCL (pyopencl), Apple (PyObjC), Vulkan (vulkan + MoltenVK on macOS), PyTorch (torch); each an optional extra | `pyproject.toml` extras |
 | Bindings | pybind11 (found, else FetchContent v2.13.6) | `src/evm/cuda/CMakeLists.txt:126-136` |
 | Build backend | scikit-build-core, `cmake.source-dir = "src/evm/cuda"` | `pyproject.toml` |
 | Build | CMake >= 3.24 + Ninja, C++17; **CUDA optional** | `src/evm/cuda/CMakeLists.txt:15, 41-62` |
@@ -76,6 +76,8 @@ src/evm/          The installed package. `import evm` re-exports the processor
     DESIGN.md     kernel-by-kernel map, tolerances, precision + layout rationale.
                   Authoritative for the NVIDIA backend.
   opencl/         OpenCL backend: kernels.cl, runtime.py, array.py, ops.py.
+  torch_backend/  PyTorch backend: runtime.py + ops.py, no kernels of its own.
+                  Optional extra; nothing imports torch unless it is asked for.
   metal/          Apple graphics backend: kernels.metal + the same three modules.
   vulkan/         Vulkan backend: shaders/*.comp with committed *.spv beside them
                   (shaders/build.py regenerates, `--check` verifies), + the same three.

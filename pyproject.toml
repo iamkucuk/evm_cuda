@@ -94,6 +94,14 @@ metal = [
 vulkan = [
     "vulkan>=1.3",
 ]
+# PyTorch. Not how this project reaches any vendor's hardware — the OpenCL,
+# Vulkan and Apple backends do that with no framework at all. This is for
+# people who already have PyTorch set up, and for keeping results as tensors so
+# magnification can sit inside a larger tensor computation. Nothing imports it
+# unless backend="torch" is asked for.
+torch = [
+    "torch>=2.0",
+]
 # Building the documentation site. mkdocstrings reads docstrings out of the
 # installed package, so the API reference cannot be built without the project
 # itself installed alongside these.

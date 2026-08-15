@@ -16,6 +16,15 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   graphics processors as well as NVIDIA. On an Apple M2 Max, which previously
   had no acceleration at all, the colour pipeline runs 28 times faster than on
   the processor cores and the motion pipeline 19 times faster.
+- A PyTorch backend, as the optional `torch` extra. It reaches no hardware the
+  other backends miss, and is not how this project supports any vendor — it is
+  for people who already have PyTorch set up, and for keeping results as tensors
+  so magnification can sit inside a larger tensor computation. Both pipelines
+  and the streaming path agree with the NumPy baseline to within one step of the
+  8-bit output. On an Apple M2 Max it runs the colour clip in 653 ms and the
+  motion clip in 2,320 ms, against 7,014 ms and 23,634 ms on the processor —
+  slower than the three graphics backends, which is why it sits last in the
+  selection order. Nothing imports PyTorch unless this backend is asked for.
 - A backend interface and registry. Implementing about a dozen primitive
   operations gives a new device all four pipelines, and the choice of backend
   is always reported and never silently changed.

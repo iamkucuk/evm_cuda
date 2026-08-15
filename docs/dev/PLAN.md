@@ -308,7 +308,7 @@ Correctness risk concentrates here: today `batched_*` takes bare `uintptr_t` wit
 
 **Success criteria:** GPU pyramid round-trip within `TOL["lpyr_roundtrip"]=1e-5`; torch sees identical `data_ptr`; the lifetime regression test (delete DeviceArray, allocate 2 GB, torch tensor still reads original values) passes; full suite green, no tolerance changed.
 
-## Phase 4P — OPTIONAL PyTorch backend (interop convenience + cross-check)
+## Phase 4P — OPTIONAL PyTorch backend — DONE 2026-08-11 (findings: `torch-backend-notes.md`)
 **Status after revision 4: optional and deprioritized — may land any time after Phase 3, including after 1.0, without blocking anything. Not the coverage mechanism for any vendor (Phase 4V is). Complexity: Medium-High. Effort: 8–12 days. Depends on: Phase 3 (the array-in/array-out pipeline cores define the contract it implements). Benefits from Phase 4 (DLPack allows zero-copy handoff between the native CUDA path and torch) but does not require it.**
 
 | # | Step | Files |

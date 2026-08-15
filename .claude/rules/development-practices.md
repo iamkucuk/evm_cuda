@@ -77,6 +77,7 @@ section 3d of that plan, committed here so every session loads them. They are no
   | OpenCL | `src/evm/opencl/kernels.cl` |
   | Apple Metal | `src/evm/metal/kernels.metal` |
   | Vulkan | `src/evm/vulkan/shaders/*.comp` |
+  | PyTorch | `src/evm/torch_backend/ops.py` (tensor operations, no kernels) |
   | Processor (Python) | `src/evm/cpu/pyramids.py`, `src/evm/cpu/filters.py` |
 
 - State which backends the change was carried to and which it does not apply to, with the

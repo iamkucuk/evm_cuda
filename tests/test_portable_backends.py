@@ -29,6 +29,7 @@ from evm.cpu import backend as cpu_backend
 from evm.cpu import magnify as direct
 from evm.metal import runtime as metal_runtime
 from evm.opencl import runtime as cl_runtime
+from evm.torch_backend import runtime as torch_runtime
 from evm.vulkan import runtime as vk_runtime
 
 CPU = cpu_backend.OPS
@@ -58,6 +59,16 @@ def _backends():
             "vulkan",
             vk_runtime,
             lambda: __import__("evm.vulkan.ops", fromlist=["VulkanOps"]).VulkanOps(),
+        ),
+        (
+            # Written in a different library from every other entry here, so
+            # agreement with the NumPy reference is evidence about the
+            # definitions rather than about one way of expressing them.
+            "torch",
+            torch_runtime,
+            lambda: __import__(
+                "evm.torch_backend.ops", fromlist=["TorchOps"]
+            ).TorchOps(),
         ),
     ):
         reason = module.unavailable_reason()

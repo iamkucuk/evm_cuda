@@ -363,9 +363,11 @@ def test_importing_evm_registers_the_built_in_backends():
     # Preference order, not registration order. The hand-written CUDA code
     # first because it is the fastest; then Apple's own interface, then Vulkan,
     # then OpenCL — each of those three reaches hardware the ones before it may
-    # not, and where several work the earlier one is the shorter path. The
-    # NumPy reference last, because it is the slowest and always available.
-    assert names == ["cuda", "metal", "vulkan", "opencl", "cpu"], names
+    # not, and where several work the earlier one is the shorter path. Then
+    # PyTorch, which reaches no hardware the others miss and is only chosen if
+    # nothing above it can run. The NumPy reference last, because it is the
+    # slowest and always available.
+    assert names == ["cuda", "metal", "vulkan", "opencl", "torch", "cpu"], names
     caps = {info.name: info.capabilities for info in backend.list_backends()}
     assert caps["cpu"].dtypes == ("float64",)      # the oracle's working dtype
     assert caps["cuda"].dtypes == ("float32", "float16")
@@ -374,7 +376,13 @@ def test_importing_evm_registers_the_built_in_backends():
     # Streaming is claimed only by the backends that provide the running-average
     # step it needs on the device. Claiming it elsewhere would be something a
     # caller could act on and be wrong about.
-    assert {n for n, c in caps.items() if c.streaming} == {"metal", "vulkan"}
+    assert {n for n, c in caps.items() if c.streaming} == {
+        "metal",
+        "vulkan",
+        # Verified, not assumed: MotionStream through this backend matches
+        # the NumPy baseline to within one step of the 8-bit output.
+        "torch",
+    }
 
 
 def test_the_cpu_backend_is_always_available():
