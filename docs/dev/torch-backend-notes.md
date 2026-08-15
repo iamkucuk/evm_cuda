@@ -94,6 +94,20 @@ has no implementation of the primitive operations, and refuses. So on NVIDIA
 hardware this backend is currently the only way to magnify a live stream, which
 is a concrete reason for it beyond convenience.
 
+**That is not a general ranking, and reading it as one is a mistake worth
+guarding against.** Being fastest at frame-at-a-time work says nothing about
+whole-clip work, where the hand-written backend wins clearly. Same RTX 3090,
+same clip, same entry point, array in and array out, each in its own process:
+
+| Backend | Whole clip, 301 frames | frames/sec |
+|---|---:|---:|
+| **Hand-written NVIDIA (CUDA)** | **239 ms** | **1,261** |
+| PyTorch | 664 ms | 453 |
+
+The hand-written code is 2.8 times faster, which is the expected result and the
+reason this project exists. The two figures answer different questions: how
+quickly can a whole clip be processed, and can a live stream be kept up with.
+
 For batch work it is the slowest of the four graphics backends and roughly ten
 times faster than the processor. That is the expected trade, and the reason the
 plan put it last in the order automatic selection walks: for whole-clip work it

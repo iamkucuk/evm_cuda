@@ -100,6 +100,16 @@ comparison does.
 - **③ + H2D + D2H** is the full standalone "decode → magnify → encode" path,
   when you must materialize a viewable video on the host.
 
+All three are sums of per-stage timings, and none of them is what a caller
+waits for. On an RTX 3090 the motion clip measures 39.1 ms at ①, 143.5 ms at ③,
+and **228.7 ms** as wall-clock time through `evm.magnify()` — the extra 85 ms is
+preparing the input array, the entry point's own checks, and allocating the
+output, none of which a stage timer counts. Quote ① against another
+implementation's kernel time and ③ against another implementation's stage sum;
+comparing a stage sum against somebody's wall clock overstates this project by
+about six times, and comparing across backends here needs wall clock for both,
+because only the NVIDIA backend has per-stage timing.
+
 For motion, the inference speedup (②, ~605x FP16) is within about 2x of the
 compute speedup (①, ~1,200x). The upload is a tax, but the GPU is still doing the
 work. For color, D2H alone is most of ③, so ② is the honest headline for any
