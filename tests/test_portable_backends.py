@@ -24,60 +24,60 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.backend import generic
+from evm.backend import generic, registry
 from evm.cpu import backend as cpu_backend
 from evm.cpu import magnify as direct
-from evm.metal import runtime as metal_runtime
-from evm.opencl import runtime as cl_runtime
-from evm.torch_backend import runtime as torch_runtime
-from evm.vulkan import runtime as vk_runtime
 
 CPU = cpu_backend.OPS
 FPS = 30.0
 
 
+# Two registered backends are not tested here, and both have a reason that is
+# not "we forgot". The processor baseline is what everything else is compared
+# against, so testing it against itself proves nothing. The NVIDIA backend has
+# its own suite in tests/cuda/ with tighter tolerances, because it is
+# hand-written for one vendor rather than portable.
+NOT_TESTED_HERE = {
+    "cpu": "it is the reference these tests compare against",
+    "cuda": "it has its own suite in tests/cuda/ with tighter tolerances",
+}
+
+
+def _ops_for(name: str):
+    """The primitive operations object a backend registers, by name.
+
+    Goes through the registry rather than importing the backend's module
+    directly, so this file needs no knowledge of where any backend lives.
+    """
+    _, bound = registry.select(name)
+    return bound.ops
+
+
 def _backends():
-    """Every portable backend, with why it cannot run if it cannot.
+    """Every registered backend, discovered rather than listed.
+
+    This asks the registry what exists. A backend that registers itself is
+    tested here automatically, with no edit to this file — which is the whole
+    claim the backend interface makes, and it is only true if nothing here
+    hardcodes a list. It was hardcoded until 2026-08-11, and adding the PyTorch
+    backend duly required editing this function, which is how the gap was
+    found.
 
     Building the list at collection time means a machine with no graphics
     hardware still reports one skip per backend per test, naming the reason,
     rather than silently testing nothing.
     """
     entries = []
-    for name, module, factory in (
-        (
-            "opencl",
-            cl_runtime,
-            lambda: __import__("evm.opencl.ops", fromlist=["OpenClOps"]).OpenClOps(),
-        ),
-        (
-            "metal",
-            metal_runtime,
-            lambda: __import__("evm.metal.ops", fromlist=["MetalOps"]).MetalOps(),
-        ),
-        (
-            "vulkan",
-            vk_runtime,
-            lambda: __import__("evm.vulkan.ops", fromlist=["VulkanOps"]).VulkanOps(),
-        ),
-        (
-            # Written in a different library from every other entry here, so
-            # agreement with the NumPy reference is evidence about the
-            # definitions rather than about one way of expressing them.
-            "torch",
-            torch_runtime,
-            lambda: __import__(
-                "evm.torch_backend.ops", fromlist=["TorchOps"]
-            ).TorchOps(),
-        ),
-    ):
-        reason = module.unavailable_reason()
+    for info in registry.list_backends():
+        if info.name in NOT_TESTED_HERE:
+            continue
         entries.append(
             pytest.param(
-                factory,
-                id=name,
+                (lambda n=info.name: _ops_for(n)),
+                id=info.name,
                 marks=pytest.mark.skipif(
-                    reason is not None, reason=f"{name} unavailable: {reason}"
+                    not info.available,
+                    reason=f"{info.name} unavailable: {info.unavailable_reason}",
                 ),
             )
         )
@@ -85,6 +85,43 @@ def _backends():
 
 
 BACKENDS = _backends()
+
+#: The same discovery, as bare names, for tests that need the name rather than
+#: the operations object.
+_TESTED_NAMES = [
+    info.name for info in registry.list_backends() if info.name not in NOT_TESTED_HERE
+]
+
+
+def _info(name: str):
+    """The registry's record for one backend, including why it cannot run."""
+    return next(i for i in registry.list_backends() if i.name == name)
+
+
+def test_every_registered_backend_is_covered_here():
+    """No backend may be registered and then quietly go untested.
+
+    This is the check that keeps the discovery above honest. If someone
+    reintroduces a hardcoded list, or registers a backend and forgets this
+    file, the two sets stop matching and this fails — which is exactly what did
+    not happen when the PyTorch backend was added on 2026-08-11 against a
+    hardcoded list, and had to be noticed by hand.
+
+    The two exclusions are named in NOT_TESTED_HERE with their reasons, so
+    skipping one is a decision recorded in the source rather than an omission.
+    """
+    registered = {i.name for i in registry.list_backends()}
+    covered = set(_TESTED_NAMES) | set(NOT_TESTED_HERE)
+    missing = registered - covered
+    assert not missing, (
+        f"registered but not covered by any suite: {sorted(missing)}. Either it "
+        f"belongs in this file's parameter list, which happens automatically, or "
+        f"it needs an entry in NOT_TESTED_HERE saying which suite does cover it."
+    )
+    assert set(NOT_TESTED_HERE) <= registered, (
+        "NOT_TESTED_HERE names a backend that is no longer registered; remove it"
+    )
+
 
 # Single precision against double precision. Measured on an Apple M2 Max at
 # around 6e-7 for the worst operation (the coarsest pyramid band); this leaves
@@ -145,19 +182,18 @@ def _not_degenerate(a, what: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "module", [cl_runtime, metal_runtime, vk_runtime], ids=["opencl", "metal", "vulkan"]
-)
-def test_unavailable_reason_names_what_is_missing(module):
+@pytest.mark.parametrize("name", _TESTED_NAMES)
+def test_unavailable_reason_names_what_is_missing(name):
     """A backend that cannot run must say what to do about it.
 
     The two ways it can be missing need different fixes — a Python package that
     can be installed, or a driver or piece of hardware that cannot — so the
     message has to distinguish them rather than reporting a bare failure.
     """
-    reason = module.unavailable_reason()
+    info = _info(name)
+    reason = info.unavailable_reason
     if reason is None:
-        assert module.available()
+        assert info.available
     else:
         assert any(
             word in reason
@@ -336,16 +372,13 @@ def test_the_backend_is_selectable_by_name(name):
     assert out.dtype == np.uint8
 
 
-@pytest.mark.parametrize(
-    "name,module",
-    [("opencl", cl_runtime), ("metal", metal_runtime), ("vulkan", vk_runtime)],
-)
-def test_selecting_it_without_a_driver_explains_why(name, module):
+@pytest.mark.parametrize("name", _TESTED_NAMES)
+def test_selecting_it_without_a_driver_explains_why(name):
     """Asking for a backend that cannot run must not fall back silently."""
     import evm
     from evm.backend.registry import BackendUnavailableError
 
-    if module.available():
+    if _info(name).available:
         pytest.skip(f"{name} is available here, so there is no failure to check")
 
     with pytest.raises(BackendUnavailableError, match=name):
