@@ -76,10 +76,35 @@ runs, alongside the other backends measured the same way:
 | **PyTorch** | **653 ms** | **2,320 ms** |
 | Processor (NumPy) | 7,014 ms | 23,634 ms |
 
-So it is the slowest of the four graphics backends and roughly ten times faster
-than the processor. That is the expected trade and the reason the plan put it
-last in the preference order: it reaches no hardware the others miss. What it
-adds is running wherever PyTorch is already set up, keeping results as tensors,
-and being an independent implementation — written in a different library from
-the same definitions, so agreement with the baseline is evidence about the
-definitions rather than about one way of expressing them.
+It is the fastest backend for live, frame-at-a-time work, which is a different
+question from batch throughput. Pushing 720p frames one at a time:
+
+| Machine and backend | frames per second |
+|---|---:|
+| **RTX 3090, PyTorch** | **107.6** |
+| Apple M2 Max, Apple's own interface | 58.8 |
+| Apple M2 Max, PyTorch | 44.6 |
+| Apple M2 Max, Vulkan | 20.5 |
+| Apple M2 Max, processor baseline | 8.1 |
+| RTX 3090, processor baseline | 6.3 |
+| Apple M2 Max, OpenCL | 3.9 |
+
+The hand-written NVIDIA backend does not appear because it cannot stream: it
+has no implementation of the primitive operations, and refuses. So on NVIDIA
+hardware this backend is currently the only way to magnify a live stream, which
+is a concrete reason for it beyond convenience.
+
+For batch work it is the slowest of the four graphics backends and roughly ten
+times faster than the processor. That is the expected trade, and the reason the
+plan put it last in the order automatic selection walks: for whole-clip work it
+reaches no hardware the others miss, so it should never be chosen over a native
+backend that can do the job.
+
+What it adds is four things, and only the last was anticipated when the plan
+called this optional: it is the only way to stream on NVIDIA hardware; it is the
+fastest streaming measured anywhere here; it runs wherever PyTorch is already
+set up, with no driver work; and it keeps results as tensors, so magnification
+can sit inside a larger tensor computation. Being an independent implementation
+is a fifth: written in a different library from the same definitions, so
+agreement with the baseline is evidence about the definitions rather than about
+one way of expressing them.

@@ -475,10 +475,13 @@ Phase 0 → Phase 1 (bottleneck)
   not exist.** Measured 2026-08-11 on an Apple M2 Max, 720p frames pushed one at
   a time through `evm.stream.MotionStream`, magnification only: Apple's
   interface 58.8 fps, PyTorch 44.6 fps, Vulkan 20.5 fps, the processor baseline
-  8.1 fps, OpenCL 3.9 fps. The NVIDIA backend cannot stream at all — it has no
-  implementation of the primitive operations — and now says so in one sentence
-  instead of failing partway through the first frame. `evm-magnify` offers
-  `magnify`, `download` and `bench`; adding `stream` is outstanding.
+  8.1 fps, OpenCL 3.9 fps. **On an RTX 3090 the PyTorch backend reaches 107.6
+  fps**, 3.6 times the target and the fastest streaming measured anywhere here.
+  The hand-written NVIDIA backend cannot stream at all — it has no
+  implementation of the primitive operations — so PyTorch is the only way to
+  stream on NVIDIA hardware today. It now refuses in one sentence instead of
+  failing partway through the first frame. `evm-magnify` offers `magnify`,
+  `download` and `bench`; adding `stream` is outstanding.
 - [ ] `PYTHONPATH` appears nowhere in the repo.
 - [ ] CI green on every commit; GPU suite required on every release.
 - [ ] Docs build `--strict`; every snippet executes in CI; three task recipes.
