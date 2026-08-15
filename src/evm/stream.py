@@ -235,14 +235,37 @@ def _operations_for(name: str, impl: Any) -> Any:
     baseline is registered as its pipeline module, so its primitives are
     fetched separately.
     """
-    if hasattr(impl, "ops"):
-        return impl.ops
+    from .backend.ops import Ops
+
+    # Checking the interface, not the attribute name. `hasattr(impl, "ops")`
+    # alone is not enough: evm.cuda is a package with a submodule called `ops`,
+    # so it passed that test and then failed several calls later with
+    # AttributeError: module 'evm.cuda.ops' has no attribute 'from_numpy'.
+    # A backend that cannot stream should say so here, in one sentence, rather
+    # than partway through the first frame.
+    candidate = getattr(impl, "ops", None)
+    if candidate is not None and isinstance(candidate, Ops):
+        return candidate
     if name == "cpu":
         from .cpu.backend import OPS
 
         return OPS
+    missing = [
+        m
+        for m in ("from_numpy", "bgr_u8_to_ntsc", "build_lpyr", "recon_lpyr")
+        if not callable(getattr(candidate, m, None))
+    ]
     raise NotImplementedError(
-        f"the {name!r} backend does not expose the primitive operations that "
-        f"streaming is built from; use backend='cpu', or a backend registered "
-        f"through evm.backend.generic.bind()"
+        f"the {name!r} backend cannot stream: it does not implement the "
+        f"primitive operations streaming is built from"
+        + (f" (missing {', '.join(missing)})" if missing else "")
+        + ". Backends that can stream here: "
+        + ", ".join(
+            i.name
+            for i in __import__(
+                "evm.backend", fromlist=["registry"]
+            ).registry.list_backends()
+            if i.available and i.name != name
+        )
+        + "."
     )

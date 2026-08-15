@@ -278,8 +278,11 @@ def _register_builtin_backends() -> None:
         load=lambda: importlib.import_module("evm.cpu.magnify"),
         probe=_probe_cpu,
         # The oracle computes in float64 throughout (evm/cpu/magnify.py builds
-        # its NTSC frames as float64); it has no other precision.
-        capabilities=Capabilities(dtypes=("float64",), fft=True, streaming=False),
+        # its NTSC frames as float64); it has no other precision. It streams:
+        # measured at 8.4 frames per second on 720p on an Apple M2 Max, which is
+        # too slow for a live camera but is a working frame-at-a-time pipeline,
+        # and that is what this flag means.
+        capabilities=Capabilities(dtypes=("float64",), fft=True, streaming=True),
     )
     _backend.register(
         "cuda",
@@ -343,9 +346,11 @@ def _register_builtin_backends() -> None:
         # Single precision throughout. The ideal filter is done as a matrix
         # multiply rather than a Fourier transform, so no vendor maths library
         # is needed and the answer is the same; `fft` describes the capability,
-        # not the method.
+        # not the method. It streams, measured at 3.7 frames per second on 720p
+        # on an Apple M2 Max — working, and the slowest of the graphics
+        # backends at it.
         capabilities=Capabilities(
-            dtypes=("float32",), fft=True, streaming=False
+            dtypes=("float32",), fft=True, streaming=True
         ),
     )
 

@@ -376,13 +376,14 @@ def test_importing_evm_registers_the_built_in_backends():
     # Streaming is claimed only by the backends that provide the running-average
     # step it needs on the device. Claiming it elsewhere would be something a
     # caller could act on and be wrong about.
-    assert {n for n, c in caps.items() if c.streaming} == {
-        "metal",
-        "vulkan",
-        # Verified, not assumed: MotionStream through this backend matches
-        # the NumPy baseline to within one step of the 8-bit output.
-        "torch",
-    }
+    # Which backends stream is asserted against behaviour in
+    # tests/test_portable_backends.py, by pushing a frame through each and
+    # comparing the result with the flag. Naming them here as well would be a
+    # second place to update and a place for the two to disagree — which is how
+    # the processor and OpenCL entries stayed wrong. Only the one that cannot
+    # stream is pinned here, because that is a real limitation worth noticing
+    # if it ever changes.
+    assert caps["cuda"].streaming is False
 
 
 def test_the_cpu_backend_is_always_available():

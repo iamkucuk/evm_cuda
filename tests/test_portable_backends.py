@@ -98,6 +98,38 @@ def _info(name: str):
     return next(i for i in registry.list_backends() if i.name == name)
 
 
+@pytest.mark.parametrize("name", _TESTED_NAMES)
+def test_the_streaming_claim_matches_what_the_backend_does(name):
+    """A backend claiming it can stream must actually stream, and vice versa.
+
+    The flag is documented as "can run a causal, frame-at-a-time pipeline", and
+    was wrong for two backends until 2026-08-11: the processor baseline and
+    OpenCL both said no and both worked. Asserting a list of names would have
+    frozen that mistake in place, so this pushes a frame through and sees.
+    """
+    from evm.stream import MotionStream
+
+    info = _info(name)
+    if not info.available:
+        pytest.skip(f"{name} unavailable: {info.unavailable_reason}")
+
+    frame = np.zeros((32, 48, 3), dtype=np.uint8)
+    try:
+        out = MotionStream(32, 48, backend=name).push(frame)
+    except NotImplementedError as exc:
+        assert not info.capabilities.streaming, (
+            f"{name} claims it can stream but refuses: {exc}"
+        )
+        # Refusing is fine; refusing without saying which backends can is not.
+        assert name in str(exc)
+        return
+    assert info.capabilities.streaming, (
+        f"{name} streams a frame successfully but its capabilities say it "
+        f"cannot; the flag is what callers act on"
+    )
+    assert out.shape == frame.shape and out.dtype == np.uint8
+
+
 def test_every_registered_backend_is_covered_here():
     """No backend may be registered and then quietly go untested.
 
