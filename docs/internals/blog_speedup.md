@@ -32,7 +32,10 @@ and the optimization strategies that address them.
 > 27.0 ms in FP16**, against the figures in the tables below. FP16 agreement
 > with FP32 is now RMSE 0.00199 rather than 0.00232. Colour is unaffected by all
 > three and its figures still hold. `README.md` and `cuda/DESIGN.md` carry the
-> current numbers.
+> current numbers, and
+> [Finding the ceiling, and getting to it](blog_bandwidth_limit.md) is the
+> full account of those three changes — why each was made, what was measured,
+> and where the pipeline stands against what the hardware can sustain.
 
 ## The algorithm
 

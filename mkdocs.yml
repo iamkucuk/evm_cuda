@@ -103,6 +103,7 @@ nav:
       - Internals: internals/design.md
       - Speedup write-up: internals/blog_speedup.md
       - Further optimisation write-up: internals/blog_further_optimizations.md
+      - Reaching the bandwidth limit: internals/blog_bandwidth_limit.md
 
 extra:
   social:
