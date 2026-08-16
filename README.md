@@ -138,10 +138,9 @@ capacity, not a measured multi-stream harness.
 
 Standalone motion FP16 peaks around 8 to 9 GB VRAM (measured), so it fits many
 16 GB cards when the process is not holding residual allocations from other
-configs. Per-stage breakdown and multi-GPU numbers (A100 / H100 / P100) live in
-[blog_speedup.md](docs/internals/blog_speedup.md); the mid-pipeline arc (TN IIR, sticky
-scratch, free-list pool, smem downsample) is in
-[blog_further_optimizations.md](docs/internals/blog_further_optimizations.md).
+configs. How this got from a correct-but-slow port to here — three rounds, what each
+measured, and the two decisions a later round reversed — is in
+[how it was made fast](docs/internals/making-it-fast.md).
 
 ### On hardware that is not NVIDIA
 
@@ -218,7 +217,7 @@ output video (magnified)
 The CUDA port implements each stage as one or more kernels, with the entire
 pipeline running device-resident (zero per-frame host-device transfers).
 See [`src/evm/cuda/DESIGN.md`](src/evm/cuda/DESIGN.md) for the kernel-by-kernel mapping and
-[`docs/internals/blog_speedup.md`](docs/internals/blog_speedup.md) for the full optimization story.
+[how it was made fast](docs/internals/making-it-fast.md) for the full optimisation story.
 
 ## Quick start
 

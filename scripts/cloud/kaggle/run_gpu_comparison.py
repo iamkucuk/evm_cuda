@@ -28,7 +28,7 @@ BRANCH = "main"
 REPO_DIR = Path("evm_cuda")
 N_ITER = 7
 
-# CPU baselines used in README / blog_speedup (Python/NumPy).
+# CPU baselines used in README and docs/internals/making-it-fast.md (NumPy).
 CPU_REF_MS = {"color": 11194.0, "motion": 44190.0}
 
 # Match remeasure scripts across hosts.

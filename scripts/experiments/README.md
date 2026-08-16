@@ -1,8 +1,7 @@
 # One-off measurements
 
 These were written to answer a specific question once, and their answers are
-recorded in `docs/internals/blog_speedup.md` and
-`docs/internals/blog_further_optimizations.md`. They are kept so those claims
+recorded in `docs/internals/making-it-fast.md`. They are kept so those claims
 can be re-checked, not because anything runs them.
 
 | Script | The question it answered |
