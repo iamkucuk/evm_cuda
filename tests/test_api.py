@@ -421,6 +421,17 @@ def test_asking_for_cuda_is_answered_honestly(frames, no_video_decode, caplog):
     assert reason and reason in msg
     assert "not built" in msg or "no CUDA device" in msg
 
+    # ...and it must not carry a cause that is false. `from . import _vidmag_cuda`
+    # inside the package's own __init__ makes Python append "most likely due to a
+    # circular import", because the package is mid-import when the name is looked
+    # up. There is no circular import; the extension simply was not compiled, and
+    # that sentence sent readers to debug the wrong thing. The probe uses
+    # importlib.import_module instead, which says "No module named ...".
+    assert "circular import" not in msg, (
+        f"the missing-extension error blames a circular import that does not "
+        f"exist: {msg!r}"
+    )
+
 
 def test_an_unknown_backend_name_lists_the_registered_ones(frames, no_video_decode):
     with pytest.raises(backend.UnknownBackendError) as exc:

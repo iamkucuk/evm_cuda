@@ -20,13 +20,24 @@ CUDA module isn't built (see `tests/cuda/conftest.py`).
 
 from __future__ import annotations
 
+import importlib
+
 try:
-    # The ignore below is for a compiled .so that CMake writes into this
-    # directory. It carries no stubs, so mypy can never resolve it, and the
-    # try/except around this line is precisely the code that handles its
-    # absence — there is no bug here to hide. warn_unused_ignores keeps it
-    # honest: it turns red the day mypy can see the module.
-    from . import _vidmag_cuda  # type: ignore[attr-defined]  # noqa: F401
+    # `from . import _vidmag_cuda` would work, but it produces a false error on
+    # the machines that matter most here — the ones without the extension. The
+    # name is looked up while this package is still executing its own __init__,
+    # so Python appends "most likely due to a circular import" to the
+    # ImportError. There is no circular import; the .so was never compiled, and
+    # that sentence sends readers to debug an imaginary problem.
+    # importlib.import_module says what is actually true:
+    # "No module named 'vidmag.cuda._vidmag_cuda'". A genuinely broken .so — a
+    # missing libcudart, say — still reports the linker's own message, which is
+    # the diagnostic worth keeping. Held by tests/test_api.py.
+    #
+    # It still binds the submodule as an attribute of this package, so the
+    # `from . import _vidmag_cuda` in batched.py, ops.py and the rest is
+    # unaffected; they run after this module finishes.
+    _vidmag_cuda = importlib.import_module(f"{__name__}._vidmag_cuda")
     _have_cuda = True
     import_error: Exception | None = None
 except ImportError as _e:  # pragma: no cover - exercised on Mac dev host
