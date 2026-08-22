@@ -183,53 +183,76 @@ it there, so no result is claimed.
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
+| H100 80GB (Hopper) ◊ | 17.0 / 13.8 ms | 4.2 / 3.7 ms |
 | RTX 3090 24GB (Ampere) | 40.3 / 26.8 ms | 9.8 / 7.6 ms |
 | P100 16GB (Pascal) | does not fit / 82.8 ms | 26.4 / 21.9 ms |
+| T4 16GB (Turing) ‡ | does not fit / 137.2 ms | 43.2 / 38.6 ms |
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
-| H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
-| T4 16GB †‡ | does not fit / 228.8 ms | 48.9 / 39.7 ms |
 
-**The RTX 3090 and P100 rows are on current code, and they are two different
-architectures.** That matters, because three rounds of work on the motion path
-sit between the current code and the rows marked †: the up_conv change (smaller
-tiles, divide-free `reflect1`, even-tap loop), then an FP32 IIR state with the
-band combine folded into the up_conv store, then shared memory taken out of the
-two enlargement kernels.
+**Only the A100 row is still on old code**, and all four other cards are four
+different architectures. That matters, because three rounds of work on the
+motion path sit between the current code and that row: the up_conv change
+(smaller tiles, divide-free `reflect1`, even-tap loop), then an FP32 IIR state
+with the band combine folded into the up_conv store, then shared memory taken
+out of the two enlargement kernels.
 
-Both cards were measured before and after those three rounds, on the same
-hardware and the same harness each time, and both improve:
+Each of the four was measured before and after those rounds, on its own
+hardware, and all four improve:
 
 | | Motion FP16, before | after | Colour FP16, before | after |
 |---|---:|---:|---:|---:|
 | RTX 3090 (Ampere, sm_86) | 60.9 ms | 26.8 ms (2.3x) | 7.6 ms | 7.6 ms |
 | P100 (Pascal, sm_60) | 139.7 ms | 82.8 ms (1.7x) | 21.8 ms | 21.9 ms |
+| H100 (Hopper, sm_90) ◊ | 34.5 ms | 13.8 ms (2.5x) | 4.4 ms | 3.7 ms |
+| T4 (Turing, sm_75) ‡ | 228.8 ms | 137.2 ms (1.7x) | 39.7 ms | 38.6 ms |
 
-Colour is the control, and it is flat on both: colour has no Laplacian pyramid,
-so none of the three changes can touch it. The gain is smaller on the older
-card and it is real there, which is the evidence that this is not an
-Ampere-specific result — so treat the A100, H100 and T4 motion figures as
-pessimistic, though by how much is not known for those cards.
+Colour is the control: it builds no Laplacian pyramid, so none of the three
+changes can reach it, and any movement in the colour column is the measurement
+rather than the code. On the RTX 3090 and the P100 it is flat, which makes those
+two a controlled comparison. On the H100 and the T4 it is not, and each of those
+two rows should be read with its own control in mind:
+
+- **T4, colour moved 12%** in single precision (48.9 to 43.2 ms). Both T4 runs
+  are single runs on Colab's shared hardware, so about 12% is that machine's
+  noise floor. Motion moved 67%, well outside it.
+- **H100, colour moved 15%.** The colour kernels are byte-identical between the
+  two runs — the only change to those three files since is comment text, so this
+  is entirely the environment, and the older run records no date or commit to
+  narrow it further. Motion moved 150%, an order of magnitude outside it.
+
+So on all four cards the direction and rough size hold; the exact factor is
+trustworthy only for the RTX 3090 and the P100. Treat the remaining A100 motion
+figure as pessimistic, by an amount nobody has measured.
 
 † Measured before those three rounds and not re-run since, so the cross-GPU
-ratios in this table mix two versions of the code and will shift once these
-cards are re-run.
+ratios in this table mix two versions of the code and will shift once that card
+is re-run. It could not be re-run on 2026-08-22: the cluster partition holding
+the A100s was down for a reboot and not responding.
 
-‡ One run of `scripts/cloud/colab_benchmark.ipynb` on Colab's shared hardware, with
-no stored JSON. Indicative only: repeated runs on that class of machine moved
-by tens of percent.
+‡ One run of `scripts/cloud/colab_benchmark.ipynb` on Colab's shared hardware,
+median of 5 rather than the 7 used elsewhere. Indicative only: repeated runs on
+that class of machine move by tens of percent, as the colour control above
+shows.
 
-Motion FP32 needs 16.3 GB and does not fit a 16 GB card — the P100 skips it and
-says so rather than failing partway. Motion FP16 peaks at 8.4 GB and runs on
-both 16 GB cards; it used to fail there only because the device pool held on to
+◊ Measured on a shared cluster node holding one of its four GPUs. The kernel
+figures had a GPU to themselves; the transfer figures in `bench_h100.json` share
+that node's PCIe with other jobs and are looser than the rest of that file.
+
+Motion FP32 needs 16.3 GB and does not fit a 16 GB card — the P100 and the T4
+both skip it and say so rather than failing partway. Motion FP16 peaks at 8.4 GB
+and runs on both; it used to fail there only because the device pool held on to
 every earlier config's memory.
 
-Raw JSON in `benches/`. The two current ones record the date and commit they
+Raw JSON in `benches/`. The four current ones record the date and commit they
 were taken at: `bench_rtx3090.json` (2026-08-18, by
-`scripts/dev/record_gpu_bench.py`) and `bench_p100.json` (2026-08-22, by
+`scripts/dev/record_gpu_bench.py`), `bench_h100.json` (2026-08-22, by the same
+script on a private HPC cluster node), `bench_p100.json` (2026-08-22, by
 `scripts/cloud/kaggle/run_gpu_comparison.py`, with its console log in
-`benches/kaggle_runs/`). `bench_a100.json` and `bench_h100.json` are the
-pre-change measurement and record neither, which is why the marker on those two
-rows says only that they are older.
+`benches/kaggle_runs/`), and `bench_t4.json` (2026-08-22, transcribed by hand
+from the Colab notebook's printed output, since that notebook writes no JSON of
+its own). `bench_a100.json` is the pre-change measurement and records neither a
+date nor a commit, which is why the marker on that row says only that it is
+older.
 
 ### Accuracy
 

@@ -119,10 +119,14 @@ Accuracy vs CUDA FP32 (baby): RMSE **0.00140**, max **2** LSB (re-measured 2026-
 The three timing rows above predate three later rounds of work on the motion path — the
 up_conv retune, then the FP32 IIR state with the band combine folded into the up_conv
 store, then shared memory taken out of the two enlargement kernels. They are kept as the
-record of that measurement. Current figures, both re-measured on the branch and stored
-with the commit they were taken at: RTX 3090 **40.3 / 26.8 ms**
-(`benches/bench_rtx3090.json`, 2026-08-18) and P100 **does not fit / 82.8 ms**
-(`benches/bench_p100.json`, 2026-08-22). The A100 and H100 have not been re-run.
+record of that measurement. Current figures, all re-measured on the branch and stored
+with the commit they were taken at: H100 **17.0 / 13.8 ms**
+(`benches/bench_h100.json`, 2026-08-22), RTX 3090 **40.3 / 26.8 ms**
+(`benches/bench_rtx3090.json`, 2026-08-18), P100 **does not fit / 82.8 ms**
+(`benches/bench_p100.json`, 2026-08-22) and T4 **does not fit / 137.2 ms**
+(`benches/bench_t4.json`, 2026-08-22, one run on shared cloud hardware — see that
+file's `method`). Only the A100 has not been re-run; the cluster partition holding
+those cards was down on 2026-08-22.
 
 **Color FP16:** NTSC + planar blur scratch are `__half`. Final Gaussian gdown
 converts to FP32 for cuFFT; `filt` stays FP32. First blur level reads the
@@ -146,6 +150,23 @@ it builds no Laplacian pyramid, so none of the three motion-path changes reaches
 it, which is what makes the pre- and post-change rows in this table comparable.
 Motion FP16 on the same run is **82.8 ms**, down from 139.7 ms; motion FP32 needs
 16.3 GB and still does not fit a 16 GB card, and the harness reports the skip.
+
+A Tesla T4 (Turing, sm_75) was measured the same day and is not in the table
+above, having never been measured with this harness: color **43.2 / 38.6 ms**,
+ratio **0.89×**, motion FP16 **137.2 ms**, motion FP32 skipped for want of
+memory. That run is one run on Colab's shared hardware with a median of 5 rather
+than 7, so it is indicative — `benches/bench_t4.json` carries the caveat and the
+per-stage spread that shows it.
+
+The H100 was re-measured the same day: color **4.2 / 3.7 ms**, ratio **0.89×**,
+against **4.9 / 4.4 ms** in the row above. Unlike the P100, colour did not hold
+still here — it is 15% faster. The three colour kernel sources are byte-identical
+between the two runs (the only change to them since is comment text), so that 15%
+is the machine and the toolkit, not the code, and the older run stores no date or
+commit to narrow it down. Motion on the same run is **17.0 / 13.8 ms**, against
+35.8 / 34.5 ms: a factor of 2.1 and 2.5, far outside that 15%. Measured on a
+shared cluster node holding one of its four GPUs, so the transfer figures in that
+file are looser than its kernel figures.
 
 The device pool holds released blocks until process exit and reuses one only on
 an exact byte-size match, so several differently sized configs in one process

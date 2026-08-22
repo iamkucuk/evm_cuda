@@ -144,8 +144,13 @@ docs/internals/   design.md and the two written accounts of the optimisation wor
 docs/dev/         PLAN.md — the library-restructure plan. packaging-notes.md — dated
                   findings from executing it; a historical record, not current
                   instructions. Also gpu-runner.md and release-checklist.md.
-benches/          Stored benchmark JSON per GPU (rtx3090/a100/h100/p100) + baseline test
-                  runs + kaggle_runs/ console logs.
+benches/          Stored benchmark JSON per GPU (rtx3090/h100/p100/t4/a100) + baseline
+                  test runs. All but a100 were re-measured on 2026-08-22 and carry the
+                  date and commit they were taken at; a100 carries neither, which is
+                  why nobody can say what code it describes. kaggle_runs/ (P100) and
+                  holds the P100 console log. The H100 was measured on a private
+                  cluster; its scripts are deliberately not in the repository, so that
+                  file's `method` field is the whole record of how it was run.
 data/             Sample clips, gitignored except .gitkeep. `make download` fills it.
 output/           Scratch renders, gitignored.
 ```

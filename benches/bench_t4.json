@@ -1,0 +1,94 @@
+{
+  "gpu": "Tesla T4",
+  "arch": "7.5",
+  "vram": "15360 MiB",
+  "free_vram_at_run": "15.6 GB",
+  "date": "2026-08-22",
+  "branch": "library-restructure",
+  "commit": "2d9b4c67ea7ab48e572e0509962f4b609bb90dbb",
+  "n_iter": 5,
+  "method": "One run of scripts/cloud/colab_benchmark.ipynb on a Colab T4; 1 warmup + median of 5; device synchronised after every stage. Transcribed by hand from the notebook's printed output, because that notebook writes no JSON of its own — the per-stage min and max below are the notebook's, not derived. Colab hands out shared machines: the previous run of this same notebook, on 2026-08-02, put the colour pipeline at 48.9 and 39.7 ms, and the colour pipeline cannot have changed between the two, so roughly 12 percent of apparent movement here is the machine, not the code. Treat every figure in this file as indicative.",
+  "cpu_ref_ms": null,
+  "cpu_ref_note": "This notebook measures no processor baseline, so no ratio can be computed from this file.",
+  "params": {
+    "color": {
+      "alpha": 50.0,
+      "level": 4,
+      "fl": 0.8333333333333334,
+      "fh": 1.0,
+      "chrom_attenuation": 1.0,
+      "sampling_rate": 30.0
+    },
+    "motion": {
+      "alpha": 10.0,
+      "lambda_c": 16.0,
+      "r1": 0.4,
+      "r2": 0.05,
+      "chrom_attenuation": 0.1
+    }
+  },
+  "results": [
+    {
+      "pipeline": "color",
+      "precision": "fp32",
+      "compute_ms": 43.2,
+      "transfer_ms": 199.8,
+      "total_ms": 243.0,
+      "gpu": "Tesla T4",
+      "notes": "",
+      "stages": [
+        {"name": "0) H2D: clip", "median_ms": 90.4, "min_ms": 82.6, "max_ms": 109.4},
+        {"name": "1) color_cvt", "median_ms": 7.9, "min_ms": 7.9, "max_ms": 8.0},
+        {"name": "2) blur_dn", "median_ms": 25.8, "min_ms": 22.3, "max_ms": 36.2},
+        {"name": "2b) bandpass (device-resident)", "median_ms": 2.2, "min_ms": 1.8, "max_ms": 8.6},
+        {"name": "4b) render", "median_ms": 7.3, "min_ms": 7.0, "max_ms": 8.5},
+        {"name": "4c) D2H: output", "median_ms": 109.5, "min_ms": 101.4, "max_ms": 228.8}
+      ]
+    },
+    {
+      "pipeline": "color",
+      "precision": "fp16",
+      "compute_ms": 38.6,
+      "transfer_ms": 193.6,
+      "total_ms": 232.2,
+      "gpu": "Tesla T4",
+      "notes": "",
+      "stages": [
+        {"name": "0) H2D: clip", "median_ms": 90.5, "min_ms": 89.4, "max_ms": 91.4},
+        {"name": "1) color_cvt", "median_ms": 6.5, "min_ms": 5.8, "max_ms": 7.3},
+        {"name": "2) blur_dn", "median_ms": 22.6, "min_ms": 19.3, "max_ms": 25.4},
+        {"name": "2b) bandpass (device-resident)", "median_ms": 2.6, "min_ms": 2.1, "max_ms": 3.0},
+        {"name": "4b) render", "median_ms": 6.9, "min_ms": 5.5, "max_ms": 7.9},
+        {"name": "4c) D2H: output", "median_ms": 103.1, "min_ms": 101.0, "max_ms": 110.9}
+      ]
+    },
+    {
+      "pipeline": "motion",
+      "precision": "fp32",
+      "compute_ms": 0,
+      "transfer_ms": 0,
+      "total_ms": 0.0,
+      "gpu": "Tesla T4",
+      "notes": "skipped (out of memory)",
+      "stages": []
+    },
+    {
+      "pipeline": "motion",
+      "precision": "fp16",
+      "compute_ms": 137.2,
+      "transfer_ms": 363.5,
+      "total_ms": 500.7,
+      "gpu": "Tesla T4",
+      "notes": "",
+      "stages": [
+        {"name": "0) H2D: clip", "median_ms": 195.1, "min_ms": 193.9, "max_ms": 196.0},
+        {"name": "A) NTSC", "median_ms": 12.1, "min_ms": 8.9, "max_ms": 12.1},
+        {"name": "B) lpyr_build", "median_ms": 66.9, "min_ms": 60.9, "max_ms": 79.7},
+        {"name": "C) IIR", "median_ms": 13.0, "min_ms": 12.9, "max_ms": 13.0},
+        {"name": "D1) recon", "median_ms": 33.6, "min_ms": 32.7, "max_ms": 34.9},
+        {"name": "D2) render", "median_ms": 11.5, "min_ms": 11.5, "max_ms": 11.5},
+        {"name": "D2H) output", "median_ms": 168.5, "min_ms": 166.2, "max_ms": 172.6}
+      ]
+    }
+  ]
+}

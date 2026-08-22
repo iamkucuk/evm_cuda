@@ -137,37 +137,62 @@ times slower for no reason other than the measurement setup.
 
 | Card | Motion, kernels, single / half precision |
 |---|---:|
+| H100 80GB (Hopper) ◊ | 17.0 / 13.8 ms |
 | RTX 3090 (Ampere) | 40.3 / 26.8 ms |
 | P100 16GB (Pascal) | does not fit / 82.8 ms |
+| T4 16GB (Turing) ‡ | does not fit / 137.2 ms |
 | A100 80GB † | 54.4 / 48.2 ms |
-| H100 80GB † | 35.8 / 34.5 ms |
 
 † Measured before the three motion-path changes described above, and not
-re-run, so this table mixes two versions of the code.
+re-run, so this table mixes two versions of the code. It could not be re-run on
+2026-08-22: the cluster partition holding the A100s was down for a reboot.
 
-The other two rows are current, and they are two different architectures — which
-is what tells you the three changes are not an Ampere trick. Each card was
+The other four rows are current, and they are four different architectures —
+which is what tells you the three changes are not an Ampere trick. Each card was
 measured before and after, on its own hardware:
 
 | | Motion, half precision, before | after | Colour, half precision, before | after |
 |---|---:|---:|---:|---:|
 | RTX 3090 (Ampere, sm_86) | 60.9 ms | 26.8 ms (2.3x) | 7.6 ms | 7.6 ms |
 | P100 (Pascal, sm_60) | 139.7 ms | 82.8 ms (1.7x) | 21.8 ms | 21.9 ms |
+| H100 (Hopper, sm_90) ◊ | 34.5 ms | 13.8 ms (2.5x) | 4.4 ms | 3.7 ms |
+| T4 (Turing, sm_75) ‡ | 228.8 ms | 137.2 ms (1.7x) | 39.7 ms | 38.6 ms |
 
-Colour is the control and is flat on both, as it must be: colour builds no
-Laplacian pyramid, so none of the three changes reaches it. The older card gains
-less and does gain, so the A100 and H100 rows are pessimistic — by an unknown
-amount, not by the RTX 3090's factor.
+Colour is the control: it builds no Laplacian pyramid, so none of the three
+changes reaches it, and movement in the colour column is the measurement rather
+than the code. It is flat on the RTX 3090 and the P100, so those two are
+controlled comparisons. It is not flat on the other two, and each says by how
+much its own machine moves:
+
+‡ Both T4 runs are single runs of `scripts/cloud/colab_benchmark.ipynb` on
+Colab's shared hardware, median of 5 rather than the 7 used elsewhere. Between
+them colour moved 2.8% in half precision and 12% in single precision, and colour
+cannot have changed — so roughly 12% is that machine's noise floor. Motion moved
+67%, well outside it.
+
+◊ On the H100 colour moved 15%. The colour kernels are byte-identical between
+the two runs: the only change to those three source files in between is comment
+text. So that 15% is the environment, and the older run records neither a date
+nor a commit to narrow it further. Motion moved 150%, an order of magnitude
+outside it. The run also held one of four GPUs on a shared cluster node, which
+leaves its transfer figures looser than its kernel figures.
+
+The direction and rough size hold on all four cards. The exact factor is
+trustworthy only for the RTX 3090 and the P100. The remaining A100 row is
+pessimistic by an amount nobody has measured.
 
 Motion in single precision needs 16.3 GB and does not fit a 16 GB card; in half
-precision it peaks at 8.4 GB and does. The P100 run reports the skip rather than
-failing partway.
+precision it peaks at 8.4 GB and does. The P100 and T4 runs report the skip
+rather than failing partway.
 
-The RTX 3090 figures come from `benches/bench_rtx3090.json` (2026-08-18,
-`scripts/dev/record_gpu_bench.py`) and the P100 figures from
-`benches/bench_p100.json` (2026-08-22, `scripts/cloud/kaggle/run_gpu_comparison.py`,
-with its console log in `benches/kaggle_runs/`). Both files record the commit
-they were taken at.
+Sources, each recording the commit it was taken at:
+`benches/bench_rtx3090.json` (2026-08-18, `scripts/dev/record_gpu_bench.py`),
+`benches/bench_h100.json` (2026-08-22, the same script on a private HPC
+cluster node),
+`benches/bench_p100.json` (2026-08-22,
+`scripts/cloud/kaggle/run_gpu_comparison.py`, console log in
+`benches/kaggle_runs/`), and `benches/bench_t4.json` (2026-08-22, transcribed
+from the Colab notebook's printed output, which writes no JSON of its own).
 
 ## Reading these numbers honestly
 

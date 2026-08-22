@@ -279,14 +279,30 @@ here are deliberately not restated from it: the value of a before-and-after pair
 is that both halves were measured on the same machine in the same session, and
 swapping one half for a number from a different day would destroy that.*
 
-*Added 2026-08-22: this held on a second architecture. Round 3 was designed
+*Added 2026-08-22: this held on three further architectures. Round 3 was designed
 against an RTX 3090, and one card cannot tell you whether a result is a property
-of the algorithm or of Ampere. A Tesla P100 (Pascal, sm_60) had been measured on
-the same harness before Round 3 and was re-run on it after: motion in half
-precision went from 139.7 ms to 82.8 ms, 1.7x, against 2.25x here. Colour went
-26.3 → 26.4 ms and 21.8 → 21.9 ms, unchanged, the same control as above. Less
-gain on the older card and still a real one — the two runs are
-`benches/bench_p100.json` and its predecessor in that file's history.*
+of the algorithm or of Ampere. Three cards that had been measured before Round 3
+were re-run on it after, each on its own hardware:*
+
+| | Motion, half precision, before | after | | Colour control |
+|---|---:|---:|---:|---|
+| Tesla P100 (Pascal, sm_60) | 139.7 ms | 82.8 ms | 1.7x | flat |
+| Tesla T4 (Turing, sm_75) | 228.8 ms | 137.2 ms | 1.7x | moved 12% |
+| H100 80GB (Hopper, sm_90) | 34.5 ms | 13.8 ms | 2.5x | moved 15% |
+
+*against 2.25x here. Colour is the control in all three, and only the P100 holds
+it still (26.3 → 26.4 ms and 21.8 → 21.9 ms), which makes that pair as controlled
+as the one above. The T4 pair is two single runs on Colab's shared machines, so
+its 12% is the noise floor there. The H100 pair is stranger: its colour kernels
+are byte-identical between the two runs, the only change to those files being
+comment text, so the 15% is the machine and the toolkit — and the older H100 run
+stores no date or commit, so it cannot be narrowed further. In every case the
+motion change is far outside the card's own control movement, so the direction
+holds on all three while the exact factor holds only on the P100. The current
+runs are `benches/bench_p100.json`, `benches/bench_t4.json` and
+`benches/bench_h100.json`; the P100's and H100's earlier runs are in those
+files' own history, and the T4's was never stored as JSON — it is in the README
+as of commit e9c1ccf, 2026-08-02.*
 
 Pyramid build is the one row still short of the others at 74%, and the number
 probably understates it: the shrinking kernel inside it stages overlapping
