@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.cpu.pyramids import (
+from vidmag.cpu.pyramids import (
     blur_dn,
     blur_dn_clr,
     build_lpyr,

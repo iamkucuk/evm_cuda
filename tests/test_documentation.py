@@ -33,8 +33,8 @@ UNRUNNABLE = {
     "clip.mp4": "reads a clip the reader supplies",
     # Needs hardware or a package that may not be present.
     "import torch": "PyTorch is not a dependency of this project",
-    "from evm.cuda import ops": "needs the compiled CUDA extension",
-    "from evm.cuda.array import": "needs the compiled CUDA extension",
+    "from vidmag.cuda import ops": "needs the compiled CUDA extension",
+    "from vidmag.cuda.array import": "needs the compiled CUDA extension",
     # Illustrative rather than executable.
     "my_operations": "a placeholder for the reader's own code",
 }

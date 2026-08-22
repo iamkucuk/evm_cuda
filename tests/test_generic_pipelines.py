@@ -1,7 +1,7 @@
 """The pipelines assembled from primitives must equal the direct ones.
 
-:mod:`evm.backend.generic` writes the four magnification pipelines once, in
-terms of the operations any backend provides. :mod:`evm.cpu.magnify` writes the
+:mod:`vidmag.backend.generic` writes the four magnification pipelines once, in
+terms of the operations any backend provides. :mod:`vidmag.cpu.magnify` writes the
 same four directly in NumPy, and is the version checked against the reference
 implementation from the original paper.
 
@@ -18,9 +18,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import evm.backend.generic as generic
-import evm.cpu.backend as cpu_backend
-from evm.cpu import magnify as direct
+import vidmag.backend.generic as generic
+import vidmag.cpu.backend as cpu_backend
+from vidmag.cpu import magnify as direct
 
 OPS = cpu_backend.OPS
 FPS = 30.0

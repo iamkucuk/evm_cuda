@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "Eulerian Video Magnification, on processors and any graphics hardware"
+title: "vidmag: Eulerian Video Magnification in hand-written CUDA, with five further backends"
 message: >-
   If you use this software in work you publish, please cite both this
   implementation and the original method it implements.
@@ -12,11 +12,12 @@ url: "https://iamkucuk.github.io/eulerian-video-magnification-cuda/"
 abstract: >-
   An implementation of Eulerian Video Magnification that amplifies colour and
   motion changes in video too small to see, together with the phase-based
-  follow-up method. Includes a NumPy implementation checked against the original
-  authors' published output, a hand-written CUDA version for NVIDIA hardware,
-  and three portable versions — OpenCL, Apple's Metal, and Vulkan — that reach
-  Apple, AMD and Intel hardware and any future device with a standard driver.
-  Every version is compared against the NumPy reference by an automated test
+  follow-up method. The primary implementation is hand-written CUDA C++ for
+  NVIDIA hardware, using no tensor framework. Four further implementations —
+  OpenCL, Apple's Metal, Vulkan, and PyTorch — reach Apple, AMD and Intel
+  hardware and any future device with a standard driver, and a NumPy version
+  checked against the original authors' published output serves as the
+  correctness reference all of them are compared against by an automated test
   suite.
 keywords:
   - eulerian video magnification

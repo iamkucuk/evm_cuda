@@ -21,8 +21,8 @@ import pytest
 from conftest import have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda import _evm_cuda
-    from evm.cuda.array import DeviceArray
+    from vidmag.cuda import _vidmag_cuda
+    from vidmag.cuda.array import DeviceArray
 
 
 # ---------------------------------------------------------------------------
@@ -151,14 +151,14 @@ def test_pool_still_reuses_blocks_once_nothing_references_them():
     the free list, memory use would grow without bound. Dropping every
     reference must put the block back.
     """
-    _evm_cuda.free_device_pool()
-    before_free, _ = _evm_cuda.gpu_mem_info()
+    _vidmag_cuda.free_device_pool()
+    before_free, _ = _vidmag_cuda.gpu_mem_info()
 
     for _ in range(50):
         a = DeviceArray.from_numpy(np.zeros(65536, dtype=np.float32))
         del a
 
-    after_free, _ = _evm_cuda.gpu_mem_info()
+    after_free, _ = _vidmag_cuda.gpu_mem_info()
     # 50 sequential 256 KiB allocations must not consume 50 blocks' worth: the
     # pool should hand the same block back each time.
     assert before_free - after_free < 50 * 65536 * 4, "pool stopped reusing blocks"

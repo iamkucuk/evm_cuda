@@ -1,4 +1,4 @@
-"""Tests for the ``evm.magnify`` facade (plan step 3.3) and the built-in
+"""Tests for the ``vidmag.magnify`` facade (plan step 3.3) and the built-in
 backend registrations (step 3.2).
 
 What is pinned down here:
@@ -12,7 +12,7 @@ What is pinned down here:
   are asserted, including the byte-for-byte equality that proves ``drop_last=10``
   is the *only* difference between the two routes — for every preset, and for a
   clip handed in as a path *and* as the array that same file decodes to.
-* **every preset actually magnifies.** Each row of ``evm.presets.PRESETS`` is
+* **every preset actually magnifies.** Each row of ``vidmag.presets.PRESETS`` is
   run end to end at a frame rate where its band contains signal, and must move
   the picture. A preset that quietly does nothing would otherwise ship looking
   like a feature.
@@ -21,7 +21,7 @@ What is pinned down here:
   rather than quietly computing in fp32. The CPU/GPU cliff is ~700x, so neither
   may ever happen by accident.
 * **the choice is discoverable.** The selected backend is logged, and
-  ``evm.backend.select()`` answers the same question before the run.
+  ``vidmag.backend.select()`` answers the same question before the run.
 """
 
 from __future__ import annotations
@@ -31,10 +31,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import evm
-from evm import backend
-from evm.cpu import magnify as cpu_magnify
-from evm.presets import PRESETS, Preset
+import vidmag
+from vidmag import backend
+from vidmag.cpu import magnify as cpu_magnify
+from vidmag.presets import PRESETS, Preset
 
 from .test_golden import load_input, write_lossless_video
 
@@ -107,7 +107,7 @@ def in_band_fps(preset: Preset, frames: np.ndarray) -> float | None:
 
 
 def test_pulse_preset_on_an_array_touches_no_files(frames, no_video_decode):
-    out = evm.magnify(frames, preset="pulse", fps=30.0, **PULSE_OVERRIDES)
+    out = vidmag.magnify(frames, preset="pulse", fps=30.0, **PULSE_OVERRIDES)
     assert out.shape == frames.shape
     assert out.dtype == np.uint8
     assert not np.array_equal(out, frames), "magnification did nothing"
@@ -115,7 +115,7 @@ def test_pulse_preset_on_an_array_touches_no_files(frames, no_video_decode):
 
 def test_motion_preset_on_an_array_needs_no_fps(frames, no_video_decode):
     """The r1/r2 IIR band has no sampling rate, so the facade must not demand one."""
-    out = evm.magnify(frames, preset="motion")
+    out = vidmag.magnify(frames, preset="motion")
     assert out.shape == frames.shape and out.dtype == np.uint8
     assert not np.array_equal(out, frames)
 
@@ -130,20 +130,20 @@ def test_the_facade_calls_the_same_core_with_the_same_parameters(frames):
     direct = cpu_magnify.color_gdown_ideal_core(
         frames, 30.0, chrom_attenuation=1.0, **PULSE_OVERRIDES
     )
-    viafacade = evm.magnify(
+    viafacade = vidmag.magnify(
         frames, preset="pulse", backend="cpu", fps=30.0, **PULSE_OVERRIDES
     )
     assert np.array_equal(direct, viafacade)
 
 
 def test_an_iterable_of_frames_is_accepted(frames, no_video_decode):
-    out = evm.magnify(list(frames), preset="motion")
-    assert np.array_equal(out, evm.magnify(frames, preset="motion"))
+    out = vidmag.magnify(list(frames), preset="motion")
+    assert np.array_equal(out, vidmag.magnify(frames, preset="motion"))
 
 
 def test_overrides_beat_the_preset(frames, no_video_decode):
-    weak = evm.magnify(frames, preset="motion", alpha=1.0)
-    strong = evm.magnify(frames, preset="motion", alpha=40.0)
+    weak = vidmag.magnify(frames, preset="motion", alpha=1.0)
+    strong = vidmag.magnify(frames, preset="motion", alpha=40.0)
     ref = frames.astype(np.int16)
     assert (np.abs(strong.astype(np.int16) - ref).mean()
             > np.abs(weak.astype(np.int16) - ref).mean())
@@ -151,7 +151,7 @@ def test_overrides_beat_the_preset(frames, no_video_decode):
 
 def test_an_unknown_override_names_itself(frames, no_video_decode):
     with pytest.raises(TypeError, match="lambda_c"):
-        evm.magnify(frames, preset="pulse", fps=30.0, lambda_c=16.0)
+        vidmag.magnify(frames, preset="pulse", fps=30.0, lambda_c=16.0)
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ def test_every_preset_runs_and_moves_the_picture(preset_name, retained, no_video
     # this test is that each preset's numbers do something, not which hardware
     # ran them. Automatic selection would make it a different test on every
     # machine.
-    out = evm.magnify(retained, preset=preset_name, backend="cpu",
+    out = vidmag.magnify(retained, preset=preset_name, backend="cpu",
                       fps=in_band_fps(spec, retained))
 
     assert out.shape == retained.shape and out.dtype == np.uint8
@@ -206,11 +206,11 @@ def source_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def test_array_input_keeps_every_frame_by_default(frames, no_video_decode):
-    assert len(evm.magnify(frames, preset="motion")) == len(frames)
+    assert len(vidmag.magnify(frames, preset="motion")) == len(frames)
 
 
 def test_path_input_keeps_every_frame_by_default(source_video, frames):
-    assert len(evm.magnify(str(source_video), preset="motion")) == len(frames)
+    assert len(vidmag.magnify(str(source_video), preset="motion")) == len(frames)
 
 
 @pytest.mark.parametrize("form", ["path", "array"])
@@ -255,10 +255,10 @@ def test_drop_last_10_reproduces_the_path_function_byte_for_byte(
     if rate is not None:
         params["sampling_rate"] = rate
 
-    legacy = getattr(evm, f"magnify_{spec.pipeline}")(
+    legacy = getattr(vidmag, f"magnify_{spec.pipeline}")(
         str(source_video), str(tmp_path / f"{preset_name}.mp4"), **params
     )
-    viafacade = evm.magnify(
+    viafacade = vidmag.magnify(
         str(source_video) if form == "path" else clip,
         preset=preset_name,
         backend="cpu",
@@ -285,13 +285,13 @@ def frames_of(path: Path) -> np.ndarray:
 
 
 def test_drop_last_applies_to_arrays_too(frames, no_video_decode):
-    out = evm.magnify(frames, preset="motion", drop_last=10)
+    out = vidmag.magnify(frames, preset="motion", drop_last=10)
     assert len(out) == len(frames) - 10
 
 
 def test_a_negative_drop_last_is_refused(frames, no_video_decode):
     with pytest.raises(ValueError, match="drop_last"):
-        evm.magnify(frames, preset="motion", drop_last=-1)
+        vidmag.magnify(frames, preset="motion", drop_last=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -301,14 +301,14 @@ def test_a_negative_drop_last_is_refused(frames, no_video_decode):
 
 def test_out_writes_a_video_and_still_returns_the_frames(frames, tmp_path):
     dest = tmp_path / "written.mp4"
-    out = evm.magnify(frames, preset="motion", fps=30.0, out=dest)
+    out = vidmag.magnify(frames, preset="motion", fps=30.0, out=dest)
     assert dest.exists() and dest.stat().st_size > 0
     assert out.shape == frames.shape and out.dtype == np.uint8
 
 
 def test_writing_without_a_frame_rate_is_refused(frames, tmp_path, no_video_decode):
     with pytest.raises(ValueError, match="fps"):
-        evm.magnify(frames, preset="motion", out=tmp_path / "nope.mp4")
+        vidmag.magnify(frames, preset="motion", out=tmp_path / "nope.mp4")
 
 
 # ---------------------------------------------------------------------------
@@ -318,22 +318,22 @@ def test_writing_without_a_frame_rate_is_refused(frames, tmp_path, no_video_deco
 
 def test_a_missing_preset_lists_the_available_ones(frames, no_video_decode):
     with pytest.raises(ValueError) as exc:
-        evm.magnify(frames)
+        vidmag.magnify(frames)
     assert "pulse" in str(exc.value) and "motion" in str(exc.value)
 
 
 def test_an_unknown_preset_lists_the_available_ones(frames, no_video_decode):
     with pytest.raises(KeyError, match="pulse"):
-        evm.magnify(frames, preset="heartbeat")
+        vidmag.magnify(frames, preset="heartbeat")
 
 
 def test_fps_is_required_when_the_band_is_in_hz(frames, no_video_decode):
     with pytest.raises(ValueError, match="fps="):
-        evm.magnify(frames, preset="pulse", **PULSE_OVERRIDES)
+        vidmag.magnify(frames, preset="pulse", **PULSE_OVERRIDES)
 
 
 def test_pinning_the_sampling_rate_removes_the_need_for_fps(frames, no_video_decode):
-    out = evm.magnify(
+    out = vidmag.magnify(
         frames, preset="pulse", sampling_rate=30.0, **PULSE_OVERRIDES
     )
     assert out.shape == frames.shape
@@ -343,14 +343,14 @@ def test_fp16_on_a_backend_without_it_raises_rather_than_computing_fp32(
     frames, no_video_decode
 ):
     with pytest.raises(ValueError) as exc:
-        evm.magnify(frames, preset="motion", backend="cpu", precision="fp16")
+        vidmag.magnify(frames, preset="motion", backend="cpu", precision="fp16")
     msg = str(exc.value)
     assert "cpu" in msg and "fp16" in msg and "motion_lpyr_iir" in msg
 
 
 def test_an_unknown_precision_is_refused(frames, no_video_decode):
     with pytest.raises(ValueError, match="precision"):
-        evm.magnify(frames, preset="motion", precision="bf16")
+        vidmag.magnify(frames, preset="motion", precision="bf16")
 
 
 # ---------------------------------------------------------------------------
@@ -398,20 +398,20 @@ def test_asking_for_cuda_is_answered_honestly(frames, no_video_decode, caplog):
     with the extension proves the GPU path end to end, a machine without it
     proves the refusal.
     """
-    from evm.cuda import have_cuda
+    from vidmag.cuda import have_cuda
 
     if have_cuda:
-        with caplog.at_level("INFO", logger="evm"):
-            out = evm.magnify(frames, preset="motion", backend="cuda")
+        with caplog.at_level("INFO", logger="vidmag"):
+            out = vidmag.magnify(frames, preset="motion", backend="cuda")
         assert out.shape == frames.shape and out.dtype == np.uint8
         assert "backend='cuda'" in caplog.text
         return
 
     with pytest.raises(backend.BackendUnavailableError) as exc:
-        evm.magnify(frames, preset="motion", backend="cuda")
+        vidmag.magnify(frames, preset="motion", backend="cuda")
     msg = str(exc.value)
     assert "cuda" in msg
-    assert "_evm_cuda" in msg or "not importable" in msg
+    assert "_vidmag_cuda" in msg or "not importable" in msg
 
     # The message must carry the real cause, not a generic "unavailable": what
     # the reader needs is which of the two conditions failed, and it is quoted
@@ -424,7 +424,7 @@ def test_asking_for_cuda_is_answered_honestly(frames, no_video_decode, caplog):
 
 def test_an_unknown_backend_name_lists_the_registered_ones(frames, no_video_decode):
     with pytest.raises(backend.UnknownBackendError) as exc:
-        evm.magnify(frames, preset="motion", backend="nonesuch")
+        vidmag.magnify(frames, preset="motion", backend="nonesuch")
     message = str(exc.value)
     for expected in ("cpu", "cuda", "opencl", "metal", "vulkan"):
         assert expected in message, f"{expected} missing from {message!r}"
@@ -432,9 +432,9 @@ def test_an_unknown_backend_name_lists_the_registered_ones(frames, no_video_deco
 
 def test_the_backend_actually_used_is_reported(frames, no_video_decode, caplog):
     """Discoverability: the run says which backend it used, and select() agrees."""
-    with caplog.at_level("INFO", logger="evm"):
-        evm.magnify(frames, preset="motion")
-    assert "evm.magnify" in caplog.text
+    with caplog.at_level("INFO", logger="vidmag"):
+        vidmag.magnify(frames, preset="motion")
+    assert "vidmag.magnify" in caplog.text
     chosen, _ = backend.select("auto")
     assert f"backend={chosen!r}" in caplog.text
 
@@ -444,7 +444,7 @@ def test_the_cpu_backend_satisfies_the_pipelines_protocol():
 
     ``isinstance`` is only meaningful for it: since Python 3.12 a
     runtime-checkable protocol resolves members with ``inspect.getattr_static``,
-    which does not run a module's ``__getattr__`` — and ``evm.cuda`` resolves its
+    which does not run a module's ``__getattr__`` — and ``vidmag.cuda`` resolves its
     cores through exactly that hook to stay lazy on GPU-less machines. The CUDA
     side is checked by name instead, below and on a real GPU.
     """
@@ -477,7 +477,7 @@ def test_the_protocol_matches_the_cpu_cores_signature_for_signature(name):
     """The protocol describes the working code, not the other way round.
 
     Only names, kinds and defaults are compared: the protocol annotates frames
-    as ``evm.backend.Array`` (so a future device array satisfies it) where the
+    as ``vidmag.backend.Array`` (so a future device array satisfies it) where the
     CPU core says ``np.ndarray``, which is the one intended difference.
     """
     import inspect
@@ -500,11 +500,11 @@ CUDA_CORE_NAMES = (
 
 
 def test_the_cuda_backend_exposes_the_four_cores_by_name():
-    """Without importing it: the routing table in evm/cuda/__init__.py is the
+    """Without importing it: the routing table in vidmag/cuda/__init__.py is the
     contract the facade relies on, so it is asserted as data."""
     import ast
 
-    src = (Path(evm.__file__).parent / "cuda" / "__init__.py").read_text()
+    src = (Path(vidmag.__file__).parent / "cuda" / "__init__.py").read_text()
     names = {
         s.value for node in ast.walk(ast.parse(src))
         if isinstance(node, ast.Set)
@@ -513,7 +513,7 @@ def test_the_cuda_backend_exposes_the_four_cores_by_name():
     }
     for name in CUDA_CORE_NAMES:
         assert name in names
-    assert set(CUDA_CORE_NAMES) <= set(evm.cuda.__all__)
+    assert set(CUDA_CORE_NAMES) <= set(vidmag.cuda.__all__)
 
 
 @pytest.mark.parametrize("name", CUDA_CORE_NAMES)
@@ -521,22 +521,22 @@ def test_each_cuda_core_name_is_actually_routed(name):
     """The set literals above are data; this checks the ``__getattr__`` that
     reads them, and it works with or without the compiled extension.
 
-    ``evm/cuda/__init__.py`` resolves a routed name by importing ``batched`` or
-    ``pipelines``, which need ``_evm_cuda``: without it the lookup fails with
+    ``vidmag/cuda/__init__.py`` resolves a routed name by importing ``batched`` or
+    ``pipelines``, which need ``_vidmag_cuda``: without it the lookup fails with
     ``ImportError``. An *un*routed name falls through to the submodule-import
     fallback, which swallows the ImportError and raises ``AttributeError``. So
     the two outcomes tell routed from unrouted apart on a GPU-less machine,
     which the name-in-a-set-literal assertion above cannot: breaking the routing
     while leaving the literals intact left the whole suite green.
     """
-    assert getattr(evm.cuda, "nonsense_core", None) is None  # the unrouted control
+    assert getattr(vidmag.cuda, "nonsense_core", None) is None  # the unrouted control
     with pytest.raises(AttributeError):
-        getattr(evm.cuda, "nonsense_core")
+        getattr(vidmag.cuda, "nonsense_core")
 
-    from evm.cuda import have_cuda
+    from vidmag.cuda import have_cuda
 
     if have_cuda:
-        assert callable(getattr(evm.cuda, name))
+        assert callable(getattr(vidmag.cuda, name))
         return
     with pytest.raises(ImportError):
-        getattr(evm.cuda, name)
+        getattr(vidmag.cuda, name)

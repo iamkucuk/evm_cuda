@@ -1,10 +1,10 @@
 # Entry point
 
-::: evm.magnify
+::: vidmag.magnify
 
 ## Presets
 
-::: evm.presets
+::: vidmag.presets
     options:
       members:
         - Preset
@@ -13,7 +13,7 @@
 
 ## Choosing a backend
 
-::: evm.backend.registry
+::: vidmag.backend.registry
     options:
       members:
         - select

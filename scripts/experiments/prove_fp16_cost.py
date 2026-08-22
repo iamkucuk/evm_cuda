@@ -21,8 +21,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from evm.cuda import _evm_cuda  # noqa: E402
-from evm.cuda.batched import DeviceBuffer, _d_binom5  # noqa: E402
+from vidmag.cuda import _vidmag_cuda  # noqa: E402
+from vidmag.cuda.batched import DeviceBuffer, _d_binom5  # noqa: E402
 
 
 def sync():
@@ -76,13 +76,13 @@ def main():
     d_f16_out = DeviceBuffer(out_n * 2)
 
     modes = [
-        ("f32", lambda: _evm_cuda.micro_corr_dn_fused(
+        ("f32", lambda: _vidmag_cuda.micro_corr_dn_fused(
             d_f32_in.ptr, d_f32_out.ptr, H, W, B, filt, 5, "f32")),
-        ("f16", lambda: _evm_cuda.micro_corr_dn_fused(
+        ("f16", lambda: _vidmag_cuda.micro_corr_dn_fused(
             d_f16_in.ptr, d_f16_out.ptr, H, W, B, filt, 5, "f16")),
-        ("f16_halfacc", lambda: _evm_cuda.micro_corr_dn_fused(
+        ("f16_halfacc", lambda: _vidmag_cuda.micro_corr_dn_fused(
             d_f16_in.ptr, d_f16_out.ptr, H, W, B, filt, 5, "f16_halfacc")),
-        ("f16_half2", lambda: _evm_cuda.micro_corr_dn_fused(
+        ("f16_half2", lambda: _vidmag_cuda.micro_corr_dn_fused(
             d_f16_in.ptr, d_f16_out.ptr, H, W, B, filt, 5, "f16_half2")),
     ]
 
@@ -100,10 +100,10 @@ def main():
 
     # accuracy vs f32 host ref for half paths on one slice
     print("\n=== accuracy of half kernels vs f32 kernel (one slice) ===")
-    _evm_cuda.micro_corr_dn_fused(d_f32_in.ptr, d_f32_out.ptr, H, W, B, filt, 5, "f32")
+    _vidmag_cuda.micro_corr_dn_fused(d_f32_in.ptr, d_f32_out.ptr, H, W, B, filt, 5, "f32")
     ref = d_f32_out.download_f32(out_n).reshape(B, Ho, Wo)[0]
     for mode in ("f16", "f16_halfacc", "f16_half2"):
-        _evm_cuda.micro_corr_dn_fused(d_f16_in.ptr, d_f16_out.ptr, H, W, B, filt, 5, mode)
+        _vidmag_cuda.micro_corr_dn_fused(d_f16_in.ptr, d_f16_out.ptr, H, W, B, filt, 5, mode)
         raw = d_f16_out.download_u8(out_n * 2)
         got = np.frombuffer(raw, dtype=np.float16).reshape(B, Ho, Wo)[0].astype(np.float32)
         d = np.abs(got - ref)
@@ -127,13 +127,13 @@ def main():
     d_bands_f16 = DeviceBuffer(total * 2)
 
     print(f"\n=== full lpyr_build ({levels} levels, n_frames={n_frames}) ===")
-    t_b32 = med_ms(lambda: _evm_cuda.batched_lpyr_build(
+    t_b32 = med_ms(lambda: _vidmag_cuda.batched_lpyr_build(
         d_f32_in.ptr, d_bands_f32.ptr, n_frames, H, W, levels, filt, 5))
-    t_b16 = med_ms(lambda: _evm_cuda.batched_lpyr_build_f16(
+    t_b16 = med_ms(lambda: _vidmag_cuda.batched_lpyr_build_f16(
         d_f16_in.ptr, d_bands_f16.ptr, n_frames, H, W, levels, filt, 5))
-    t_bha = med_ms(lambda: _evm_cuda.batched_lpyr_build_f16_halfacc(
+    t_bha = med_ms(lambda: _vidmag_cuda.batched_lpyr_build_f16_halfacc(
         d_f16_in.ptr, d_bands_f16.ptr, n_frames, H, W, levels, filt, 5))
-    t_bh2 = med_ms(lambda: _evm_cuda.batched_lpyr_build_f16_half2(
+    t_bh2 = med_ms(lambda: _vidmag_cuda.batched_lpyr_build_f16_half2(
         d_f16_in.ptr, d_bands_f16.ptr, n_frames, H, W, levels, filt, 5))
     print(f"  f32              {t_b32:7.2f} ms")
     print(f"  f16 float-acc    {t_b16:7.2f} ms  ratio={t_b16/t_b32:.3f}")
@@ -159,7 +159,7 @@ def main():
                 sys.executable, "-c",
                 (
                     "import sys; sys.path[:0]=%r; "
-                    "from evm.cuda import _evm_cuda; from evm.cuda.batched import DeviceBuffer,_d_binom5; "
+                    "from vidmag.cuda import _vidmag_cuda; from vidmag.cuda.batched import DeviceBuffer,_d_binom5; "
                     "import numpy as np; "
                     "H,W,B=%d,%d,%d; Ho,Wo=(H+1)//2,(W+1)//2; "
                     "rng=np.random.default_rng(0); "
@@ -167,10 +167,10 @@ def main():
                     "filt=_d_binom5(); "
                     "if %r=='f32':\n"
                     " d_in=DeviceBuffer.from_array(x); d_out=DeviceBuffer(B*Ho*Wo*4); "
-                    " _evm_cuda.micro_corr_dn_fused(d_in.ptr,d_out.ptr,H,W,B,filt,5,'f32')\n"
+                    " _vidmag_cuda.micro_corr_dn_fused(d_in.ptr,d_out.ptr,H,W,B,filt,5,'f32')\n"
                     "else:\n"
                     " d_in=DeviceBuffer.from_array(x.astype(np.float16)); d_out=DeviceBuffer(B*Ho*Wo*2); "
-                    " _evm_cuda.micro_corr_dn_fused(d_in.ptr,d_out.ptr,H,W,B,filt,5,%r)\n"
+                    " _vidmag_cuda.micro_corr_dn_fused(d_in.ptr,d_out.ptr,H,W,B,filt,5,%r)\n"
                 ) % ([str(ROOT / "src")], H, W, B, mode, mode),
             ]
             print("\n$ " + " ".join(cmd[:6]) + f" ... mode={mode}")

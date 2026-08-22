@@ -1,4 +1,7 @@
-# Eulerian Video Magnification
+# vidmag
+
+**Eulerian Video Magnification. Hand-written CUDA at the core, five more
+backends so it runs anywhere.**
 
 Some changes in a video are real but too small to see: the flush of blood
 through a face with each heartbeat, the millimetre rise and fall of a sleeping
@@ -16,9 +19,9 @@ heartbeat.</sub></p>
 ## In three lines
 
 ```python
-import evm
+import vidmag
 
-evm.magnify("face.mp4", preset="pulse", out="pulse.mp4")
+vidmag.magnify("face.mp4", preset="pulse", out="pulse.mp4")
 ```
 
 That reads a video, amplifies the colour changes in the frequency band a
@@ -29,10 +32,10 @@ Frames already in memory work too, with no file involved:
 
 ```python
 import numpy as np
-import evm
+import vidmag
 
 frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)  # your frames here
-amplified = evm.magnify(frames, preset="motion")
+amplified = vidmag.magnify(frames, preset="motion")
 ```
 
 ## Where to go next

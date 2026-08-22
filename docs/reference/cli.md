@@ -1,9 +1,9 @@
 # Command line
 
-Installing the library puts `evm-magnify` on your path.
+Installing the library puts `vidmag` on your path.
 
 ```
-evm-magnify --help
+vidmag --help
 ```
 
 ## `magnify`
@@ -11,7 +11,7 @@ evm-magnify --help
 Run a pipeline over a video file.
 
 ```bash
-evm-magnify magnify data/face.mp4 pulse.mp4 --preset pulse
+vidmag magnify data/face.mp4 pulse.mp4 --preset pulse
 ```
 
 Useful options:
@@ -31,7 +31,7 @@ Fetch the sample clips used by the original authors. Needs a checkout of the
 repository, since it wraps a script that is not part of the installed package.
 
 ```bash
-evm-magnify download face baby
+vidmag download face baby
 ```
 
 ## `bench`
@@ -39,5 +39,5 @@ evm-magnify download face baby
 Time each stage on a graphics processor, for comparing configurations.
 
 ```bash
-evm-magnify bench --help
+vidmag bench --help
 ```

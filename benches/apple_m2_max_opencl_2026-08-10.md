@@ -1,7 +1,7 @@
 # Apple M2 Max, portable OpenCL backend, 2026-08-10
 
 The first measurements of this project running on a graphics processor that is
-not made by NVIDIA. The kernels are the ones in `src/evm/opencl/kernels.cl`,
+not made by NVIDIA. The kernels are the ones in `src/vidmag/opencl/kernels.cl`,
 compiled by Apple's OpenCL driver.
 
 Machine: Apple M2 Max, 38 compute units, macOS. Timing covers magnification
@@ -38,11 +38,11 @@ pipeline in one and a half seconds instead of twenty-eight.
 pip install -e ".[opencl]"
 python -c "
 import numpy as np, time
-from evm.io.video import load_video
-from evm.presets import PRESETS
-from evm.backend import generic
-from evm.opencl.ops import OpenClOps
-from evm.cpu import magnify as direct
+from vidmag.io.video import load_video
+from vidmag.presets import PRESETS
+from vidmag.backend import generic
+from vidmag.opencl.ops import OpenClOps
+from vidmag.cpu import magnify as direct
 
 ops = OpenClOps()
 video, info = load_video('data/face.mp4')
@@ -65,3 +65,29 @@ AMD and Intel graphics processors. The same kernels should run there, because
 the driver is what compiles them, but nobody has run them on that hardware and
 this project does not claim results it has not measured. A contributed run is
 welcome.
+
+## Superseded, and one failed reproduction (added 2026-08-18)
+
+**Superseded.** An all-backends session the next day, 2026-08-11, measured this
+same machine again and got different figures: colour 217 ms and motion 1,020 ms
+on OpenCL, against a processor baseline of 7,014 ms and 23,634 ms. Those are the
+numbers `docs/performance.md` and `docs/concepts/backends.md` carry, and they
+are the ones to use. The figures above are kept because they are what was
+recorded on the day.
+
+**A reproduction attempt on 2026-08-18 was inconclusive and is recorded so
+nobody repeats it under the same conditions.** Running the snippet above
+verbatim on the same machine gave 1,220 ms for the colour pipeline, about five
+and a half times the 222 ms above. It was not a regression in the backend and
+it does not disprove either session: `ioreg` reported the graphics processor at
+100% utilisation from unrelated software at the time. The check that separates
+the two explanations is the processor baseline, which shares none of that
+contention and came out only 18% slow. Every graphics backend measured five to
+seven times slow that day; none of those numbers was published.
+
+Re-run on an idle machine with:
+
+```bash
+python scripts/dev/record_backend_bench.py --machine "Apple M2 Max" \
+    --date YYYY-MM-DD --out benches/backends_apple_m2_max.json
+```

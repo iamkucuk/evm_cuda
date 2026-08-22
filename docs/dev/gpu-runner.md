@@ -16,7 +16,7 @@ from that file it is cited rather than restated differently.
 ## Why a self-hosted runner at all
 
 GitHub's hosted runners have no NVIDIA GPU. On them the entire `tests/cuda/` suite skips
-itself (the extension is not built, so `import evm.cuda._evm_cuda` fails) and `pytest` still
+itself (the extension is not built, so `import vidmag.cuda._vidmag_cuda` fails) and `pytest` still
 exits 0. Both figures measured on 2026-08-09 on the `library-restructure` branch:
 
 | Host | Result |
@@ -147,18 +147,18 @@ Read `.github/workflows/gpu.yml` for the exact commands; this is the map.
 |---|---|
 | Put the CUDA toolchain on `PATH` | `python`, `nvcc`, `cmake`, `ninja`, `g++`, `nvidia-smi` all resolve; names what is missing otherwise |
 | Record which machine this ran on | `host.txt`: commit, GPU name/VRAM/driver/compute capability, nvcc and Python versions |
-| Install into a throwaway venv | `pip install ".[dev]"` compiles `_evm_cuda`; `EVM_CUDA_REQUIRE=1` makes a missing nvcc a build error instead of a quiet CPU-only package |
+| Install into a throwaway venv | `pip install ".[dev]"` compiles `_vidmag_cuda`; `VIDMAG_CUDA_REQUIRE=1` makes a missing nvcc a build error instead of a quiet CPU-only package |
 | The extension must have compiled | `have_cuda` is True and `require_cuda()` returns; prints the `.so` path |
 | Fetch the MIT sample clips | `tests/test_against_mit_reference.py` needs `data/*.mp4`, and `actions/checkout` wipes untracked files, so this runs every time |
 | Run the full suite | `pytest tests/ -q -p no:randomly --junitxml=…` |
 | **No test may be skipped** | The gate. Reads the JUnit XML, writes `counts.json`, and fails listing every skipped case |
-| Benchmark | `evm-magnify bench` on `face.mp4` (pulse) and `baby.mp4` (motion), FP32 and FP16 |
+| Benchmark | `vidmag bench` on `face.mp4` (pulse) and `baby.mp4` (motion), FP32 and FP16 |
 | Publish the evidence | Uploads `gpu-evidence/` as an artifact, `if: always()` |
 
 The evidence leaves as an artifact — text plus the JUnit XML — and nothing is written back to
 the repository. `PLAN.md` step 2.4 words the deliverable as "benchmark JSON to `benches/`",
 with the success criterion "a dispatched GPU run commits `benches/*.json` with matching SHA";
-**this job does not do that.** `evm-magnify bench` prints a table and has no JSON output, and
+**this job does not do that.** `vidmag bench` prints a table and has no JSON output, and
 a job that pushes commits needs `contents: write` and a bot identity. Both are decisions for
 whoever closes Phase 2; until they are taken, that success criterion is unmet and the numbers
 live in the run's artifact.
@@ -167,8 +167,8 @@ Two job-level environment variables encode everything machine-specific, so movin
 GPU host means editing two lines:
 
 ```yaml
-EVM_TOOLCHAIN_BIN: /home/furkan/miniconda3/envs/evm-cuda/bin
-EVM_WSL_LIB: /usr/lib/wsl/lib
+VIDMAG_TOOLCHAIN_BIN: /home/furkan/miniconda3/envs/evm-cuda/bin
+VIDMAG_WSL_LIB: /usr/lib/wsl/lib
 ```
 
 ### Why the skip gate exists
@@ -184,9 +184,9 @@ catches that. Expected here: **0 skipped, 194 passed**.
 | Symptom | Meaning |
 |---|---|
 | Job stuck in **Queued** | No runner with all four labels is online. Usually the Windows host is asleep; otherwise the runner was configured without `--labels cuda` |
-| `::error::not on PATH: nvcc …` | The conda environment moved or was renamed. Fix `EVM_TOOLCHAIN_BIN`, or re-create it per `packaging-notes.md` §3 |
-| CMake error naming `EVM_CUDA_REQUIRE` | `nvcc` is gone. That is the flag doing its job: the alternative is a silent CPU-only install |
-| `FAIL: the extension did not build or does not import` | The wheel built but `_evm_cuda` will not load — a real regression; the install log is in the artifact |
+| `::error::not on PATH: nvcc …` | The conda environment moved or was renamed. Fix `VIDMAG_TOOLCHAIN_BIN`, or re-create it per `packaging-notes.md` §3 |
+| CMake error naming `VIDMAG_CUDA_REQUIRE` | `nvcc` is gone. That is the flag doing its job: the alternative is a silent CPU-only install |
+| `FAIL: the extension did not build or does not import` | The wheel built but `_vidmag_cuda` will not load — a real regression; the install log is in the artifact |
 | Gate lists `tests.cuda.*` skips | The extension is not importable inside the job's venv |
 | Gate lists `test_against_mit_reference` skips | The MIT download failed (their server, or no network) |
 | Cancelled at 60 minutes | The suite takes ~163 s on this GPU; a timeout means a hang, not slowness |

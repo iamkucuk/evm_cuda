@@ -4,6 +4,13 @@ Findings recorded while executing Phase 0 of `docs/dev/PLAN.md` on branch
 `library-restructure`. Every entry is the output of a command that was actually run;
 the command is given so it can be re-run.
 
+**Renamed on 2026-08-18, and this file was deliberately not rewritten.** The
+package is called `vidmag` now, and the compiled extension `_vidmag_cuda`.
+The command output quoted below names `evm` and `_evm_cuda` because that is
+what those commands printed at the time. Editing recorded output to match a
+later name would destroy the only thing this file is for. Read `evm` as
+`vidmag` throughout, and see `PLAN.md` decision D1 for why the name changed.
+
 ## 1. `pip install .` fails today (plan step 0.1)
 
 Date: 2026-08-09. Host: macOS 26.5.2 arm64, Python 3.13 in a fresh `venv`.

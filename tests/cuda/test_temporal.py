@@ -1,18 +1,18 @@
-"""Temporal filter kernel tests — iir / butter / ideal vs evm.cpu.filters."""
+"""Temporal filter kernel tests — iir / butter / ideal vs vidmag.cpu.filters."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from evm.cpu.filters import (
+from vidmag.cpu.filters import (
     iir_bandpass, butter_bandpass, ideal_bandpass,
 )
-from evm.cuda.runtime import butter_bandpass_coeffs
+from vidmag.cuda.runtime import butter_bandpass_coeffs
 from conftest import TOL, abs_err, have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda import _evm_cuda
+    from vidmag.cuda import _vidmag_cuda
 
 FPS = 30.0
 T = 300
@@ -30,7 +30,7 @@ def test_iir_matches_baseline(freq):
     expected = iir_bandpass(sig.astype(np.float64), 0.4, 0.05, axis=0) \
         .reshape(T).astype(np.float32)
     nt = np.ascontiguousarray(sig.reshape(T, 1).T)  # (N=1, T)
-    got = _evm_cuda.iir_bandpass(nt, 0.4, 0.05).reshape(T)
+    got = _vidmag_cuda.iir_bandpass(nt, 0.4, 0.05).reshape(T)
     assert abs_err(got, expected) < TOL["iir"]
 
 
@@ -38,7 +38,7 @@ def test_iir_matches_baseline(freq):
 def test_iir_dc_goes_to_zero():
     """Matches the Python baseline's DC-suppression property."""
     dc = np.ones((1, T), dtype=np.float32)
-    out = _evm_cuda.iir_bandpass(dc, 0.4, 0.05).reshape(T)
+    out = _vidmag_cuda.iir_bandpass(dc, 0.4, 0.05).reshape(T)
     # The Python baseline's steady-state output for DC is exactly 0.
     assert np.abs(out[T // 2:]).max() < TOL["iir"]
 
@@ -50,7 +50,7 @@ def test_butter_matches_baseline():
         .astype(np.float32)
     (b0h, b1h, a1h), (b0l, b1l, a1l) = butter_bandpass_coeffs(0.5, 2.0, FPS)
     nt = np.ascontiguousarray(sig.reshape(T, 1).T)  # (1, T)
-    got = _evm_cuda.butter_bandpass(nt, b0h, b1h, a1h, b0l, b1l, a1l).reshape(T)
+    got = _vidmag_cuda.butter_bandpass(nt, b0h, b1h, a1h, b0l, b1l, a1l).reshape(T)
     assert abs_err(got, expected) < TOL["butter"]
 
 
@@ -60,7 +60,7 @@ def test_ideal_in_band_matches_baseline():
     expected = ideal_bandpass(sig.astype(np.float64), 0.83, 0.99, FPS) \
         .astype(np.float32)
     nt = np.ascontiguousarray(sig.reshape(T, 1).T)
-    got = _evm_cuda.ideal_bandpass(nt, 0.83, 0.99, FPS).reshape(T)
+    got = _vidmag_cuda.ideal_bandpass(nt, 0.83, 0.99, FPS).reshape(T)
     assert abs_err(got, expected) < TOL["ideal"]
 
 
@@ -70,6 +70,6 @@ def test_ideal_out_of_band_matches_baseline():
     expected = ideal_bandpass(sig.astype(np.float64), 0.83, 0.99, FPS) \
         .astype(np.float32)
     nt = np.ascontiguousarray(sig.reshape(T, 1).T)
-    got = _evm_cuda.ideal_bandpass(nt, 0.83, 0.99, FPS).reshape(T)
+    got = _vidmag_cuda.ideal_bandpass(nt, 0.83, 0.99, FPS).reshape(T)
     # Both should be ~0; assert the absolute error is small.
     assert abs_err(got, expected) < TOL["ideal"]

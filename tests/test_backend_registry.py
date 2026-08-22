@@ -4,17 +4,17 @@ What is being pinned down here:
 
 * registration is data-only — a backend's implementation module is imported the
   first time somebody *selects* it, never when it is registered. That is what
-  keeps ``import evm`` from touching the CUDA extension on a machine with no GPU;
+  keeps ``import vidmag`` from touching the CUDA extension on a machine with no GPU;
 * every failure names its cause. An unknown backend lists the registered ones, an
   unavailable backend repeats the probe's reason verbatim, and ``"auto"`` with
   nothing usable reports every candidate it tried and why each one failed;
-* ``"auto"`` walks :data:`evm.backend.PREFERENCE_ORDER`, not registration order,
+* ``"auto"`` walks :data:`vidmag.backend.PREFERENCE_ORDER`, not registration order,
   so a GPU backend is never skipped for a CPU one that happened to register first;
 * the chosen name comes back to the caller, so the ~700x CPU/GPU cliff can never
   be crossed silently.
 
-``import evm`` registers the two built-in backends (``evm.api`` does it, so that
-``evm.backend`` itself still imports no implementation). These tests are about
+``import vidmag`` registers the two built-in backends (``vidmag.api`` does it, so that
+``vidmag.backend`` itself still imports no implementation). These tests are about
 the registry mechanism, not about those two, so the autouse fixture empties the
 registry for the duration of each test and puts the real one back afterwards —
 otherwise every ``_register("cpu")`` below would collide with the built-in of
@@ -29,8 +29,8 @@ import sys
 
 import pytest
 
-from evm import backend
-from evm.backend import registry
+from vidmag import backend
+from vidmag.backend import registry
 
 
 @pytest.fixture(autouse=True)
@@ -108,16 +108,16 @@ def test_backend_is_loaded_on_first_select_and_then_cached():
 
 
 def test_importing_the_registry_does_not_import_the_cuda_backend():
-    """``import evm.backend`` must not reach for the compiled extension."""
+    """``import vidmag.backend`` must not reach for the compiled extension."""
     code = (
-        "import sys; import evm.backend; "
-        "print(sorted(m for m in sys.modules if m.startswith('evm.')))"
+        "import sys; import vidmag.backend; "
+        "print(sorted(m for m in sys.modules if m.startswith('vidmag.')))"
     )
     out = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     ).stdout
-    assert "evm.backend" in out
-    assert "evm.cuda" not in out
+    assert "vidmag.backend" in out
+    assert "vidmag.cuda" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ def test_the_preference_order_puts_native_cuda_first_and_cpu_last():
 
 def test_the_selected_backend_is_logged_not_silent(caplog):
     _register("cpu", obj="cpu-impl")
-    with caplog.at_level("INFO", logger="evm.backend.registry"):
+    with caplog.at_level("INFO", logger="vidmag.backend.registry"):
         backend.select("auto")
     assert "cpu" in caplog.text
 

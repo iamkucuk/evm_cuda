@@ -8,11 +8,11 @@ examples.
 
 ## On the processor
 
-::: evm.cpu.ops
+::: vidmag.cpu.ops
 
 ## The pipelines, derived from the primitives
 
-::: evm.backend.generic
+::: vidmag.backend.generic
     options:
       members:
         - color_gdown_ideal_core
@@ -23,7 +23,7 @@ examples.
 
 ## Video reading and writing
 
-::: evm.io.video
+::: vidmag.io.video
     options:
       members:
         - load_video

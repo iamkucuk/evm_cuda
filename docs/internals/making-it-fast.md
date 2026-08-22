@@ -271,6 +271,14 @@ The colour pipeline is untouched by all three and measured unchanged, which is
 the control that makes those figures a comparison rather than a difference
 between sessions.
 
+*Both sides of that comparison, and every stage figure on this page, come from
+one session. A fresh measurement on 2026-08-18 put the same motion pipeline at
+40.3 ms and 26.8 ms — within about half a percent — and is what
+`docs/performance.md` and `benches/bench_rtx3090.json` now carry. The figures
+here are deliberately not restated from it: the value of a before-and-after pair
+is that both halves were measured on the same machine in the same session, and
+swapping one half for a number from a different day would destroy that.*
+
 Pyramid build is the one row still short of the others at 74%, and the number
 probably understates it: the shrinking kernel inside it stages overlapping
 tiles, so it genuinely re-reads data the model does not count. Timed on its
@@ -282,7 +290,7 @@ own, that kernel measures 94%.
 |---|---:|
 | All kernels | 39.1 ms |
 | Copying the clip to the card and the result back | 104.5 ms |
-| Everything else `evm.magnify()` does | 85.2 ms |
+| Everything else `vidmag.magnify()` does | 85.2 ms |
 
 Reading the result back costs 72.3 ms on its own — more than every kernel put
 together. That is not bandwidth: a plain copy into a freshly allocated host

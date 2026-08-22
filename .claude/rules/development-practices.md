@@ -8,20 +8,20 @@ section 3d of that plan, committed here so every session loads them. They are no
 - Start each plan step by writing, or pointing at, the failing check named in that phase's
   success criteria. No implementation file is created before that check exists.
 - The check is a real command, not a claim. Examples in this repo:
-  `.venv/bin/python -m pytest tests/ -q -p no:randomly` (279 passed, 101 skipped on 2026-08-11),
+  `.venv/bin/python -m pytest tests/ -q -p no:randomly` (300 passed, 102 skipped on 2026-08-18),
   `pytest tests/cuda/ -q` on a GPU host, `scripts/dev/verify_install.sh` for packaging work.
-- Non-Python work gets a check too: a `src/evm/cuda/CMakeLists.txt` change is tested by a scripted
+- Non-Python work gets a check too: a `src/vidmag/cuda/CMakeLists.txt` change is tested by a scripted
   fresh-venv install, a docs change by `mkdocs build --strict` plus running its snippets.
 - Phase 0 exists to build this net (golden fixtures, `tests/test_reference_lock.py`, recorded
   baselines in `benches/`). Later red-green cycles run inside it.
 
 ## 2. KISS — two sanctioned abstraction layers, no third
 
-- The only abstractions this restructure may introduce are `evm.backend.Ops` and
-  `evm.backend.Pipelines` (plan section 3c) plus the backend registry. Base classes, config
+- The only abstractions this restructure may introduce are `vidmag.backend.Ops` and
+  `vidmag.backend.Pipelines` (plan section 3c) plus the backend registry. Base classes, config
   objects, plugin hooks or dispatch layers beyond those need the operator's approval first.
 - Prefer a plain function to a class, a frozen dict to a config system, a copy-pasteable
-  example to a helper framework. `evm/` is written that way — match it.
+  example to a helper framework. `vidmag/` is written that way — match it.
 
 ## 3. YAGNI — build exactly the current step
 
@@ -36,9 +36,9 @@ section 3d of that plan, committed here so every session loads them. They are no
   the conformance suite, the backend registry, and the reference constants
   (`DROP_LAST`, `EXAGGERATION_FACTOR`, `BINOM5`, `BINOM5_SUM1`). Import them; never retype a
   literal that can be imported. New duplication needs a stated reason in the commit message.
-- **The named exception:** the FP32/FP16 pipeline bodies in `src/evm/cuda/batched.py` and the
+- **The named exception:** the FP32/FP16 pipeline bodies in `src/vidmag/cuda/batched.py` and the
   templated kernels may stay duplicated where merging them risks numeric drift — the README's
-  accuracy claims (motion FP16 vs FP32 RMSE 0.00199) are load-bearing. Correctness outranks
+  accuracy claims (motion FP16 vs FP32 RMSE 0.00140) are load-bearing. Correctness outranks
   DRY. Comment the exception at the site.
 
 ## 5. Fail loud
@@ -47,11 +47,11 @@ section 3d of that plan, committed here so every session loads them. They are no
   missing backend reports *why* (missing extra, no driver, no device). A ~700x CPU/GPU cliff
   must never be reached by accident.
 - No bare `except`. Every CUDA runtime call is wrapped in `CUDA_CHECK`
-  (`src/evm/cuda/include/evm_check.cuh`), which throws `std::runtime_error` so pybind11 surfaces it as
+  (`src/vidmag/cuda/include/evm_check.cuh`), which throws `std::runtime_error` so pybind11 surfaces it as
   a catchable Python exception — "a silent error can never propagate into a tolerance
   failure". Keep that posture in Python: raise, don't degrade.
 - Report skip counts, never just passes. On this Mac the honest line is
-  "279 passed, 101 skipped" — those skips include the whole NVIDIA suite and prove
+  "300 passed, 102 skipped" — those skips include the whole NVIDIA suite and prove
   nothing about it. No single machine runs every backend.
 - `tests/cuda/conftest.py:TOL` and `tests/test_against_mit_reference.py` are append-only.
   Loosening a tolerance is its own separately reviewed commit carrying the measurement.
@@ -67,18 +67,18 @@ section 3d of that plan, committed here so every session loads them. They are no
 
 ## 7. The NVIDIA GPU code leads; the other backends follow it
 
-- Performance work starts in the NVIDIA GPU code — `src/evm/cuda/kernels/*.cu` and `src/evm/cuda/bindings.cpp`.
+- Performance work starts in the NVIDIA GPU code — `src/vidmag/cuda/kernels/*.cu` and `src/vidmag/cuda/bindings.cpp`.
   That is what this project exists to make fast, and it is where a measurement is worth taking.
 - **A change to the NVIDIA code is not finished when it lands.** Once it is accepted, check
   whether the same change applies to every other backend, and apply it where it does:
 
   | Backend | Where its kernels live |
   |---|---|
-  | OpenCL | `src/evm/opencl/kernels.cl` |
-  | Apple Metal | `src/evm/metal/kernels.metal` |
-  | Vulkan | `src/evm/vulkan/shaders/*.comp` |
-  | PyTorch | `src/evm/torch_backend/ops.py` (tensor operations, no kernels) |
-  | Processor (Python) | `src/evm/cpu/pyramids.py`, `src/evm/cpu/filters.py` |
+  | OpenCL | `src/vidmag/opencl/kernels.cl` |
+  | Apple Metal | `src/vidmag/metal/kernels.metal` |
+  | Vulkan | `src/vidmag/vulkan/shaders/*.comp` |
+  | PyTorch | `src/vidmag/torch_backend/ops.py` (tensor operations, no kernels) |
+  | Processor (Python) | `src/vidmag/cpu/pyramids.py`, `src/vidmag/cpu/filters.py` |
 
 - State which backends the change was carried to and which it does not apply to, with the
   reason. "Does not apply, because that backend has no separate upsample kernel" is a complete

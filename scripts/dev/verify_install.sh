@@ -3,7 +3,7 @@
 # verify_install.sh — prove that `pip install .` produces a working package.
 #
 # Plan step 1.15. This is the check that judges every packaging change:
-# src/evm/cuda/CMakeLists.txt, pyproject.toml and the Makefile are all "tested" by
+# src/vidmag/cuda/CMakeLists.txt, pyproject.toml and the Makefile are all "tested" by
 # running this script, per .claude/rules/development-practices.md.
 #
 # What it does:
@@ -54,18 +54,18 @@ import inspect
 import pathlib
 import sys
 
-import evm
+import vidmag
 
-where = pathlib.Path(inspect.getfile(evm)).resolve()
-print(f"evm            {evm.__version__}")
+where = pathlib.Path(inspect.getfile(vidmag)).resolve()
+print(f"vidmag            {vidmag.__version__}")
 print(f"loaded from    {where}")
 if "site-packages" not in where.parts:
-    sys.exit(f"FAIL: evm was imported from {where}, not from the install")
+    sys.exit(f"FAIL: vidmag was imported from {where}, not from the install")
 
-missing = [n for n in evm.__all__ if not hasattr(evm, n)]
+missing = [n for n in vidmag.__all__ if not hasattr(vidmag, n)]
 if missing:
     sys.exit(f"FAIL: public names missing from the installed package: {missing}")
-print(f"public API     {len(evm.__all__)} names, all present")
+print(f"public API     {len(vidmag.__all__)} names, all present")
 
 # The deprecated top-level shim must keep working and must say it is deprecated.
 PYCHECK
@@ -76,20 +76,20 @@ import sys
 
 import numpy as np
 
-import evm
+import vidmag
 
 # Pure-Python surface must work with no GPU and no video files.
 rng = np.random.default_rng(0)
 frame = rng.random((32, 32, 3))
-if not np.allclose(evm.yiq_to_rgb(evm.rgb_to_yiq(frame)), frame, atol=1e-6):
+if not np.allclose(vidmag.yiq_to_rgb(vidmag.rgb_to_yiq(frame)), frame, atol=1e-6):
     sys.exit("FAIL: rgb_to_yiq/yiq_to_rgb round trip broken")
-pyr, ind = evm.build_lpyr(frame[:, :, 0])
-if not np.allclose(evm.recon_lpyr(pyr, ind), frame[:, :, 0], atol=1e-10):
+pyr, ind = vidmag.build_lpyr(frame[:, :, 0])
+if not np.allclose(vidmag.recon_lpyr(pyr, ind), frame[:, :, 0], atol=1e-10):
     sys.exit("FAIL: Laplacian pyramid round trip broken")
 print("cpu pipeline   colour + pyramid round trips OK")
 
 # CUDA is optional. Whatever its state, it has to be reported, never guessed.
-import evm.cuda as gpu
+import vidmag.cuda as gpu
 
 print(f"have_cuda      {gpu.have_cuda}")
 if gpu.have_cuda:

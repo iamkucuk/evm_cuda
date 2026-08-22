@@ -13,7 +13,7 @@ data/*
 output/
 
 # CUDA build artifacts
-cuda/build/
+src/vidmag/cuda/build/
 *.so
 *.o
 *.obj

@@ -4,7 +4,7 @@ These are the backends that reach hardware the hand-written CUDA code cannot:
 OpenCL for Apple, AMD and Intel graphics processors and for ordinary processors
 through a software driver; Metal for Apple hardware specifically; Vulkan where
 a driver is present. Each has its own kernels in its own language, and each is
-compared here against :mod:`evm.cpu.backend` — the same NumPy reference the
+compared here against :mod:`vidmag.cpu.backend` — the same NumPy reference the
 CUDA tests use — so a result is only accepted if it agrees with the
 implementation that was checked against the original paper.
 
@@ -24,9 +24,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.backend import generic, registry
-from evm.cpu import backend as cpu_backend
-from evm.cpu import magnify as direct
+from vidmag.backend import generic, registry
+from vidmag.cpu import backend as cpu_backend
+from vidmag.cpu import magnify as direct
 
 CPU = cpu_backend.OPS
 FPS = 30.0
@@ -107,7 +107,7 @@ def test_the_streaming_claim_matches_what_the_backend_does(name):
     OpenCL both said no and both worked. Asserting a list of names would have
     frozen that mistake in place, so this pushes a frame through and sees.
     """
-    from evm.stream import MotionStream
+    from vidmag.stream import MotionStream
 
     info = _info(name)
     if not info.available:
@@ -389,12 +389,12 @@ def test_whole_pipeline_matches_the_reference(ops, name, core, reference, params
 @pytest.mark.parametrize("name", ["opencl", "metal", "vulkan"])
 def test_the_backend_is_selectable_by_name(name):
     """What a user types must reach that backend, or say why it cannot."""
-    import evm
-    from evm.backend.registry import BackendUnavailableError
+    import vidmag
+    from vidmag.backend.registry import BackendUnavailableError
 
     clip = _clip(frames=24)
     try:
-        out = evm.magnify(clip, preset="motion", fps=FPS, backend=name)
+        out = vidmag.magnify(clip, preset="motion", fps=FPS, backend=name)
     except BackendUnavailableError as exc:
         # Not a failure: this machine has no such device. What matters is that
         # it said so rather than quietly running somewhere else.
@@ -407,11 +407,11 @@ def test_the_backend_is_selectable_by_name(name):
 @pytest.mark.parametrize("name", _TESTED_NAMES)
 def test_selecting_it_without_a_driver_explains_why(name):
     """Asking for a backend that cannot run must not fall back silently."""
-    import evm
-    from evm.backend.registry import BackendUnavailableError
+    import vidmag
+    from vidmag.backend.registry import BackendUnavailableError
 
     if _info(name).available:
         pytest.skip(f"{name} is available here, so there is no failure to check")
 
     with pytest.raises(BackendUnavailableError, match=name):
-        evm.magnify(_clip(frames=8), preset="motion", fps=FPS, backend=name)
+        vidmag.magnify(_clip(frames=8), preset="motion", fps=FPS, backend=name)

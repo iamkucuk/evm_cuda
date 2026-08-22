@@ -17,7 +17,7 @@ import warnings
 import numpy as np
 import pytest
 
-from evm.cpu.filters import butter_bandpass, ideal_bandpass, iir_bandpass
+from vidmag.cpu.filters import butter_bandpass, ideal_bandpass, iir_bandpass
 
 FPS = 30.0
 T = 300

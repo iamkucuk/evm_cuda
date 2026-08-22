@@ -1,7 +1,14 @@
 # Backends and hardware
 
-The same magnification is implemented six times over. Which one runs is chosen
-automatically, and never changed behind your back.
+The same magnification is implemented six times over, but they are not six
+equals. **The NVIDIA backend is what this project is for.** It is hand-written
+CUDA C++ with no tensor framework underneath it, it is where optimisation work
+starts, and the figures on [Performance](../performance.md) are its figures.
+The other five exist so the library still works when there is no NVIDIA card
+present, and so that hardware appearing later has a path that needs no new code
+here.
+
+Which one runs is chosen automatically, and never changed behind your back.
 
 | Backend | Runs on | Written in | Needs |
 |---|---|---|---|
@@ -23,7 +30,7 @@ Only `cuda` and `cpu` are installed by default. The rest are optional extras,
 so nothing is downloaded for hardware you do not have:
 
 ```bash
-pip install "evm-magnify[metal]"      # or [vulkan], [opencl], [torch]
+pip install "vidmag[metal]"      # or [vulkan], [opencl], [torch]
 ```
 
 ## Measured
@@ -42,6 +49,14 @@ video are excluded. One warm-up run, then the best of two. Measured
 
 Every one agrees with the reference to within one step of the final 8-bit
 rounding.
+
+*Not re-verified since.* A reproduction attempt on 2026-08-18 could not confirm
+these: the machine's graphics processor was at 100% utilisation from unrelated
+software, and every graphics backend measured five to seven times slower while
+the processor baseline was only 18% slower. That measurement proves nothing
+either way and none of it was published.
+`scripts/dev/record_backend_bench.py` regenerates this table on an idle machine.
+
 
 **There is no single winner, and the ordering is not stable.** OpenCL is
 fastest here on both pipelines, and on a 60-frame clip Apple's own interface
@@ -80,11 +95,11 @@ sits second to last because it reaches no hardware the others miss, so it
 should never be preferred over a native backend for whole-clip work. Where several would
 work, the earlier one is the shorter path to the hardware — Vulkan on a Mac
 runs through a translation layer onto Metal, so using Metal directly removes a
-layer. The choice is reported through the `evm` logger, and can be asked
+layer. The choice is reported through the `vidmag` logger, and can be asked
 for in advance:
 
 ```python
-from evm import backend
+from vidmag import backend
 
 name, _ = backend.select("auto")
 print(name)
@@ -96,7 +111,7 @@ fastest and slowest here is a factor of several hundred, which is far too large
 to happen by accident.
 
 ```python
-from evm.backend import registry
+from vidmag.backend import registry
 
 for info in registry.list_backends():
     print(f"{info.name:8} {info.unavailable_reason or 'available'}")
@@ -122,7 +137,7 @@ is the trade being made.
 Implement about a dozen primitive operations for the new device, then:
 
 ```python
-from evm.backend import generic
+from vidmag.backend import generic
 
 backend = generic.bind(my_operations)
 ```
@@ -137,7 +152,7 @@ speed.
 It was planned as optional and nearly skipped, on the reasoning that it reaches
 no hardware the native backends miss. That reasoning holds for whole-clip work,
 where it is the slowest of the graphics backends and the hand-written NVIDIA
-code is 2.8 times faster on the same card. It does not hold for everything
+code is 2.5 times faster on the same card. It does not hold for everything
 else, and three things it does are not covered by any other backend:
 
 - **It is the only way to stream on NVIDIA hardware**, and the fastest streaming

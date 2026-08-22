@@ -4,9 +4,9 @@ Blood arriving in the skin with each heartbeat changes its colour by a fraction
 of one step in 255. The colour pipeline amplifies exactly that.
 
 ```python
-import evm
+import vidmag
 
-evm.magnify("face.mp4", preset="pulse", out="pulse.mp4")
+vidmag.magnify("face.mp4", preset="pulse", out="pulse.mp4")
 ```
 
 ## What the preset does
@@ -19,7 +19,7 @@ evm.magnify("face.mp4", preset="pulse", out="pulse.mp4")
 | `chrom_attenuation` | 1.0 | How much colour, as opposed to brightness, is amplified |
 
 These are the values the original authors used for their own face clip. They
-are in `evm.presets.PRESETS`, along with where each came from.
+are in `vidmag.presets.PRESETS`, along with where each came from.
 
 ## Adjusting it for your clip
 
@@ -28,7 +28,7 @@ band. For a resting adult at 72 beats per minute, that is 1.2 cycles per
 second, so a band of roughly 1.0 to 1.4:
 
 ```python
-evm.magnify("face.mp4", preset="pulse", fl=1.0, fh=1.4, out="pulse.mp4")
+vidmag.magnify("face.mp4", preset="pulse", fl=1.0, fh=1.4, out="pulse.mp4")
 ```
 
 **The clip is short.** The band has to be wide enough for the clip's length to
@@ -54,9 +54,9 @@ frequency:
 
 ```python
 import numpy as np
-import evm
+import vidmag
 
-amplified = evm.magnify("face.mp4", preset="pulse")
+amplified = vidmag.magnify("face.mp4", preset="pulse")
 patch = amplified[:, 100:200, 100:200, :].mean(axis=(1, 2, 3))
 
 fps = 30.0

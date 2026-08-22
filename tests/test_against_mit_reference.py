@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from evm import (
+from vidmag import (
     load_video,
     magnify_color_gdown_ideal,
     magnify_motion_lpyr_iir,

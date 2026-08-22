@@ -22,9 +22,9 @@ import pytest
 from conftest import TOL, abs_err, have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda import _evm_cuda
-    from evm.cuda.batched import DeviceBuffer
-    from evm.cpu.filters import ideal_bandpass
+    from vidmag.cuda import _vidmag_cuda
+    from vidmag.cuda.batched import DeviceBuffer
+    from vidmag.cpu.filters import ideal_bandpass
 
 
 # ---------------------------------------------------------------------------
@@ -42,13 +42,13 @@ def test_planar_to_interleaved_round_trip(n, hl, wl):
     planar = np.empty((n * 3, hl, wl), dtype=np.float32)
     d_interleaved = DeviceBuffer.from_array(np.ascontiguousarray(orig))
     d_planar = DeviceBuffer(n * 3 * hl * wl * 4)
-    _evm_cuda.batched_to_planar_3ch(d_interleaved.ptr, d_planar.ptr, n, hl, wl)
+    _vidmag_cuda.batched_to_planar_3ch(d_interleaved.ptr, d_planar.ptr, n, hl, wl)
     planar = d_planar.download_f32(n * 3 * hl * wl).reshape(n * 3, hl, wl)
 
     # planar -> interleaved (NEW binding under test)
     d_planar2 = DeviceBuffer.from_array(np.ascontiguousarray(planar))
     d_back = DeviceBuffer(n * hl * wl * 3 * 4)
-    _evm_cuda.batched_planar_to_interleaved_3ch(
+    _vidmag_cuda.batched_planar_to_interleaved_3ch(
         d_planar2.ptr, d_back.ptr, n, hl, wl)
     back = d_back.download_f32(n * hl * wl * 3).reshape(n, hl, wl, 3)
 
@@ -72,7 +72,7 @@ def test_apply_channel_gain_batched(n, h, w):
     ref = sig * np.array(g, dtype=np.float32)  # numpy broadcast reference
 
     d_sig = DeviceBuffer.from_array(np.ascontiguousarray(sig))
-    _evm_cuda.batched_apply_channel_gain(
+    _vidmag_cuda.batched_apply_channel_gain(
         d_sig.ptr, n, h, w, g[0], g[1], g[2])
     out = d_sig.download_f32(n * h * w * 3).reshape(n, h, w, 3)
 
@@ -134,20 +134,20 @@ def test_device_resident_bandpass_matches_per_channel_host():
     N = hl * wl * 3  # unified batch over all 3 channels
     d_planar = DeviceBuffer.from_array(np.ascontiguousarray(planar))
     d_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
-    _evm_cuda.batched_planar_to_interleaved_3ch(
+    _vidmag_cuda.batched_planar_to_interleaved_3ch(
         d_planar.ptr, d_thwc.ptr, n, hl, wl)
 
     d_sig = DeviceBuffer(N * n * 4)
-    _evm_cuda.batched_thwc_to_nt(d_thwc.ptr, d_sig.ptr, n, N)
+    _vidmag_cuda.batched_thwc_to_nt(d_thwc.ptr, d_sig.ptr, n, N)
 
     d_filt = DeviceBuffer(N * n * 4)
-    _evm_cuda.batched_ideal_bandpass(
+    _vidmag_cuda.batched_ideal_bandpass(
         d_sig.ptr, d_filt.ptr, n, N, fl, fh, sampling_rate)
 
     d_filt_thwc = DeviceBuffer(n * hl * wl * 3 * 4)
-    _evm_cuda.batched_nt_to_thwc_scaled(d_filt.ptr, d_filt_thwc.ptr, n, N, 1.0)
+    _vidmag_cuda.batched_nt_to_thwc_scaled(d_filt.ptr, d_filt_thwc.ptr, n, N, 1.0)
 
-    _evm_cuda.batched_apply_channel_gain(
+    _vidmag_cuda.batched_apply_channel_gain(
         d_filt_thwc.ptr, n, hl, wl, gain[0], gain[1], gain[2])
 
     out = d_filt_thwc.download_f32(n * hl * wl * 3).reshape(n, hl, wl, 3)

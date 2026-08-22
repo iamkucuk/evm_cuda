@@ -1,10 +1,10 @@
 """Each public GPU operation against its NumPy counterpart.
 
 The tests beside this one check the compiled kernels through the raw bindings.
-These check the layer users actually touch: :mod:`evm.cuda.ops`, which wraps
+These check the layer users actually touch: :mod:`vidmag.cuda.ops`, which wraps
 those kernels so they take and return arrays that know their own shape. The
 wrapping is where a layout shuffle can go wrong without the kernel being at
-fault, so it needs its own comparison against :mod:`evm.cpu.ops`.
+fault, so it needs its own comparison against :mod:`vidmag.cpu.ops`.
 
 Tolerances come from ``tests/cuda/conftest.py`` rather than being written again
 here: single-precision GPU arithmetic against double-precision NumPy has a
@@ -19,9 +19,9 @@ import pytest
 from conftest import TOL, abs_err, have_cuda, skip_no_cuda
 
 if have_cuda:
-    import evm.cpu.ops as cpu_ops
-    from evm.cuda import ops as gpu_ops
-    from evm.cuda.array import DeviceArray
+    import vidmag.cpu.ops as cpu_ops
+    from vidmag.cuda import ops as gpu_ops
+    from vidmag.cuda.array import DeviceArray
 
 
 T, H, W = 12, 24, 32

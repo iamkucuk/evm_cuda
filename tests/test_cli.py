@@ -1,11 +1,11 @@
-"""Tests for ``evm-magnify`` (:mod:`evm._cli`) and the ``run_evm.py`` shim.
+"""Tests for ``vidmag`` (:mod:`vidmag._cli`) and the ``run_evm.py`` shim.
 
 The console script and the shim were shipped with no automated coverage at all:
 every claim about them — that the shim forwards untouched, that ``--mode``
 still carries ``run_evm.py``'s defaults, that a flag the pipeline cannot take
 raises instead of being dropped — rested on one-off manual runs. This file
 pins the behaviour that has to survive, without decoding a single video:
-:func:`evm.backend.select` is replaced by a recorder, so what is asserted is
+:func:`vidmag.backend.select` is replaced by a recorder, so what is asserted is
 *which pipeline function was called with which arguments*.
 
 The one thing it deliberately does not re-check is byte-level output: that is
@@ -22,8 +22,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from evm import _cli
-from evm.presets import PRESETS
+from vidmag import _cli
+from vidmag.presets import PRESETS
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -45,7 +45,7 @@ class Recorder:
         # The CLI filters parameters by the real function's signature, so the
         # stand-in has to carry it — otherwise this test would pass on a
         # pipeline that no longer accepts what the CLI sends it.
-        import evm.cpu.magnify as cpu
+        import vidmag.cpu.magnify as cpu
 
         # Setting __signature__ is how inspect.signature is redirected at
         # run time; the type system has no way to express it.
@@ -57,10 +57,10 @@ class Recorder:
 
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    import evm.backend
+    import vidmag.backend
 
     rec = Recorder()
-    monkeypatch.setattr(evm.backend, "select", lambda name: ("cpu", rec))
+    monkeypatch.setattr(vidmag.backend, "select", lambda name: ("cpu", rec))
     return rec
 
 
@@ -105,7 +105,7 @@ def test_mode_iir_reproduces_run_evm_pys_defaults(recorder):
 
 
 def test_butter_is_reachable_and_no_preset_covers_it(recorder):
-    """The reason the CLI drives ``magnify_<stem>`` rather than ``evm.magnify``:
+    """The reason the CLI drives ``magnify_<stem>`` rather than ``vidmag.magnify``:
     this pipeline has no preset, and ``run_evm.py --mode butter`` always ran it."""
     assert "motion_lpyr_butter" not in {s.pipeline for s in PRESETS.values()}
     assert run(["magnify", "in.mp4", "out.mp4", "--mode", "butter",

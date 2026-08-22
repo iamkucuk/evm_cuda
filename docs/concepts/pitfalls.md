@@ -57,7 +57,7 @@ The library never falls back silently, so this means the backend genuinely
 could not run. Ask it why:
 
 ```python
-from evm.backend import registry
+from vidmag.backend import registry
 
 for info in registry.list_backends():
     print(info.name, info.unavailable_reason or "available")

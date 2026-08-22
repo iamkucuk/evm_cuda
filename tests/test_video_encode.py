@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from evm.io.video import encode_video, save_video
+from vidmag.io.video import encode_video, save_video
 
 
 def _codec_and_pixfmt(path: Path) -> tuple[str, str]:

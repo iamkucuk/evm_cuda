@@ -37,7 +37,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-# ROOT for the ``tests`` package below; ROOT/src for ``evm`` until the editable
+# ROOT for the ``tests`` package below; ROOT/src for ``vidmag`` until the editable
 # install lands (plan steps 1.10/1.12), after which the src entry can go.
 for _p in (str(ROOT), str(ROOT / "src")):
     if _p not in sys.path:

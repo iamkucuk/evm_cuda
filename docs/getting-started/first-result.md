@@ -12,7 +12,7 @@ into a `data/` directory next to where you are working.
 From a checkout of this repository there is a command for it:
 
 ```bash
-evm-magnify download face baby
+vidmag download face baby
 ```
 
 That one needs the repository, not just the installed package: it wraps
@@ -22,7 +22,7 @@ wheel. With only the library installed, fetch the two files yourself.
 ## Make a pulse visible
 
 ```bash
-evm-magnify magnify data/face.mp4 pulse.mp4 --preset pulse
+vidmag magnify data/face.mp4 pulse.mp4 --preset pulse
 ```
 
 Play `pulse.mp4` next to the original. The face takes on a green flush that
@@ -36,7 +36,7 @@ the graphics processor did the work.
 ## Make a small movement visible
 
 ```bash
-evm-magnify magnify data/baby.mp4 breathing.mp4 --preset motion
+vidmag magnify data/baby.mp4 breathing.mp4 --preset motion
 ```
 
 The sleeping child's chest now visibly rises and falls. The real movement is
@@ -45,19 +45,19 @@ under a millimetre.
 ## The same thing from Python
 
 ```python
-import evm
+import vidmag
 
-evm.magnify("data/face.mp4", preset="pulse", out="pulse.mp4")
+vidmag.magnify("data/face.mp4", preset="pulse", out="pulse.mp4")
 ```
 
 Or on frames you already have, with no file involved:
 
 ```python
 import numpy as np
-import evm
+import vidmag
 
 frames = np.zeros((90, 64, 64, 3), dtype=np.uint8)  # your frames, 8-bit BGR
-amplified = evm.magnify(frames, preset="motion")
+amplified = vidmag.magnify(frames, preset="motion")
 print(amplified.shape, amplified.dtype)
 ```
 

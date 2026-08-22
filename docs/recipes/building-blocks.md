@@ -22,7 +22,7 @@ are built from.
 
 ```python
 import numpy as np
-from evm.cpu import ops
+from vidmag.cpu import ops
 
 frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)  # your frames, 8-bit BGR
 
@@ -40,8 +40,8 @@ processor. Nothing is copied back until you ask for it:
 
 ```python
 import numpy as np
-from evm.cuda import ops
-from evm.cuda.array import DeviceArray
+from vidmag.cuda import ops
+from vidmag.cuda.array import DeviceArray
 
 frames = DeviceArray.from_numpy(np.zeros((60, 64, 64, 3), dtype=np.uint8))
 
@@ -75,7 +75,7 @@ wherever the library does:
 
 ```python
 import numpy as np
-from evm.backend import registry
+from vidmag.backend import registry
 
 frames = np.zeros((60, 64, 64, 3), dtype=np.uint8)  # your frames, 8-bit BGR
 
@@ -92,7 +92,7 @@ print(out.shape)
 Implement the operations listed above for whatever the hardware is, then:
 
 ```python
-from evm.backend import generic, registry
+from vidmag.backend import generic, registry
 
 backend = generic.bind(my_operations)  # all four pipelines, derived
 ```

@@ -1,15 +1,15 @@
-"""Laplacian pyramid round-trip + per-level match vs evm.cpu.pyramids."""
+"""Laplacian pyramid round-trip + per-level match vs vidmag.cpu.pyramids."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from evm.cpu.pyramids import build_lpyr, max_pyr_ht
+from vidmag.cpu.pyramids import build_lpyr, max_pyr_ht
 from conftest import TOL, abs_err, have_cuda, skip_no_cuda, BINOM5_CUDA
 
 if have_cuda:
-    from evm.cuda import _evm_cuda
+    from vidmag.cuda import _vidmag_cuda
 
 
 @skip_no_cuda
@@ -20,9 +20,9 @@ def test_lpyr_roundtrip_cuda(h, w):
     img = rng.random((h, w)).astype(np.float32)
     levels = 1 + max_pyr_ht((h, w), 5)
 
-    bands_list, _ = _evm_cuda.lpyr_build(img, levels, BINOM5_CUDA)
+    bands_list, _ = _vidmag_cuda.lpyr_build(img, levels, BINOM5_CUDA)
     bands = [np.ascontiguousarray(b, dtype=np.float32) for b in bands_list]
-    recon = _evm_cuda.lpyr_recon(bands, BINOM5_CUDA)
+    recon = _vidmag_cuda.lpyr_recon(bands, BINOM5_CUDA)
     assert recon.shape == img.shape
     assert abs_err(recon, img) < TOL["lpyr_roundtrip"]
 
@@ -42,7 +42,7 @@ def test_lpyr_bands_match_baseline(h, w):
     for l in range(levels):
         offsets.append(offsets[-1] + int(pind[l, 0] * pind[l, 1]))
 
-    cuda_bands, _ = _evm_cuda.lpyr_build(img, levels, BINOM5_CUDA)
+    cuda_bands, _ = _vidmag_cuda.lpyr_build(img, levels, BINOM5_CUDA)
     for l in range(levels):
         lh, lw = int(pind[l, 0]), int(pind[l, 1])
         py_band = pyr[offsets[l]:offsets[l + 1]].reshape(lh, lw).astype(np.float32)
@@ -54,13 +54,13 @@ def test_lpyr_bands_match_baseline(h, w):
 @pytest.mark.parametrize("h,w", [(64, 64), (45, 33)])
 def test_blur_dn_matches_baseline(h, w):
     """blur_dn downsampled output matches Python baseline at each nlevs."""
-    from evm.cpu.pyramids import blur_dn
+    from vidmag.cpu.pyramids import blur_dn
     rng = np.random.default_rng(1)
     img = rng.random((h, w)).astype(np.float32)
     from conftest import BINOM5_SUM1_CUDA
     for nlevs in (1, 2, 3):
         # Python baseline (FP64).
         py = blur_dn(img.astype(np.float64), nlevs).astype(np.float32)
-        cu = _evm_cuda.blur_dn(img, nlevs, BINOM5_SUM1_CUDA)
+        cu = _vidmag_cuda.blur_dn(img, nlevs, BINOM5_SUM1_CUDA)
         assert cu.shape == py.shape
         assert abs_err(cu, py) < TOL["blur_dn"]

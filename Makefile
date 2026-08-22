@@ -1,9 +1,9 @@
-# Makefile for EVM CUDA — install, test, run, profile.
+# Makefile for vidmag — install, test, run, profile.
 #
 # Quick start:
 #   make install-dev    # editable install + dev/build tooling (do this first)
-#   make build          # rebuild after touching cuda/ (needs nvcc for the GPU part)
-#   make test           # all 111 tests (63 of them need a GPU)
+#   make build          # rebuild after touching src/vidmag/cuda/ (needs nvcc for the GPU part)
+#   make test           # all 402 tests (98 of them need an NVIDIA GPU)
 #   make run-color      # magnify pulse on face.mp4
 #   make profile        # CPU vs FP32 vs FP16 comparison
 #   make help           # list all targets
@@ -20,9 +20,9 @@
 # pip is always invoked as `$(PYTHON) -m pip`, so pip and the target interpreter
 # cannot disagree about where the install lands.
 #
-# There is no PYTHONPATH here any more: `evm` and the deprecated `evm_cuda`
-# shim come from the editable install, which is the same code path a user gets
-# from `pip install evm-magnify`.
+# There is no PYTHONPATH here any more: `vidmag` comes from the editable
+# install, which is the same code path a user gets from `pip install vidmag`.
+# The `evm_cuda` compatibility shim that briefly existed here has been removed.
 
 .PHONY: help check-env install-dev build clean download \
         test test-baseline test-cuda \
@@ -63,7 +63,7 @@ check-env: ## Fail unless $(PYTHON) is an isolated env (venv or named conda env)
 	"\n  REFUSING TO INSTALL into " + sys.executable + "\n" \
 	"  prefix: " + p + "\n" \
 	"  That is not a virtual environment or a named conda env, so this would\n" \
-	"  install evm-magnify into a system or conda-base interpreter.\n\n" \
+	"  install vidmag into a system or conda-base interpreter.\n\n" \
 	"  Activate the project environment, or name the interpreter:\n" \
 	"      source .venv/bin/activate && make <target>\n" \
 	"      make <target> PYTHON=.venv/bin/python\n")'
@@ -75,48 +75,51 @@ check-env: ## Fail unless $(PYTHON) is an isolated env (venv or named conda env)
 install-dev: check-env ## Editable install with the dev + CUDA build tooling
 	$(PYTHON) -m pip install -e ".[dev,cuda-build]" -v
 
-# Rebuild after editing cuda/. --no-build-isolation reuses the toolchain that
+# Rebuild after editing src/vidmag/cuda/. --no-build-isolation reuses the toolchain that
 # install-dev put in the venv instead of re-downloading it every time, so
 # install-dev has to have run at least once. If it has not, pip stops with
 # "BackendUnavailable: Cannot import 'scikit_build_core.build'" — run
 # `make install-dev` and try again.
-build: check-env ## Rebuild the package (compiles _evm_cuda when nvcc is present)
+build: check-env ## Rebuild the package (compiles _vidmag_cuda when nvcc is present)
 	$(PYTHON) -m pip install -e . --no-build-isolation -v
 
 # Two things a build can leave inside the checkout, both gitignored:
 #
-#   src/evm/cuda/_evm_cuda*.so — src/evm/cuda/CMakeLists.txt sets LIBRARY_OUTPUT_DIRECTORY
-#     to ../src/evm/cuda, and pip builds in-tree, so BOTH `pip install .` and
+#   src/vidmag/cuda/_vidmag_cuda*.so — src/vidmag/cuda/CMakeLists.txt sets LIBRARY_OUTPUT_DIRECTORY
+#     to ../src/vidmag/cuda, and pip builds in-tree, so BOTH `pip install .` and
 #     `pip install -e .` write it there (measured on the GPU box 2026-08-09:
-#     _evm_cuda.cpython-312-x86_64-linux-gnu.so, identical in both modes).
-#   cuda/build/ — NOT produced by pip: scikit-build-core configures CMake in a
-#     temporary directory. It is produced by the direct CMake entry point that
-#     src/evm/cuda/CMakeLists.txt:3 documents (`cmake -S cuda -B cuda/build`), which is
-#     why .gitignore still lists it. Removing it here is a no-op after a pip
-#     build and the whole point after a manual one.
+#     _vidmag_cuda.cpython-312-x86_64-linux-gnu.so, identical in both modes).
+#   src/vidmag/cuda/build/ — NOT produced by pip: scikit-build-core configures
+#     CMake in a temporary directory. It is produced by the direct CMake entry
+#     point that src/vidmag/cuda/CMakeLists.txt:3 documents
+#     (`cmake -S src/vidmag/cuda -B src/vidmag/cuda/build`), which is why
+#     .gitignore lists it. Removing it here is a no-op after a pip build and the
+#     whole point after a manual one.
 #
-# The wheel's own copy under site-packages/evm/cuda/ is outside the repo and
-# stays out of scope: `pip uninstall evm-magnify` owns that one. No *.pyd glob —
+# The wheel's own copy under site-packages/vidmag/cuda/ is outside the repo and
+# stays out of scope: `pip uninstall vidmag` owns that one. No *.pyd glob —
 # Windows is untested and has never produced one here.
-clean: ## Delete build artifacts from the source tree (.so + cuda/build)
-	rm -f $(ROOT)/src/evm/cuda/_evm_cuda*.so
-	rm -rf $(ROOT)/cuda/build
+clean: ## Delete build artifacts from the source tree (.so + the manual CMake build dir)
+	rm -f $(ROOT)/src/vidmag/cuda/_vidmag_cuda*.so
+	rm -rf $(ROOT)/src/vidmag/cuda/build
 
 download: ## Download MIT sample videos + reference outputs
 	$(PYTHON) $(SCRIPTS)/download_samples.py face baby --with-references
 
 # --- Tests ------------------------------------------------------------------
 # tests/cuda/ is a subdirectory of tests/, so pytest de-duplicates the two
-# arguments below: 111 cases total, of which tests/cuda/ contributes 63.
-test: ## All tests: Python baseline + CUDA kernels (111 cases)
+# arguments below: 402 cases total, of which tests/cuda/ contributes 98.
+test: ## All tests: Python baseline + CUDA kernels (402 cases)
 	$(PYTHON) -m pytest tests/ tests/cuda/ -q
 
-# The 63 CUDA cases skip themselves without a GPU, which is what makes this
-# runnable anywhere; on a GPU host it is the same run as `make test`.
-test-baseline: ## Everything runnable without a GPU (48 pass, 63 CUDA cases skip)
+# The 98 CUDA cases skip themselves when the extension is not built, which is
+# what makes this runnable anywhere; on an NVIDIA host it is the same run as
+# `make test`. On this Mac (2026-08-18): 300 passed, 102 skipped — 98 of those
+# skips are the whole NVIDIA suite and prove nothing about it.
+test-baseline: ## Everything runnable without an NVIDIA GPU (300 pass, 102 skip)
 	$(PYTHON) -m pytest tests/ -q
 
-test-cuda: ## CUDA kernel tests vs Python baseline (needs GPU)
+test-cuda: ## CUDA kernel tests vs the Python baseline (needs an NVIDIA GPU)
 	$(PYTHON) -m pytest tests/cuda/ -v
 
 # --- Run pipelines ----------------------------------------------------------

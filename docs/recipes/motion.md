@@ -5,9 +5,9 @@ the small sway of something that looks still. The motion pipeline makes these
 visible by amplifying how much the picture's detail shifts over time.
 
 ```python
-import evm
+import vidmag
 
-evm.magnify("baby.mp4", preset="motion", out="breathing.mp4")
+vidmag.magnify("baby.mp4", preset="motion", out="breathing.mp4")
 ```
 
 ## Which of the three filters to use
@@ -37,8 +37,8 @@ breaks, and where the sensor noise is. Raising it reduces artefacts and
 amplifies less; lowering it does the reverse.
 
 ```python
-gentle = evm.magnify("clip.mp4", preset="motion", alpha=5, lambda_c=32)
-strong = evm.magnify("clip.mp4", preset="motion", alpha=25, lambda_c=8)
+gentle = vidmag.magnify("clip.mp4", preset="motion", alpha=5, lambda_c=32)
+strong = vidmag.magnify("clip.mp4", preset="motion", alpha=25, lambda_c=8)
 ```
 
 If the result looks like it is made of shimmering ripples, that is too much
@@ -58,8 +58,8 @@ overlapping chunks and discard the overlap:
 
 ```python
 import numpy as np
-import evm
-from evm.io.video import load_video
+import vidmag
+from vidmag.io.video import load_video
 
 video, info = load_video("long.mp4")
 frames = np.clip(np.rint(video * 255), 0, 255).astype(np.uint8)
@@ -67,7 +67,7 @@ frames = np.clip(np.rint(video * 255), 0, 255).astype(np.uint8)
 chunk, overlap, pieces = 300, 30, []
 for start in range(0, len(frames), chunk):
     block = frames[max(0, start - overlap) : start + chunk]
-    out = evm.magnify(block, preset="motion", fps=info.fps)
+    out = vidmag.magnify(block, preset="motion", fps=info.fps)
     pieces.append(out[overlap:] if start else out)
 
 result = np.concatenate(pieces)

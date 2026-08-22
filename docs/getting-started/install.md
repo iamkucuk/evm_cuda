@@ -1,7 +1,7 @@
 # Installing
 
 ```bash
-pip install evm-magnify
+pip install vidmag
 ```
 
 That is the whole thing on any machine. It always gives you a working library
@@ -16,24 +16,24 @@ the machine.
 
 ```bash
 nvcc --version          # if this prints a version, the extension will be built
-pip install evm-magnify
+pip install vidmag
 ```
 
 If `nvcc` is absent the install still succeeds and prints a message saying the
 extension was skipped. That is deliberate: a missing compiler should not stop
 you installing a library that works without it. To turn the absence into an
-error instead, set `EVM_CUDA_REQUIRE=1` before installing.
+error instead, set `VIDMAG_CUDA_REQUIRE=1` before installing.
 
 By default the extension is compiled for the graphics processor in the machine
 doing the compiling. To build one that runs on a range of NVIDIA hardware, set
-`EVM_CUDA_ARCHS=all`.
+`VIDMAG_CUDA_ARCHS=all`.
 
 Check what you got:
 
 ```python
-import evm.cuda
+import vidmag.cuda
 
-print(evm.cuda.have_cuda)
+print(vidmag.cuda.have_cuda)
 ```
 
 ## Using an Apple, AMD or Intel graphics processor
@@ -41,7 +41,7 @@ print(evm.cuda.have_cuda)
 These are reached through OpenCL, which needs one extra Python package:
 
 ```bash
-pip install "evm-magnify[opencl]"
+pip install "vidmag[opencl]"
 ```
 
 The driver itself comes from your operating system or your graphics vendor, not
@@ -49,7 +49,7 @@ from this project. macOS ships one. On Linux it comes from the vendor's driver
 package. To find out whether both halves are present:
 
 ```python
-from evm.opencl import runtime
+from vidmag.opencl import runtime
 
 print(runtime.unavailable_reason() or f"ready: {runtime.device_name()}")
 ```
@@ -61,11 +61,11 @@ are different jobs.
 ## Which one gets used
 
 By default, the fastest that will run: hand-written CUDA, then OpenCL, then the
-processor cores. The choice is reported through the `evm` logger, and you can
+processor cores. The choice is reported through the `vidmag` logger, and you can
 ask before running:
 
 ```python
-from evm import backend
+from vidmag import backend
 
 name, _ = backend.select("auto")
 print(name)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GPU profiler: color+motion × FP32+FP16 on Kaggle (P100 or T4).
 
-Uses the same ``evm.cuda.benchmark.run`` harness as local/H100:
+Uses the same ``vidmag.cuda.benchmark.run`` harness as local/H100:
 1 untimed warmup + median of ``N_ITER`` timed runs, sync per stage.
 
 Push:
@@ -11,6 +11,7 @@ Status:
 Pull:
     kaggle kernels output furkankucuk/evm-cuda-gpu-comparison -p ./kaggle/results_gpu
 """
+
 from __future__ import annotations
 
 import gc
@@ -23,13 +24,11 @@ import sys
 from pathlib import Path
 
 REPO_URL = "https://github.com/iamkucuk/eulerian-video-magnification-cuda.git"
-# Measure main: the half-smem / true half-band work has landed there.
-BRANCH = "main"
+# The branch carrying the current kernels. Change back to "main" once this
+# branch is merged there.
+BRANCH = "library-restructure"
 REPO_DIR = Path("evm_cuda")
 N_ITER = 7
-
-# CPU baselines used in README and docs/internals/making-it-fast.md (NumPy).
-CPU_REF_MS = {"color": 11194.0, "motion": 44190.0}
 
 # Match remeasure scripts across hosts.
 COLOR = dict(
@@ -76,6 +75,40 @@ def pack(r):
     }
 
 
+def measure_cpu_baseline() -> dict:
+    """Time the NumPy reference on this machine, for both clips.
+
+    Returned in milliseconds, keyed by pipeline. Any failure returns an empty
+    mapping rather than raising: the graphics measurements are the point of this
+    run, and losing them because a reference timing failed would be the wrong
+    trade.
+    """
+    import time
+
+    import numpy as np
+
+    import vidmag
+    from vidmag.cuda._common import read_frames
+
+    out = {}
+    for pipeline, clip, preset in (
+        ("color", "data/face.mp4", "pulse"),
+        ("motion", "data/baby.mp4", "motion"),
+    ):
+        try:
+            frame_list, fps = read_frames(clip)
+            frames = np.asarray(frame_list)
+            t0 = time.perf_counter()
+            vidmag.magnify(frames, preset=preset, fps=fps, backend="cpu")
+            out[pipeline] = (time.perf_counter() - t0) * 1e3
+            print(
+                f"  processor baseline, {pipeline}: {out[pipeline]:,.0f} ms", flush=True
+            )
+        except Exception as exc:  # reported, never fatal — see the docstring
+            print(f"  processor baseline, {pipeline}: FAILED ({exc})", flush=True)
+    return out
+
+
 def main():
     r = subprocess.run(
         [
@@ -116,10 +149,10 @@ def main():
     run([sys.executable, "scripts/download_samples.py", "face", "baby"])
 
     # The package was installed after this interpreter started, so the import
-    # system's cached listing of site-packages has to be dropped before `evm`
+    # system's cached listing of site-packages has to be dropped before `vidmag`
     # can be found.
     importlib.invalidate_caches()
-    from evm.cuda import benchmark
+    from vidmag.cuda import benchmark
 
     os.makedirs("output", exist_ok=True)
     results = []
@@ -151,9 +184,17 @@ def main():
     print("=" * 60, flush=True)
     print(benchmark.summarize(results, n_iter=N_ITER), flush=True)
 
-    print("\nSpeedup vs CPU baseline (README CPU numbers):", flush=True)
+    # The processor baseline is measured HERE, on the machine that ran the
+    # kernels. It used to be two numbers copied from the README, measured on a
+    # different machine entirely; dividing this machine's graphics time by that
+    # machine's processor time produces a ratio describing neither. If the
+    # baseline cannot be measured the ratios are simply omitted, because a
+    # missing ratio is better than a meaningless one.
+    cpu_ref_ms = measure_cpu_baseline()
+
+    print("\nSpeedup against this machine's own processor baseline:", flush=True)
     by = {(r.pipeline, r.precision): r for r in results}
-    for pipe, cpu_ms in CPU_REF_MS.items():
+    for pipe, cpu_ms in cpu_ref_ms.items():
         for prec in ("fp32", "fp16"):
             res = by.get((pipe, prec))
             if res and res.measured and res.compute_ms > 0:
@@ -178,7 +219,7 @@ def main():
         "vram": vram,
         "branch": BRANCH,
         "n_iter": N_ITER,
-        "cpu_ref_ms": CPU_REF_MS,
+        "cpu_ref_ms": cpu_ref_ms,
         "params": {"color": COLOR, "motion": MOTION},
         "results": packed,
     }

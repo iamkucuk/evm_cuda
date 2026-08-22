@@ -30,10 +30,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import evm
-from evm import backend
-from evm.cpu.magnify import DROP_LAST
-from evm.presets import PRESETS, Preset
+import vidmag
+from vidmag import backend
+from vidmag.cpu.magnify import DROP_LAST
+from vidmag.presets import PRESETS, Preset
 
 from conftest import TOL, skip_no_cuda  # tests/cuda/ imports its conftest by name
 
@@ -43,11 +43,11 @@ ACCELERATORS = [pytest.param("cuda", marks=skip_no_cuda)]
 
 #: Which pipelines the CUDA backend has an fp16 body for — read from the
 #: package's own ``__all__`` rather than retyped here. A backend advertises a
-#: precision by *having* ``<stem>_fp16_core`` (``evm/api.py:_resolve_core``), so
+#: precision by *having* ``<stem>_fp16_core`` (``vidmag/api.py:_resolve_core``), so
 #: this set cannot drift from the code the way a capability flag could.
 CUDA_FP16_STEMS = {
     name[: -len("_fp16_core")]
-    for name in evm.cuda.__all__
+    for name in vidmag.cuda.__all__
     if name.endswith("_fp16_core")
 }
 
@@ -115,9 +115,9 @@ def test_backend_agrees_with_the_cpu_oracle(backend_name, preset_name, clip):
     spec = PRESETS[preset_name]
     fps = in_band_fps(spec, clip)
 
-    oracle = evm.magnify(clip, preset=preset_name, backend="cpu", fps=fps)
+    oracle = vidmag.magnify(clip, preset=preset_name, backend="cpu", fps=fps)
     try:
-        got = evm.magnify(clip, preset=preset_name, backend=backend_name, fps=fps)
+        got = vidmag.magnify(clip, preset=preset_name, backend=backend_name, fps=fps)
     except ValueError as exc:
         # Not every pipeline exists on every backend — the phase-based one is
         # currently written only for the processor. Refusing is the correct
@@ -159,13 +159,13 @@ def test_cuda_fp16_matches_the_oracle_where_it_exists_and_refuses_where_it_does_
 
     if spec.pipeline not in CUDA_FP16_STEMS:
         with pytest.raises(ValueError, match="fp16"):
-            evm.magnify(
+            vidmag.magnify(
                 clip, preset=preset_name, backend="cuda", precision="fp16", fps=fps
             )
         return
 
-    oracle = evm.magnify(clip, preset=preset_name, backend="cpu", fps=fps)
-    got = evm.magnify(
+    oracle = vidmag.magnify(clip, preset=preset_name, backend="cpu", fps=fps)
+    got = vidmag.magnify(
         clip, preset=preset_name, backend="cuda", precision="fp16", fps=fps
     )
     assert _mean_abs_lsb(oracle, clip) > 1.0, "the oracle did not magnify"
@@ -192,6 +192,6 @@ def test_auto_picks_the_gpu_here_and_says_so(clip, caplog):
     name, _ = backend.select("auto")
     assert name == "cuda", f"auto chose {name!r} on a machine with CUDA available"
 
-    with caplog.at_level("INFO", logger="evm"):
-        evm.magnify(clip, preset="motion")
+    with caplog.at_level("INFO", logger="vidmag"):
+        vidmag.magnify(clip, preset="motion")
     assert "backend='cuda'" in caplog.text

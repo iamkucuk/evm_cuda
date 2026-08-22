@@ -1,20 +1,20 @@
-# Build backend: scikit-build-core. It drives src/evm/cuda/CMakeLists.txt, which builds
-# the optional _evm_cuda extension. That CMakeLists configures cleanly and
+# Build backend: scikit-build-core. It drives src/vidmag/cuda/CMakeLists.txt, which builds
+# the optional _vidmag_cuda extension. That CMakeLists configures cleanly and
 # defines no target when there is no CUDA compiler, so `pip install .` succeeds
 # on any machine and produces a working CPU-only package; with nvcc present the
 # same command also compiles and installs the GPU extension.
 [build-system]
 # pybind11 is a build requirement, not a runtime one. Without it here,
-# src/evm/cuda/CMakeLists.txt falls back to downloading pybind11 from GitHub during the
+# src/vidmag/cuda/CMakeLists.txt falls back to downloading pybind11 from GitHub during the
 # build, which turns `pip install` into something that needs network access and
 # a working git. Declaring it lets pip supply it from a wheel instead.
 requires = ["scikit-build-core>=1.0", "pybind11>=2.10"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "evm-magnify"
+name = "vidmag"
 version = "0.1.0"
-description = "Reveal colour and motion changes in video too small to see — on processors and on graphics hardware from any vendor."
+description = "Eulerian Video Magnification: reveal colour and motion changes in video too small to see. Hand-written CUDA at the core, five more backends so it runs anywhere."
 readme = "README.md"
 requires-python = ">=3.9"
 # PEP 639 form, replacing the deprecated `license = { text = ... }` table that
@@ -77,13 +77,13 @@ cuda-build = [
 ]
 # The portable backend. pyopencl is the Python binding; the OpenCL driver
 # itself comes from the operating system or the graphics vendor, so installing
-# this extra is necessary but not always sufficient — evm.opencl.runtime says
+# this extra is necessary but not always sufficient — vidmag.opencl.runtime says
 # which of the two is missing.
 opencl = [
     "pyopencl>=2024.1",
 ]
 # Apple's own graphics interface, through the Objective-C bridge. macOS only;
-# there is nothing to install elsewhere, and evm.metal.runtime says so rather
+# there is nothing to install elsewhere, and vidmag.metal.runtime says so rather
 # than failing obscurely.
 metal = [
     "pyobjc-framework-Metal>=10.0; sys_platform == 'darwin'",
@@ -128,11 +128,11 @@ lint = [
     "mypy==2.3.0",
 ]
 
-# The console command. `evm` alone was rejected (plan decision D5): it collides
-# with Ethereum tooling, which already owns that name on PATH for a lot of
-# people. Subcommands: magnify / download / bench.
+# The console command. `evm` was rejected as the command name (plan decision
+# D5) because it collides with Ethereum tooling, which already owns that name
+# on PATH for a lot of people. Subcommands: magnify / stream / bench / download.
 [project.scripts]
-evm-magnify = "evm._cli:main"
+vidmag = "vidmag._cli:main"
 
 [project.urls]
 Homepage = "https://iamkucuk.github.io/eulerian-video-magnification-cuda/"
@@ -144,16 +144,16 @@ Issues = "https://github.com/iamkucuk/eulerian-video-magnification-cuda/issues"
 # [build-system].requires, so a later scikit-build-core release cannot silently
 # change how this project builds.
 minimum-version = "build-system.requires"
-# The CMake project lives beside the Python it builds for, in src/evm/cuda/,
+# The CMake project lives beside the Python it builds for, in src/vidmag/cuda/,
 # so every backend's kernels are found in that backend's directory.
 # `cmake.version` is deliberately left unset: scikit-build-core then reads the
 # requirement from that file's cmake_minimum_required(VERSION 3.24) instead of
 # duplicating the number here.
-cmake.source-dir = "src/evm/cuda"
+cmake.source-dir = "src/vidmag/cuda"
 # Pure-Python packages are copied from src/ as-is. The compiled extension is
-# placed beside them by `install(TARGETS _evm_cuda LIBRARY DESTINATION evm/cuda)`
-# in src/evm/cuda/CMakeLists.txt, so it lands at evm/cuda/_evm_cuda*.so.
-wheel.packages = ["src/evm"]
+# placed beside them by `install(TARGETS _vidmag_cuda LIBRARY DESTINATION vidmag/cuda)`
+# in src/vidmag/cuda/CMakeLists.txt, so it lands at vidmag/cuda/_vidmag_cuda*.so.
+wheel.packages = ["src/vidmag"]
 # The NVIDIA sources live inside the package so that each backend's kernels sit
 # in that backend's directory, but they are BUILD inputs: nvcc turns them into
 # the extension at install time and nothing reads them afterwards. They are
@@ -161,13 +161,13 @@ wheel.packages = ["src/evm"]
 # is what someone building from source needs. The other backends' kernels are
 # the opposite case — their drivers compile them at run time — so those ship.
 # Paths here are relative to the WHEEL root, where the package installs as
-# evm/cuda/ — not to the source tree, which is src/evm/cuda/.
+# vidmag/cuda/ — not to the source tree, which is src/vidmag/cuda/.
 wheel.exclude = [
-    "evm/cuda/CMakeLists.txt",
-    "evm/cuda/DESIGN.md",
-    "evm/cuda/bindings.cpp",
-    "evm/cuda/kernels/*",
-    "evm/cuda/include/*",
+    "vidmag/cuda/CMakeLists.txt",
+    "vidmag/cuda/DESIGN.md",
+    "vidmag/cuda/bindings.cpp",
+    "vidmag/cuda/kernels/*",
+    "vidmag/cuda/include/*",
 ]
 # The kernels are not Python files, so they need naming explicitly or the wheel
 # would install a package whose backends have nothing to compile or run: the
@@ -175,14 +175,14 @@ wheel.exclude = [
 # installing needs no shader compiler, while the OpenCL and Metal kernels are
 # compiled by their own drivers at run time from these sources.
 sdist.include = [
-    "src/evm/cuda/CMakeLists.txt",
-    "src/evm/cuda/bindings.cpp",
-    "src/evm/cuda/kernels/*.cu",
-    "src/evm/cuda/include/*.cuh",
-    "src/evm/vulkan/shaders/*.spv",
-    "src/evm/vulkan/shaders/*.comp",
-    "src/evm/opencl/*.cl",
-    "src/evm/metal/*.metal",
+    "src/vidmag/cuda/CMakeLists.txt",
+    "src/vidmag/cuda/bindings.cpp",
+    "src/vidmag/cuda/kernels/*.cu",
+    "src/vidmag/cuda/include/*.cuh",
+    "src/vidmag/vulkan/shaders/*.spv",
+    "src/vidmag/vulkan/shaders/*.comp",
+    "src/vidmag/opencl/*.cl",
+    "src/vidmag/metal/*.metal",
 ]
 
 [tool.pytest.ini_options]
@@ -202,7 +202,7 @@ testpaths = ["tests"]
 # files at 88 / 100 / 110 columns leaves 14 / 11 / 10 of them already
 # byte-identical to the formatter's output (25 / 21 / 20 counting the whole
 # tree, which adds .pyi and the notebook). 88 is not merely the best score: it
-# is the only width at which all of src/evm/backend/ and presets.py — the most
+# is the only width at which all of src/vidmag/backend/ and presets.py — the most
 # recently written modules — come out unchanged, 5 of 5 files, against 2 and 3
 # reformatted at 100 and 110. A wider limit scores *worse* because the
 # formatter then joins lines that were wrapped by hand.
@@ -250,7 +250,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# `import evm` with nothing used from it: importing the oracle is the point,
+# `import vidmag` with nothing used from it: importing the oracle is the point,
 # because a missing install must fail here, loudly, before any CUDA test runs.
 "tests/cuda/conftest.py" = ["F401"]
 # 36 false positives, one cause. This module frees pooled device memory as soon
@@ -271,7 +271,7 @@ ignore = [
 # d_gdown_planar, d_gdown_thwc, d_sig, d_filt, d_filtered, d_bands) is the
 # target of a `del` in its own function. Scoped to this one file so F821 keeps
 # working everywhere else.
-"src/evm/cuda/batched.py" = ["F821"]
+"src/vidmag/cuda/batched.py" = ["F821"]
 
 [tool.ruff.format]
 # THE DEBT LIST, and the only place it is written down. `ruff format` was never
@@ -299,21 +299,21 @@ exclude = [
     "scripts/profile_full_comparison.py",
     "scripts/experiments/prove_fp16_cost.py",
     "scripts/render_cuda_videos.py",
-    "src/evm/__init__.py",
-    "src/evm/_cli.py",
-    "src/evm/api.py",
-    "src/evm/cpu/filters.py",
-    "src/evm/cpu/magnify.py",
-    "src/evm/cpu/pyramids.py",
-    "src/evm/cuda/__init__.py",
-    "src/evm/cuda/_common.py",
-    "src/evm/cuda/batched.py",
-    "src/evm/cuda/benchmark.py",
-    "src/evm/cuda/pipelines.py",
-    "src/evm/cuda/runtime.py",
-    "src/evm/io/h264.py",
-    "src/evm/io/video.py",
-    "src/evm/notebook.py",
+    "src/vidmag/__init__.py",
+    "src/vidmag/_cli.py",
+    "src/vidmag/api.py",
+    "src/vidmag/cpu/filters.py",
+    "src/vidmag/cpu/magnify.py",
+    "src/vidmag/cpu/pyramids.py",
+    "src/vidmag/cuda/__init__.py",
+    "src/vidmag/cuda/_common.py",
+    "src/vidmag/cuda/batched.py",
+    "src/vidmag/cuda/benchmark.py",
+    "src/vidmag/cuda/pipelines.py",
+    "src/vidmag/cuda/runtime.py",
+    "src/vidmag/io/h264.py",
+    "src/vidmag/io/video.py",
+    "src/vidmag/notebook.py",
     "tests/__init__.py",
     "tests/cuda/conftest.py",
     "tests/cuda/test_api_cuda.py",
@@ -335,22 +335,23 @@ exclude = [
 ]
 
 # --------------------------------------------------------------------------
-# Mypy (plan step 2.3): permissive everywhere under src/evm, strict on the
+# Mypy (plan step 2.3): permissive everywhere under src/vidmag, strict on the
 # public surface only. Measured on 2026-08-09 with mypy 2.3.0 on this Mac:
 # permissive alone gives 22 errors in 6 files; adding the strict surface below
-# gives 28 in 7. The +6 are all in evm/api.py and evm/__init__.py —
-# evm.presets and every module of evm.backend already pass strict unchanged.
+# gives 28 in 7. The +6 are all in vidmag/api.py and vidmag/__init__.py —
+# vidmag.presets and every module of vidmag.backend already pass strict unchanged.
 # --------------------------------------------------------------------------
 [tool.mypy]
-# Where the packages live. Without this, a test importing `evm.cpu.ops` is
+# Where the packages live. Without this, a test importing `vidmag.cpu.ops` is
 # resolved against the installed copy rather than the source tree, and mypy
 # reports the submodule as missing when it is right there in src/.
 mypy_path = "src"
 # The tests and helper scripts are checked too, not just the shipped library.
 # A test that calls a function with the wrong argument types still passes if it
 # never reaches that line, so the checker is the only thing that catches it.
-# They are held to a lighter standard than src/evm — see the override below.
-files = ["src/evm", "tests", "scripts"]
+# They are held to a lighter standard than src/vidmag: the strict flags are
+# opted into per module, and only for the public library surface.
+files = ["src/vidmag", "tests", "scripts"]
 # Pinned rather than "whatever interpreter is running", so a local run and CI
 # cannot reach different verdicts.
 #
@@ -374,7 +375,7 @@ files = ["src/evm", "tests", "scripts"]
 # nothing else does either, since this tree has only ever been run on 3.13 and
 # 3.14. Worth resolving when the classifier list is revisited.
 python_version = "3.12"
-# numpy ships types; cv2, av, scipy and the compiled _evm_cuda do not. Hunting
+# numpy ships types; cv2, av, scipy and the compiled _vidmag_cuda do not. Hunting
 # stubs for four third-party libraries is not what this step is for.
 ignore_missing_imports = true
 warn_unused_configs = true
@@ -386,25 +387,25 @@ warn_redundant_casts = true
 # being needed is how a silenced error outlives its cause.
 warn_unused_ignores = true
 
-# The public surface: what `import evm` gives you, plus the contract every
+# The public surface: what `import vidmag` gives you, plus the contract every
 # future backend implements. Semver covers exactly these names (plan section 1,
 # item 4), so these are the names worth checking properly.
 #
 # The strict flags are spelled out one by one instead of `strict = true`.
 # That is not verbosity for its own sake — `strict = true` inside an overrides
 # table does NOT stay inside it. Verified on 2026-08-09 with mypy 2.3.0: a
-# config whose only override was `module = ["evm.presets"], strict = true`
-# still reported 131 errors in 13 files, 65 of them in evm/cuda/batched.py — a
+# config whose only override was `module = ["vidmag.presets"], strict = true`
+# still reported 131 errors in 13 files, 65 of them in vidmag/cuda/batched.py — a
 # module the override never named — broken down as 28 no-untyped-call, 24
 # no-untyped-def, 12 no-any-return and 1 attr-defined. Spelled out, the same
 # surface reports 28 in 7 — the strictness lands where it was aimed.
 [[tool.mypy.overrides]]
 module = [
-    "evm",
-    "evm.api",
-    "evm.presets",
-    "evm.backend",
-    "evm.backend.*",
+    "vidmag",
+    "vidmag.api",
+    "vidmag.presets",
+    "vidmag.backend",
+    "vidmag.backend.*",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
@@ -418,17 +419,18 @@ no_implicit_reexport = true
 strict_equality = true
 extra_checks = true
 
-# Tests and helper scripts are checked for real mistakes — undefined attributes,
-# wrong argument types, impossible returns — but not held to the strict flags
-# the library is. Requiring full annotations on test functions buys nothing: a
-# test's job is to be a readable assertion about behaviour, and pytest already
-# fails it if the behaviour is wrong.
-[[tool.mypy.overrides]]
-# The tests and scripts have no __init__.py, so mypy names them `test_foo` and
-# `run_evm`, not `tests.test_foo`. Matching on that shape is what makes this
-# override apply at all — `tests.*` silently matched nothing.
-module = ["test_*", "conftest", "run_evm", "download_samples", "profile_*", "render_*", "bound_*", "measure_*", "prove_*", "make_golden_fixtures"]
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_calls = false
-warn_return_any = false
+# No override for the tests and helper scripts, and that is deliberate rather
+# than an omission. The strict flags above are opted into per module for the
+# public library surface only; everything else is checked at mypy's default
+# level, which still catches undefined attributes, wrong argument types and
+# impossible returns. Requiring full annotations on a test function buys
+# nothing — its job is to be a readable assertion, and pytest fails it if the
+# behaviour is wrong.
+#
+# An override did live here and did nothing. It matched on `test_*`,
+# `profile_*`, `render_*`, `bound_*`, `measure_*` and `prove_*`; mypy requires a
+# `*` to be a whole dotted component and rejected all six with "Patterns must be
+# fully-qualified module names", printing that on every run. Verified 2026-08-18
+# by deleting the block: the result is unchanged at "no issues found in 88
+# source files". If a strict flag is ever moved into the global section, this is
+# where the exemption would have to be written, one exact module name per entry.

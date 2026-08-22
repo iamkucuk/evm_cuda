@@ -16,12 +16,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.cpu.pyramids import max_pyr_ht
+from vidmag.cpu.pyramids import max_pyr_ht
 from conftest import TOL, abs_err, have_cuda, skip_no_cuda, BINOM5_CUDA, BINOM5_SUM1_CUDA
 
 if have_cuda:
-    from evm.cuda import _evm_cuda
-    from evm.cuda.batched import DeviceBuffer, _d_binom5, _d_binom5_sum1
+    from vidmag.cuda import _vidmag_cuda
+    from vidmag.cuda.batched import DeviceBuffer, _d_binom5, _d_binom5_sum1
 
 
 @skip_no_cuda
@@ -42,7 +42,7 @@ def test_batched_lpyr_build_matches_single_slice(h, w):
 
     ref_bands = []  # ref_bands[m][level]
     for m in range(M):
-        bands_list, _ = _evm_cuda.lpyr_build(
+        bands_list, _ = _vidmag_cuda.lpyr_build(
             np.ascontiguousarray(imgs[m]), levels, BINOM5_CUDA)
         ref_bands.append([np.ascontiguousarray(b, dtype=np.float32) for b in bands_list])
 
@@ -58,7 +58,7 @@ def test_batched_lpyr_build_matches_single_slice(h, w):
     total_floats = sum(s * M for s in level_sizes)
     d_out = DeviceBuffer(total_floats * 4)
 
-    _evm_cuda.batched_lpyr_build(
+    _vidmag_cuda.batched_lpyr_build(
         d_in.ptr, d_out.ptr, n_frames, h, w, levels, _d_binom5(), 5)
 
     # Affine channel-outer: offset within level l = level_offset + m * sz
@@ -93,7 +93,7 @@ def test_batched_lpyr_recon_matches_single_slice(h, w):
     # Build reference bands using per-slice API.
     ref_bands = []
     for m in range(M):
-        bands_list, _ = _evm_cuda.lpyr_build(
+        bands_list, _ = _vidmag_cuda.lpyr_build(
             np.ascontiguousarray(imgs[m]), levels, BINOM5_CUDA)
         ref_bands.append([np.ascontiguousarray(b, dtype=np.float32) for b in bands_list])
 
@@ -119,14 +119,14 @@ def test_batched_lpyr_recon_matches_single_slice(h, w):
     d_bands = DeviceBuffer.from_array(np.ascontiguousarray(band_flat))
     d_out = DeviceBuffer(M * h * w * 4)
 
-    _evm_cuda.batched_lpyr_recon(
+    _vidmag_cuda.batched_lpyr_recon(
         d_bands.ptr, d_out.ptr, n_frames, h, w, levels, _d_binom5(), 5)
 
     out = d_out.download_f32(M * h * w).reshape(M, h, w)
 
     # Compare against per-slice recon.
     for m in range(M):
-        ref_recon = _evm_cuda.lpyr_recon(ref_bands[m], BINOM5_CUDA)
+        ref_recon = _vidmag_cuda.lpyr_recon(ref_bands[m], BINOM5_CUDA)
         assert abs_err(out[m], ref_recon) < TOL["lpyr_roundtrip"], \
             f"slice {m}: err={abs_err(out[m], ref_recon):.2e}"
 
@@ -147,7 +147,7 @@ def test_batched_blur_dn_color_matches_single_slice(h, w):
     # Reference: per-slice.
     ref = []
     for m in range(M):
-        cu = _evm_cuda.blur_dn(
+        cu = _vidmag_cuda.blur_dn(
             np.ascontiguousarray(imgs[m]), nlevs, BINOM5_SUM1_CUDA)
         ref.append(cu)
 
@@ -159,7 +159,7 @@ def test_batched_blur_dn_color_matches_single_slice(h, w):
 
     d_in = DeviceBuffer.from_array(imgs)
     d_out = DeviceBuffer(M * hl * wl * 4)
-    _evm_cuda.batched_blur_dn_color(
+    _vidmag_cuda.batched_blur_dn_color(
         d_in.ptr, d_out.ptr, M, h, w, nlevs,
         _d_binom5_sum1(), 5)
 
@@ -194,13 +194,13 @@ def test_batched_add_planar_quantize_matches_add_and_quantize():
         d = delta_interleaved[f].copy()
         d[:, :, 1] *= chrom_att
         d[:, :, 2] *= chrom_att
-        ref_out[f] = _evm_cuda.add_and_quantize(ntsc[f], d)
+        ref_out[f] = _vidmag_cuda.add_and_quantize(ntsc[f], d)
 
     # Batched fused kernel.
     d_ntsc = DeviceBuffer.from_array(np.ascontiguousarray(ntsc))
     d_delta = DeviceBuffer.from_array(np.ascontiguousarray(delta_planar))
     d_out = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_planar_quantize(
+    _vidmag_cuda.batched_add_planar_quantize(
         d_ntsc.ptr, d_delta.ptr, d_out.ptr, n, h, w, chrom_att)
 
     out = d_out.download_u8(n * h * w * 3).reshape(n, h, w, 3)
@@ -223,18 +223,18 @@ def test_batched_upsample_add_quantize_matches_two_kernel():
     # Reference: upsample then add+quantize (chrom_att=1.0 for color).
     d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
     d_upsampled = DeviceBuffer(n * out_h * out_w * 3 * 4)
-    _evm_cuda.batched_bilinear_upsample_3ch(
+    _vidmag_cuda.batched_bilinear_upsample_3ch(
         d_filt.ptr, d_upsampled.ptr, n, in_h, in_w, out_h, out_w)
     ref_up = d_upsampled.download_f32(n * out_h * out_w * 3).reshape(n, out_h, out_w, 3)
 
     ref_out = np.empty((n, out_h, out_w, 3), dtype=np.uint8)
     for f in range(n):
-        ref_out[f] = _evm_cuda.add_and_quantize(ntsc[f], ref_up[f])
+        ref_out[f] = _vidmag_cuda.add_and_quantize(ntsc[f], ref_up[f])
 
     # Fused kernel.
     d_ntsc = DeviceBuffer.from_array(np.ascontiguousarray(ntsc))
     d_out = DeviceBuffer(n * out_h * out_w * 3)
-    _evm_cuda.batched_upsample_add_quantize(
+    _vidmag_cuda.batched_upsample_add_quantize(
         d_ntsc.ptr, d_filt.ptr, d_out.ptr,
         n, in_h, in_w, out_h, out_w, 1.0)
 
@@ -268,7 +268,7 @@ def test_batched_blur_dn_color_f16_matches_fp32(h, w):
         wl = (wl + 1) // 2
     d_in_f32 = DeviceBuffer.from_array(imgs_f32)
     d_out_f32 = DeviceBuffer(M * hl * wl * 4)
-    _evm_cuda.batched_blur_dn_color(
+    _vidmag_cuda.batched_blur_dn_color(
         d_in_f32.ptr, d_out_f32.ptr, M, h, w, nlevs,
         _d_binom5_sum1(), 5)
     ref = d_out_f32.download_f32(M * hl * wl).reshape(M, hl, wl)
@@ -278,7 +278,7 @@ def test_batched_blur_dn_color_f16_matches_fp32(h, w):
     imgs_f16 = np.ascontiguousarray(imgs_f32.astype(np.float16))
     d_in_f16 = DeviceBuffer.from_array(imgs_f16)
     d_out = DeviceBuffer(M * hl * wl * 4)
-    _evm_cuda.batched_blur_dn_color_f16(
+    _vidmag_cuda.batched_blur_dn_color_f16(
         d_in_f16.ptr, d_out.ptr, M, h, w, nlevs,
         _d_binom5_sum1(), 5)
     out = d_out.download_f32(M * hl * wl).reshape(M, hl, wl)
@@ -308,7 +308,7 @@ def test_batched_upsample_add_quantize_f16_matches_fp32():
     d_ntsc_f32 = DeviceBuffer.from_array(np.ascontiguousarray(ntsc_f32))
     d_filt = DeviceBuffer.from_array(np.ascontiguousarray(filt))
     d_out_f32 = DeviceBuffer(n * out_h * out_w * 3)
-    _evm_cuda.batched_upsample_add_quantize(
+    _vidmag_cuda.batched_upsample_add_quantize(
         d_ntsc_f32.ptr, d_filt.ptr, d_out_f32.ptr,
         n, in_h, in_w, out_h, out_w, 1.0)
     ref = d_out_f32.download_u8(n * out_h * out_w * 3).reshape(n, out_h, out_w, 3)
@@ -317,7 +317,7 @@ def test_batched_upsample_add_quantize_f16_matches_fp32():
     ntsc_f16 = np.ascontiguousarray(ntsc_f32.astype(np.float16))
     d_ntsc_f16 = DeviceBuffer.from_array(ntsc_f16)
     d_out = DeviceBuffer(n * out_h * out_w * 3)
-    _evm_cuda.batched_upsample_add_quantize_f16(
+    _vidmag_cuda.batched_upsample_add_quantize_f16(
         d_ntsc_f16.ptr, d_filt.ptr, d_out.ptr,
         n, in_h, in_w, out_h, out_w, 1.0)
     out = d_out.download_u8(n * out_h * out_w * 3).reshape(n, out_h, out_w, 3)
@@ -360,7 +360,7 @@ def test_batched_lpyr_build_f16_half_bands_near_fp32(h, w):
     # FP32 reference build
     d_in_f32 = DeviceBuffer.from_array(imgs_f32)
     d_ref = DeviceBuffer(total * 4)
-    _evm_cuda.batched_lpyr_build(
+    _vidmag_cuda.batched_lpyr_build(
         d_in_f32.ptr, d_ref.ptr, n_frames, h, w, levels, _d_binom5(), 5)
     ref = d_ref.download_f32(total)
 
@@ -368,12 +368,12 @@ def test_batched_lpyr_build_f16_half_bands_near_fp32(h, w):
     imgs_f16 = np.ascontiguousarray(imgs_f32.astype(np.float16))
     d_in_f16 = DeviceBuffer.from_array(imgs_f16)
     d_out_h = DeviceBuffer(total * 2)  # __half bands
-    _evm_cuda.batched_lpyr_build_f16(
+    _vidmag_cuda.batched_lpyr_build_f16(
         d_in_f16.ptr, d_out_h.ptr, n_frames, h, w, levels, _d_binom5(), 5)
 
     # Promote half bands to float for comparison
     d_out_f32 = DeviceBuffer(total * 4)
-    _evm_cuda.f16_to_f32(d_out_h.ptr, d_out_f32.ptr, total)
+    _vidmag_cuda.f16_to_f32(d_out_h.ptr, d_out_f32.ptr, total)
     got = d_out_f32.download_f32(total)
 
     # Production f16: half storage, float accumulate.

@@ -11,7 +11,7 @@ because nobody has run it. A report here changes that.
 
 **The device**
 
-- Name as reported (`python -c "from evm.opencl import runtime; print(runtime.device_name())"`):
+- Name as reported (`python -c "from vidmag.opencl import runtime; print(runtime.device_name())"`):
 - Operating system and version:
 - Driver version:
 

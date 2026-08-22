@@ -44,12 +44,12 @@ jobs:
       # entire CUDA toolchain (nvcc, cmake, ninja, g++) lives in a conda
       # environment, and nvidia-smi exists only in WSL's driver directory.
       # Changing machines means changing these two lines and nothing else.
-      EVM_TOOLCHAIN_BIN: /home/furkan/miniconda3/envs/evm-cuda/bin
-      EVM_WSL_LIB: /usr/lib/wsl/lib
+      VIDMAG_TOOLCHAIN_BIN: /home/furkan/miniconda3/envs/evm-cuda/bin
+      VIDMAG_WSL_LIB: /usr/lib/wsl/lib
       # A build that cannot find nvcc must fail right there. Without this the
       # install would quietly succeed as the CPU-only package and the failure
       # would surface three steps later as "everything skipped".
-      EVM_CUDA_REQUIRE: "1"
+      VIDMAG_CUDA_REQUIRE: "1"
       # Everything published as the run's evidence is written here.
       EVIDENCE: gpu-evidence
 
@@ -58,16 +58,16 @@ jobs:
 
       - name: Put the CUDA toolchain on PATH, and prove it is there
         run: |
-          echo "$EVM_TOOLCHAIN_BIN" >> "$GITHUB_PATH"
-          echo "$EVM_WSL_LIB" >> "$GITHUB_PATH"
-          export PATH="$EVM_TOOLCHAIN_BIN:$EVM_WSL_LIB:$PATH"
+          echo "$VIDMAG_TOOLCHAIN_BIN" >> "$GITHUB_PATH"
+          echo "$VIDMAG_WSL_LIB" >> "$GITHUB_PATH"
+          export PATH="$VIDMAG_TOOLCHAIN_BIN:$VIDMAG_WSL_LIB:$PATH"
           missing=()
           for tool in python nvcc cmake ninja g++ nvidia-smi; do
             command -v "$tool" > /dev/null || missing+=("$tool")
           done
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::not on PATH: ${missing[*]}. Expected them in" \
-                 "$EVM_TOOLCHAIN_BIN (conda env) or $EVM_WSL_LIB (WSL driver" \
+                 "$VIDMAG_TOOLCHAIN_BIN (conda env) or $VIDMAG_WSL_LIB (WSL driver" \
                  "directory). See docs/dev/gpu-runner.md."
             exit 1
           fi
@@ -110,10 +110,10 @@ jobs:
           python - <<'PY' | tee "$EVIDENCE/extension.txt"
           import sys
 
-          import evm
-          import evm.cuda as gpu
+          import vidmag
+          import vidmag.cuda as gpu
 
-          print(f"evm        {evm.__version__}")
+          print(f"vidmag        {vidmag.__version__}")
           print(f"have_cuda  {gpu.have_cuda}")
           if not gpu.have_cuda:
               sys.exit(
@@ -121,7 +121,7 @@ jobs:
                   f"machine with nvcc: {gpu.import_error!r}"
               )
           gpu.require_cuda()
-          print(f"module     {gpu._evm_cuda.__file__}")
+          print(f"module     {gpu._vidmag_cuda.__file__}")
           PY
 
       - name: Fetch the MIT sample clips
@@ -131,7 +131,7 @@ jobs:
           # scripts/download_samples.py reports a failed fetch and still exits
           # 0 — the zero-skip gate below is what actually catches a missing
           # clip, not this step.
-          evm-magnify download face baby --with-references
+          vidmag download face baby --with-references
           ls -l data/
 
       - name: Run the full suite
@@ -144,7 +144,7 @@ jobs:
       - name: No test may be skipped on a GPU host
         run: |
           # This is the point of the whole job. tests/cuda/ skips itself when
-          # `import evm.cuda._evm_cuda` fails, and pytest still exits 0 — so a
+          # `import vidmag.cuda._vidmag_cuda` fails, and pytest still exits 0 — so a
           # green run here would otherwise be indistinguishable from a run that
           # silently tested nothing. On this machine the expected result is
           # zero skips; anything else is a broken build or a missing clip.
@@ -186,9 +186,9 @@ jobs:
           # The numbers a release can point at. Both presets the harness covers:
           # pulse = color_gdown_ideal, motion = motion_lpyr_iir, each in FP32
           # and FP16 with the comparison table.
-          evm-magnify bench data/face.mp4 --preset pulse --precision all --iters 5 \
+          vidmag bench data/face.mp4 --preset pulse --precision all --iters 5 \
             2>&1 | tee "$EVIDENCE/bench_pulse.txt"
-          evm-magnify bench data/baby.mp4 --preset motion --precision all --iters 5 \
+          vidmag bench data/baby.mp4 --preset motion --precision all --iters 5 \
             2>&1 | tee "$EVIDENCE/bench_motion.txt"
 
       - name: Publish the evidence

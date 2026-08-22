@@ -15,8 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.cpu import magnify as direct
-from evm.stream import MotionStream
+from vidmag.cpu import magnify as direct
+from vidmag.stream import MotionStream
 
 FPS = 30.0
 PARAMS = dict(alpha=10.0, lambda_c=16.0, r1=0.4, r2=0.05, chrom_attenuation=0.1)
@@ -141,8 +141,8 @@ def test_the_default_backend_can_actually_stream():
     """
     import numpy as np
 
-    from evm.backend import registry
-    from evm.stream import MotionStream
+    from vidmag.backend import registry
+    from vidmag.stream import MotionStream
 
     stream = MotionStream(32, 48)
     chosen = next(i for i in registry.list_backends() if i.name == stream.backend_name)

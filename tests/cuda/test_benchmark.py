@@ -1,4 +1,4 @@
-"""Tests for evm.cuda.benchmark.
+"""Tests for vidmag.cuda.benchmark.
 
 Two guarantees:
 1. ``benchmark.run()`` measures the SAME code path the application uses —
@@ -26,7 +26,7 @@ from conftest import skip_no_cuda  # noqa: E402
 benchmark: ModuleType | None
 batched: ModuleType | None
 try:
-    from evm.cuda import batched, benchmark
+    from vidmag.cuda import batched, benchmark
 except Exception:
     benchmark = None
     batched = None

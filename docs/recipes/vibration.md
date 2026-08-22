@@ -5,9 +5,9 @@ too small to see, at frequencies far above anything a body does. The motion
 pipeline amplifies them, and the same result can be read as a measurement.
 
 ```python
-import evm
+import vidmag
 
-evm.magnify("guitar.mp4", preset="vibration", out="vibration.mp4")
+vidmag.magnify("guitar.mp4", preset="vibration", out="vibration.mp4")
 ```
 
 ## The frame rate is the constraint
@@ -39,10 +39,10 @@ Run the movement through a wide band first and look at what comes out:
 
 ```python
 import numpy as np
-import evm
+import vidmag
 
 fps = 240.0
-amplified = evm.magnify(
+amplified = vidmag.magnify(
     "machine.mp4", preset="motion", fps=fps, alpha=25, lambda_c=16, r1=0.4, r2=0.05
 )
 

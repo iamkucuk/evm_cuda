@@ -8,17 +8,17 @@ it covers. This is that list.
 These are checked by `tests/test_public_api.py`, so removing one fails
 immediately rather than being discovered by whoever depended on it.
 
-- Everything importable as `from evm import ...`: `magnify`, the four
+- Everything importable as `from vidmag import ...`: `magnify`, the four
   `magnify_*` pipeline functions, the presets, video reading and writing, the
   building blocks, and the reference constants.
-- `evm.backend`: the operations protocol, the pipelines protocol, and the
+- `vidmag.backend`: the operations protocol, the pipelines protocol, and the
   registry functions for selecting and registering a backend.
-- `evm.cpu.ops` and `evm.cuda.ops`: the building blocks, with the same names and
+- `vidmag.cpu.ops` and `vidmag.cuda.ops`: the building blocks, with the same names and
   argument order on every backend.
-- `evm.cuda.DeviceArray`: its shape, dtype, transfer methods, and its support
+- `vidmag.cuda.DeviceArray`: its shape, dtype, transfer methods, and its support
   for sharing memory with other array libraries.
-- The `evm-magnify` command's subcommands and their options.
-- The names in `evm.presets.PRESETS`. Their *values* may be corrected if one is
+- The `vidmag` command's subcommands and their options.
+- The names in `vidmag.presets.PRESETS`. Their *values* may be corrected if one is
   found to disagree with the reference implementation; such a change is
   described in the changelog with the measurement behind it.
 
@@ -26,10 +26,10 @@ immediately rather than being discovered by whoever depended on it.
 
 Anything below may change in any release.
 
-- `evm.cuda._evm_cuda`, the compiled module. Its function names, signatures and
-  memory layouts are internal. Use `evm.cuda.ops` instead.
+- `vidmag.cuda._vidmag_cuda`, the compiled module. Its function names, signatures and
+  memory layouts are internal. Use `vidmag.cuda.ops` instead.
 - Anything whose name begins with an underscore.
-- `evm.cuda.batched` and `evm.cuda.pipelines` internals, including the
+- `vidmag.cuda.batched` and `vidmag.cuda.pipelines` internals, including the
   `on_stage` hook. It exists for the benchmark harness.
 - Exact numerical output. Fixing a defect changes results, and correctness comes
   first; see below.

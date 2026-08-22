@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 import pytest
 
-from evm import (
+from vidmag import (
     figure6_alpha_schedule,
     magnify_color_gdown_ideal,
     magnify_motion_lpyr_iir,

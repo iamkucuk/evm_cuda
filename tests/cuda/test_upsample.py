@@ -12,8 +12,8 @@ from conftest import have_cuda, skip_no_cuda
 
 if have_cuda:
     import cv2
-    from evm.cuda.batched import DeviceBuffer
-    from evm.cuda import _evm_cuda
+    from vidmag.cuda.batched import DeviceBuffer
+    from vidmag.cuda import _vidmag_cuda
 
 
 @skip_no_cuda
@@ -31,7 +31,7 @@ def test_bilinear_upsample_matches_cv2_power_of_2():
     # CUDA kernel
     d_in = DeviceBuffer.from_array(src)
     d_out = DeviceBuffer(M * in_H * 2 * in_W * 2 * 3 * 4)
-    _evm_cuda.batched_bilinear_upsample_3ch(
+    _vidmag_cuda.batched_bilinear_upsample_3ch(
         d_in.ptr, d_out.ptr, M, in_H, in_W, in_H * 2, in_W * 2)
     got = d_out.download_f32(M * in_H * 2 * in_W * 2 * 3).reshape(
         M, in_H * 2, in_W * 2, 3)
@@ -56,7 +56,7 @@ def test_bilinear_upsample_matches_cv2_odd_ratio():
 
     d_in = DeviceBuffer.from_array(src)
     d_out = DeviceBuffer(M * out_H * out_W * 3 * 4)
-    _evm_cuda.batched_bilinear_upsample_3ch(
+    _vidmag_cuda.batched_bilinear_upsample_3ch(
         d_in.ptr, d_out.ptr, M, in_H, in_W, out_H, out_W)
     got = d_out.download_f32(M * out_H * out_W * 3).reshape(M, out_H, out_W, 3)
 

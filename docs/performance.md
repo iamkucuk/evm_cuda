@@ -15,21 +15,26 @@ is.
 | **Kernels** | The graphics processor's work alone, with the data already on the card | Comparing against another implementation's kernel time, or embedding this as one stage of a larger device-resident computation |
 | **Kernels + upload** | The clip starts on the host | The result is consumed on the card — heart-rate estimation, motion features, a downstream network. You do not need a viewable video to extract information from one |
 | **Kernels + upload + download** | The result comes back to the host | You need a video file at the end |
-| **Wall clock** | What a caller of `evm.magnify()` actually waits | Comparing backends against each other, or estimating how long a job takes |
+| **Wall clock** | What a caller of `vidmag.magnify()` actually waits | Comparing backends against each other, or estimating how long a job takes |
 
-On an RTX 3090, one 301-frame motion clip, measured 2026-08-11:
+On an RTX 3090, one motion clip of 301 frames of which the pipelines process
+291, measured 2026-08-18:
 
 | Level | Time |
 |---|---:|
-| Kernels | 39.1 ms |
-| Kernels + upload | 71.2 ms |
-| Kernels + upload + download | 143.5 ms |
-| Wall clock through `evm.magnify()` | 228.7 ms |
+| Kernels | 40.3 ms |
+| Kernels + upload | 74.7 ms |
+| Kernels + upload + download | 154.1 ms |
+| Wall clock through `vidmag.magnify()` | 232.2 ms |
 
 More than half the wall clock is not computation. Moving the clip to the card
-and the result back costs 104.5 ms — reading the result back alone costs more
-than every kernel put together — and the remaining 85 ms is preparing the input
-array, checking it, and allocating the output.
+and the result back costs 113.8 ms — reading the result back alone, at 79.4 ms,
+costs about twice what every kernel put together does — and the remaining
+78.1 ms is preparing the input array, checking it, and allocating the output.
+
+Every figure on this page for this card comes from that one session and is
+stored in `benches/bench_rtx3090.json`, which
+`scripts/dev/record_gpu_bench.py` regenerates.
 
 **Only compare like with like.** Quoting a kernel figure against another
 project's wall clock overstates this library by about six times.
@@ -41,8 +46,8 @@ configuration.
 
 | Pipeline | Clip | Single precision | Half precision |
 |---|---|---:|---:|
-| Colour | `face.mp4`, 301 frames | 9.9 ms | 7.7 ms |
-| Motion | `baby.mp4`, 301 frames | 39.1 ms | 27.0 ms |
+| Colour | `face.mp4`, 291 frames processed | 9.8 ms | 7.6 ms |
+| Motion | `baby.mp4`, 291 frames processed | 40.3 ms | 26.8 ms |
 
 The motion pipeline was 76.7 ms in single precision earlier in this project's
 life. Three changes account for the difference, all described in
@@ -69,6 +74,13 @@ best of two. Measured 2026-08-11.
 | Metal | 362 ms | 1,698 ms | 19x / 14x |
 | PyTorch | 653 ms | 2,320 ms | 11x / 10x |
 | Processor (NumPy) | 7,014 ms | 23,634 ms | — |
+
+*Not re-verified since.* A reproduction attempt on 2026-08-18 could not confirm
+these: the machine's graphics processor was at 100% utilisation from unrelated
+software, and every graphics backend measured five to seven times slower while
+the processor baseline was only 18% slower. That measurement proves nothing
+either way and none of it was published.
+`scripts/dev/record_backend_bench.py` regenerates this table on an idle machine.
 
 **The ordering is not a property of the backends.** OpenCL leads here; on a
 60-frame clip Apple's own interface was faster than OpenCL. The ranking changes
@@ -106,25 +118,26 @@ today.
 The comparison people ask for. Same RTX 3090, same clip, same entry point,
 array in and array out, one backend per process.
 
-| Backend | 301 frames | frames per second |
+| Backend | 291 frames processed | frames per second |
 |---|---:|---:|
-| Hand-written CUDA | 239 ms | 1,261 |
-| PyTorch | 664 ms | 453 |
+| Hand-written CUDA | 238 ms | 1,223 |
+| PyTorch | 596 ms | 488 |
 
-The hand-written code is 2.8 times faster, which is the expected result and the
+The hand-written code is 2.5 times faster, which is the expected result and the
 reason this project exists. That the PyTorch backend is the fastest at live
 streaming is a separate fact about a different kind of work; neither figure
 generalises to the other.
 
 *One backend per process matters here.* With both in one process, the NVIDIA
-backend's device memory pool starves whatever runs next, and PyTorch measures
-nine times slower than it does alone.
+backend's device memory pool starves whatever runs next: measured on
+2026-08-18, PyTorch takes 4,003 ms that way against 596 ms alone, which is 6.7
+times slower for no reason other than the measurement setup.
 
 ## Other NVIDIA cards
 
 | Card | Motion, kernels, single / half precision |
 |---|---:|
-| RTX 3090 | 39.1 / 27.0 ms |
+| RTX 3090 | 40.3 / 26.8 ms |
 | A100 80GB † | 54.4 / 48.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms |
 | P100 16GB † | does not fit / 139.7 ms |
@@ -132,7 +145,7 @@ nine times slower than it does alone.
 † Measured before the three motion-path changes described above, and not
 re-run. Those are worth about 1.9 times on the RTX 3090 and none of it is
 specific to one card, so treat these three rows as pessimistic by roughly that
-much. The RTX 3090 row is current.
+much. The RTX 3090 row was re-measured on 2026-08-18 and is current.
 
 Motion in single precision needs 16.3 GB and does not fit a 16 GB card; in half
 precision it peaks at 8.4 GB and does.
@@ -151,5 +164,7 @@ session. Differences smaller than that between two figures here mean nothing.
 
 **Half precision is not free.** It is faster and uses less memory, and it
 differs from single precision by a measurable amount: on the motion pipeline
-the two differ by 0.00199 in root-mean-square error, with a largest single
-difference of 5 output levels out of 255.
+the two differ by 0.00140 of full scale in root-mean-square error, with a
+largest single difference of 2 output levels out of 255 (measured 2026-08-18 on
+`baby.mp4`, comparing the 8-bit outputs). The colour pipeline differs by
+0.00071 and 1 level.

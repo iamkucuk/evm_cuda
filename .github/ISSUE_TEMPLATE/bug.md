@@ -21,8 +21,8 @@ Errors in full, please, not just the last line.
 
 **Your setup**
 
-- Version (`python -c "import evm; print(evm.__version__)"`):
-- Backend (`python -c "from evm import backend; print(backend.select('auto')[0])"`):
+- Version (`python -c "import vidmag; print(vidmag.__version__)"`):
+- Backend (`python -c "from vidmag import backend; print(backend.select('auto')[0])"`):
 - Operating system and Python version:
 
 **Before you file: is the output identical to the input?**

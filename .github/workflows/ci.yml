@@ -102,7 +102,7 @@ jobs:
       # inventing an abstraction for it.
       - name: Runtime libraries the OpenCV Linux wheel leaves to the system
         if: runner.os == 'Linux'
-        # `import evm` imports cv2 (src/evm/cpu/magnify.py:37), so this is needed
+        # `import vidmag` imports cv2 (src/vidmag/cpu/magnify.py:37), so this is needed
         # before anything, not only for the video tests. Reading DT_NEEDED out of
         # the manylinux wheel on 2026-08-09 (cv2.abi3.so plus the 41 libraries
         # vendored beside it) leaves exactly libGL.so.1, libSM.so.6, libICE.so.6
@@ -134,10 +134,10 @@ jobs:
         # running elsewhere makes that explicit instead of incidental.
         working-directory: ${{ runner.temp }}
         run: |
-          python -c "import evm, inspect; print('evm', evm.__version__, 'from', inspect.getfile(evm))"
-          python -c "import evm.cuda as gpu; assert gpu.have_cuda is False, 'extension present on a runner without nvcc'; print('have_cuda =', gpu.have_cuda); print('import_error =', type(gpu.import_error).__name__)"
-          evm-magnify --help > /dev/null
-          echo "evm-magnify is on PATH"
+          python -c "import vidmag, inspect; print('vidmag', vidmag.__version__, 'from', inspect.getfile(vidmag))"
+          python -c "import vidmag.cuda as gpu; assert gpu.have_cuda is False, 'extension present on a runner without nvcc'; print('have_cuda =', gpu.have_cuda); print('import_error =', type(gpu.import_error).__name__)"
+          vidmag --help > /dev/null
+          echo "vidmag is on PATH"
 
       # Coverage is printed, never gated. This runner has no NVIDIA compiler and
       # no Apple graphics interface, so the files for those backends read as
@@ -147,7 +147,7 @@ jobs:
         run: |
           python -m pip install pytest-cov
           python -m pytest tests/ -q -p no:randomly -rs \
-            --cov=evm --cov-report=term | tee "$RUNNER_TEMP/pytest.log"
+            --cov=vidmag --cov-report=term | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Pass and skip counts
         if: always()
@@ -258,8 +258,8 @@ jobs:
         run: |
           python - <<'PROBE'
           import os
-          import evm  # registers the backends
-          from evm.backend import registry
+          import vidmag  # registers the backends
+          from vidmag.backend import registry
 
           state = {i.name: i for i in registry.list_backends()}
           for name, info in state.items():
@@ -354,7 +354,7 @@ jobs:
           fi
           cd "$unpacked"
           echo "cwd: $PWD"
-          "$RUNNER_TEMP/venv/bin/python" -c "import evm, inspect; print('evm', evm.__version__, 'from', inspect.getfile(evm))"
+          "$RUNNER_TEMP/venv/bin/python" -c "import vidmag, inspect; print('vidmag', vidmag.__version__, 'from', inspect.getfile(vidmag))"
           "$RUNNER_TEMP/venv/bin/python" -m pytest tests/ -q -p no:randomly -rs | tee "$RUNNER_TEMP/pytest-sdist.log"
 
       - name: Pass and skip counts

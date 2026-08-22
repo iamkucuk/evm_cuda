@@ -4,7 +4,7 @@ Every test module in tests/cuda/ is gated on the ``have_cuda`` marker: if
 the compiled extension isn't importable (e.g. on the Mac dev host, or on a
 build without nvcc), the whole suite skips cleanly. When the extension IS
 present (i.e. after `make build`), the tests run and
-compare each kernel's output to the Python baseline ``evm.cpu`` within the
+compare each kernel's output to the Python baseline ``vidmag.cpu`` within the
 tolerances documented in DESIGN.md.
 """
 
@@ -13,10 +13,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import evm  # Python baseline — the oracle
+import vidmag  # Python baseline — the oracle
 
 try:
-    from evm.cuda import _evm_cuda
+    from vidmag.cuda import _vidmag_cuda
     have_cuda = True
     cuda_import_error: Exception | None = None
 except Exception as e:  # pragma: no cover - exercised on Mac dev host
@@ -26,7 +26,7 @@ except Exception as e:  # pragma: no cover - exercised on Mac dev host
 # Skip marker usable as @pytest.mark.skipif(not have_cuda, ...).
 skip_no_cuda = pytest.mark.skipif(
     not have_cuda,
-    reason=f"evm.cuda._evm_cuda not built ({cuda_import_error!r})",
+    reason=f"vidmag.cuda._vidmag_cuda not built ({cuda_import_error!r})",
 )
 
 # Per-stage tolerances (see DESIGN.md). Centralized so tests stay DRY.
@@ -46,8 +46,8 @@ TOL = {
 # Constant arrays shared across tests, copied from the bindings (which get
 # them from evm_common.cuh). Tests assert these match the Python baseline.
 if have_cuda:
-    BINOM5_CUDA = np.array(_evm_cuda.binom5(), dtype=np.float32)
-    BINOM5_SUM1_CUDA = np.array(_evm_cuda.binom5_sum1(), dtype=np.float32)
+    BINOM5_CUDA = np.array(_vidmag_cuda.binom5(), dtype=np.float32)
+    BINOM5_SUM1_CUDA = np.array(_vidmag_cuda.binom5_sum1(), dtype=np.float32)
 else:  # pragma: no cover
     BINOM5_CUDA = np.array([0.08838834764831843, 0.35355339059327373,
                             0.5303300858899106, 0.35355339059327373,

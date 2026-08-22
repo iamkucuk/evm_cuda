@@ -61,8 +61,8 @@ def time_fn(fn, n_iter=N_ITER, warmup=True):
 # ===========================================================================
 
 def run_color_cpu():
-    import evm
-    evm.magnify_color_gdown_ideal(
+    import vidmag
+    vidmag.magnify_color_gdown_ideal(
         COLOR_VID, str(OUTPUT / "face_cpu.mp4"),
         alpha=COLOR_ALPHA, level=COLOR_LEVEL, fl=COLOR_FL, fh=COLOR_FH,
         chrom_attenuation=COLOR_CHROM, sampling_rate=COLOR_SR)
@@ -73,8 +73,8 @@ def run_color_cpu():
 # ===========================================================================
 
 def run_motion_cpu():
-    import evm
-    evm.magnify_motion_lpyr_iir(
+    import vidmag
+    vidmag.magnify_motion_lpyr_iir(
         MOTION_VID, str(OUTPUT / "baby_cpu.mp4"),
         alpha=MOTION_ALPHA, lambda_c=MOTION_LAMBDA, r1=MOTION_R1, r2=MOTION_R2,
         chrom_attenuation=MOTION_CHROM)
@@ -87,15 +87,15 @@ def run_motion_cpu():
 def profile_color_cpu_stages():
     """Per-stage CPU timing for the color pipeline.
 
-    Re-implements the four stages of evm.magnify_color_gdown_ideal with
+    Re-implements the four stages of vidmag.magnify_color_gdown_ideal with
     perf_counter boundaries that match the GPU profiler's stage names, so the
     comparison table can show CPU vs FP32 vs FP16 for every stage.
     """
-    import evm
-    from evm.cpu.pyramids import blur_dn_clr
-    from evm.cpu.filters import ideal_bandpass
+    import vidmag
+    from vidmag.cpu.pyramids import blur_dn_clr
+    from vidmag.cpu.filters import ideal_bandpass
 
-    frames, fps = evm.cpu.magnify._read_frames(COLOR_VID)
+    frames, fps = vidmag.cpu.magnify._read_frames(COLOR_VID)
     n = len(frames)
     h, w = frames[0].shape[:2]
 
@@ -104,7 +104,7 @@ def profile_color_cpu_stages():
 
         # Stage 1: NTSC color convert (per-frame, same as GPU)
         t0 = time.perf_counter()
-        ntsc_frames = [evm.cpu.magnify._rgb_frame_to_ntsc(fr) for fr in frames]
+        ntsc_frames = [vidmag.cpu.magnify._rgb_frame_to_ntsc(fr) for fr in frames]
         st["1) color_cvt"] = time.perf_counter() - t0
 
         # Stage 2: Gaussian downsample (blur_dn_clr per frame)
@@ -130,7 +130,7 @@ def profile_color_cpu_stages():
         for i in range(n):
             upsampled = cv2.resize(filtered[i], (w, h), interpolation=cv2.INTER_LINEAR)
             rendered = ntsc_frames[i] + upsampled
-            out[i] = evm.cpu.magnify._ntsc_to_bgr_uint8(rendered)
+            out[i] = vidmag.cpu.magnify._ntsc_to_bgr_uint8(rendered)
         st["4) upsample + render"] = time.perf_counter() - t0
 
         st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
@@ -146,11 +146,11 @@ def profile_motion_cpu_stages():
     Re-implements _streaming_lpyr_motion with perf_counter boundaries matching
     the GPU profiler's stage names.
     """
-    import evm
-    from evm.cpu.pyramids import laplacian_pyramid_channels
-    from evm.cpu.filters import iir_bandpass
+    import vidmag
+    from vidmag.cpu.pyramids import laplacian_pyramid_channels
+    from vidmag.cpu.filters import iir_bandpass
 
-    frames, fps = evm.cpu.magnify._read_frames(MOTION_VID)
+    frames, fps = vidmag.cpu.magnify._read_frames(MOTION_VID)
     n = len(frames)
     h, w = frames[0].shape[:2]
 
@@ -159,7 +159,7 @@ def profile_motion_cpu_stages():
 
         # Stage A: NTSC color convert
         t0 = time.perf_counter()
-        ntsc_frames = [evm.cpu.magnify._rgb_frame_to_ntsc(fr) for fr in frames]
+        ntsc_frames = [vidmag.cpu.magnify._rgb_frame_to_ntsc(fr) for fr in frames]
         st["A) NTSC convert"] = time.perf_counter() - t0
 
         # Stage B: Laplacian pyramid build (all frames)
@@ -171,7 +171,7 @@ def profile_motion_cpu_stages():
         series = np.empty((n, n_coeffs, 3), dtype=np.float64)
         for i in range(n):
             for l in range(n_levels):
-                sl = evm.cpu.magnify._level_slice(l, pind)
+                sl = vidmag.cpu.magnify._level_slice(l, pind)
                 series[i, sl, :] = pyrs[i][0][l].reshape(-1, 3)
         st["B) lpyr_build"] = time.perf_counter() - t0
 
@@ -182,17 +182,17 @@ def profile_motion_cpu_stages():
 
         # Stage D1: reconstruct pyramid + apply alpha schedule
         t0 = time.perf_counter()
-        alpha_sched = evm.cpu.magnify.figure6_alpha_schedule(
+        alpha_sched = vidmag.cpu.magnify.figure6_alpha_schedule(
             n_levels, MOTION_ALPHA, MOTION_LAMBDA, h, w)
         filtered_per_frame = []
         for i in range(n):
             bands = []
             for l in range(n_levels):
-                sl = evm.cpu.magnify._level_slice(l, pind)
+                sl = vidmag.cpu.magnify._level_slice(l, pind)
                 lh, lw = int(pind[l, 0]), int(pind[l, 1])
                 bands.append(filtered[i, sl, :].reshape(lh, lw, 3) * alpha_sched[l])
             filtered_per_frame.append(bands)
-        rendered_ntsc = evm.cpu.magnify._amplify_lpyr_stack(
+        rendered_ntsc = vidmag.cpu.magnify._amplify_lpyr_stack(
             ntsc_frames, filtered_per_frame, pind, MOTION_CHROM)
         st["D1) lpyr_recon"] = time.perf_counter() - t0
 
@@ -200,7 +200,7 @@ def profile_motion_cpu_stages():
         t0 = time.perf_counter()
         # The result is discarded on purpose: this is a profiling script and the
         # point is to time the work, not to keep the frames.
-        _ = np.stack([evm.cpu.magnify._ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
+        _ = np.stack([vidmag.cpu.magnify._ntsc_to_bgr_uint8(x) for x in rendered_ntsc], axis=0)
         st["D2) render"] = time.perf_counter() - t0
 
         st["_total"] = sum(v for k, v in st.items() if not k.startswith("_"))
@@ -211,7 +211,7 @@ def profile_motion_cpu_stages():
 
 
 # ===========================================================================
-# GPU stage-level profiling is delegated to evm.cuda.benchmark.run() — the same
+# GPU stage-level profiling is delegated to vidmag.cuda.benchmark.run() — the same
 # code path the Colab notebook uses — so CPU/Colab/local GPU can never drift apart
 # on methodology. The benchmark module owns the warmup/sync/median discipline
 # and now reports H2D/D2H transfers as their own stages.
@@ -220,7 +220,7 @@ def profile_motion_cpu_stages():
 
 def _bench_gpu(pipeline, precision, params, label):
     """Run one (pipeline, precision) config via benchmark.run and print it."""
-    from evm.cuda import benchmark
+    from vidmag.cuda import benchmark
     print(f"\n[CUDA {precision.upper()}]")
     r = benchmark.run(pipeline, precision, params,
                       out_path=str(OUTPUT / f"{pipeline}_{precision}.mp4"))
@@ -299,7 +299,7 @@ def main():
     print("=" * 70)
 
     # GPU comparison table (compute + transfer breakdown).
-    from evm.cuda import benchmark
+    from vidmag.cuda import benchmark
     print(benchmark.summarize(
         [color_fp32, color_fp16, motion_fp32, motion_fp16], n_iter=5))
 

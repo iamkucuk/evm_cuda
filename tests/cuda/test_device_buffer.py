@@ -14,7 +14,7 @@ import numpy as np
 from conftest import have_cuda, skip_no_cuda
 
 if have_cuda:
-    from evm.cuda.batched import DeviceBuffer
+    from vidmag.cuda.batched import DeviceBuffer
 
 
 @skip_no_cuda

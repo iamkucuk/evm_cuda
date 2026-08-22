@@ -21,8 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 import numpy as np  # noqa: E402
 
-import evm  # Python baseline  # noqa: E402
-from evm.cuda import batched as cu  # optimized device-resident CUDA pipelines  # noqa: E402
+import vidmag  # Python baseline  # noqa: E402
+from vidmag.cuda import batched as cu  # optimized device-resident CUDA pipelines  # noqa: E402
 
 DATA = ROOT / "data"
 OUT = ROOT / "output" / "cuda_render"
@@ -49,7 +49,7 @@ def main():
     print("face.mp4 — color magnification (alpha=50, level=4)")
     py_face = run("python",
         src="face.mp4", dst="face_color_python.mp4",
-        fn=evm.magnify_color_gdown_ideal,
+        fn=vidmag.magnify_color_gdown_ideal,
         alpha=50, level=4, fl=50/60, fh=60/60,
         chrom_attenuation=1.0, sampling_rate=30.0)
     cu_face = run("cuda  ",
@@ -63,7 +63,7 @@ def main():
     print("baby.mp4 — motion magnification (alpha=10, lambda_c=16, r1=0.4, r2=0.05)")
     py_baby = run("python",
         src="baby.mp4", dst="baby_motion_python.mp4",
-        fn=evm.magnify_motion_lpyr_iir,
+        fn=vidmag.magnify_motion_lpyr_iir,
         alpha=10, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
     cu_baby = run("cuda  ",
         src="baby.mp4", dst="baby_motion_cuda.mp4",

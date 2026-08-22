@@ -87,7 +87,7 @@ on what, and what it printed.
 
 ## Adding support for new hardware
 
-Implement the operations in `evm/backend/ops.py` for the device, then
+Implement the operations in `vidmag/backend/ops.py` for the device, then
 `generic.bind(your_operations)` gives all four pipelines. Add your backend to
 the conformance tests, which compare every operation against the NumPy
 reference. There is no need to write a pipeline; a backend may override one for

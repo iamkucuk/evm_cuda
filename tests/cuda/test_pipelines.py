@@ -16,12 +16,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-import evm  # noqa: E402
+import vidmag  # noqa: E402
 from conftest import TOL, have_cuda, skip_no_cuda  # noqa: E402
 
 if have_cuda:
-    from evm.cuda import pipelines as cu
-    from evm.cuda import batched as cu_batched
+    from vidmag.cuda import pipelines as cu
+    from vidmag.cuda import batched as cu_batched
 
 DATA = ROOT / "data"
 TMP = ROOT / "output" / "_test"
@@ -61,7 +61,7 @@ def _rmse(a, b):
 def test_color_pipeline_matches_python(tmp_path):
     src = tmp_path / "pulse.mp4"
     _write_synth(src, _pulse_clip())
-    py = evm.magnify_color_gdown_ideal(
+    py = vidmag.magnify_color_gdown_ideal(
         str(src), str(tmp_path / "py.mp4"),
         alpha=30, level=2, fl=0.5, fh=1.5, chrom_attenuation=1.0)
     cu_out = cu.magnify_color_gdown_ideal(
@@ -75,7 +75,7 @@ def test_color_pipeline_matches_python(tmp_path):
 def test_iir_pipeline_matches_python(tmp_path):
     src = tmp_path / "flat.mp4"
     _write_synth(src, _flat_clip())
-    py = evm.magnify_motion_lpyr_iir(
+    py = vidmag.magnify_motion_lpyr_iir(
         str(src), str(tmp_path / "py.mp4"),
         alpha=10, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
     cu_out = cu.magnify_motion_lpyr_iir(
@@ -99,7 +99,7 @@ def _have(*names):
 def test_face_color_cuda_matches_python(tmp_path):
     """The CUDA color pipeline's output matches the Python baseline's,
     within the 0.01 RMSE end-to-end tolerance."""
-    py = evm.magnify_color_gdown_ideal(
+    py = vidmag.magnify_color_gdown_ideal(
         str(DATA / "face.mp4"), str(tmp_path / "py.mp4"),
         alpha=50, level=4, fl=50/60, fh=60/60, chrom_attenuation=1.0,
         sampling_rate=30.0,
@@ -119,7 +119,7 @@ def test_face_color_cuda_matches_python(tmp_path):
     reason="download data/baby.mp4 first",
 )
 def test_baby_iir_cuda_matches_python(tmp_path):
-    py = evm.magnify_motion_lpyr_iir(
+    py = vidmag.magnify_motion_lpyr_iir(
         str(DATA / "baby.mp4"), str(tmp_path / "py.mp4"),
         alpha=10, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1,
     )
@@ -133,7 +133,7 @@ def test_baby_iir_cuda_matches_python(tmp_path):
 
 # --- optimized (batched) pipeline vs Python baseline -----------------------
 #
-# The batched pipeline (evm.cuda.batched) is the speed-optimized path. It
+# The batched pipeline (vidmag.cuda.batched) is the speed-optimized path. It
 # uses a different code flow (to_planar_3ch, batched_blur_dn_color, CUDA
 # bilinear upsample, device-resident NTSC) but must produce the same output
 # as the Python baseline within the end-to-end RMSE tolerance.
@@ -144,7 +144,7 @@ def test_batched_color_matches_python_synth(tmp_path):
     """Batched color pipeline vs Python baseline on a synthetic pulse clip."""
     src = tmp_path / "pulse.mp4"
     _write_synth(src, _pulse_clip())
-    py = evm.magnify_color_gdown_ideal(
+    py = vidmag.magnify_color_gdown_ideal(
         str(src), str(tmp_path / "py.mp4"),
         alpha=30, level=2, fl=0.5, fh=1.5, chrom_attenuation=1.0)
     batched = cu_batched.magnify_color_gdown_ideal(
@@ -166,7 +166,7 @@ def test_batched_color_matches_python_face(tmp_path):
     it exercises every Phase 1c-1h change (planar transpose, batched blur_dn,
     CUDA bilinear upsample, device-resident NTSC, cudaMalloc warmup) and must
     still match the baseline within RMSE < 0.01."""
-    py = evm.magnify_color_gdown_ideal(
+    py = vidmag.magnify_color_gdown_ideal(
         str(DATA / "face.mp4"), str(tmp_path / "py.mp4"),
         alpha=50, level=4, fl=50/60, fh=60/60, chrom_attenuation=1.0,
         sampling_rate=30.0,
@@ -190,7 +190,7 @@ def test_batched_motion_fp16_matches_python_synth(tmp_path):
     """Batched FP16 motion pipeline vs Python FP32 baseline on a flat synth clip."""
     src = tmp_path / "flat.mp4"
     _write_synth(src, _flat_clip())
-    py = evm.magnify_motion_lpyr_iir(
+    py = vidmag.magnify_motion_lpyr_iir(
         str(src), str(tmp_path / "py.mp4"),
         alpha=10, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
     cu16 = cu_batched.magnify_motion_lpyr_iir_fp16(
@@ -204,7 +204,7 @@ def test_batched_motion_fp16_matches_python_synth(tmp_path):
 @pytest.mark.skipif(not _have("baby.mp4"), reason="baby.mp4 not in data/")
 def test_batched_motion_fp16_matches_python_baby(tmp_path):
     """Batched FP16 motion pipeline vs Python FP32 baseline on baby.mp4."""
-    py = evm.magnify_motion_lpyr_iir(
+    py = vidmag.magnify_motion_lpyr_iir(
         str(DATA / "baby.mp4"), str(tmp_path / "py.mp4"),
         alpha=20, lambda_c=16, r1=0.4, r2=0.05, chrom_attenuation=0.1)
     cu16 = cu_batched.magnify_motion_lpyr_iir_fp16(

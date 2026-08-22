@@ -7,10 +7,10 @@ batched_lpyr_*_f16_halfacc bindings (not production motion path).
 from __future__ import annotations
 import numpy as np
 
-from evm.cuda.benchmark import run
-from evm.cuda import batched, _evm_cuda
-from evm.cuda.batched import DeviceBuffer, _d_binom5
-from evm.cuda._common import figure6_alpha_schedule, read_frames as _read_frames
+from vidmag.cuda.benchmark import run
+from vidmag.cuda import batched, _vidmag_cuda
+from vidmag.cuda.batched import DeviceBuffer, _d_binom5
+from vidmag.cuda._common import figure6_alpha_schedule, read_frames as _read_frames
 
 def accuracy_vs_fp32(fp16_out, fp32_out):
     d = np.abs(fp32_out.astype(np.float64) - fp16_out.astype(np.float64))
@@ -34,7 +34,7 @@ def motion_fp16_halfacc(vid_path: str, **params):
         levels += 1; hh = (hh + 1) // 2; ww = (ww + 1) // 2
     alpha_sched = figure6_alpha_schedule(
         levels, params["alpha"], params["lambda_c"], h, w,
-        exaggeration_factor=params.get("exaggeration_factor", _evm_cuda.exaggeration_factor))
+        exaggeration_factor=params.get("exaggeration_factor", _vidmag_cuda.exaggeration_factor))
     level_sizes = []
     ch, cw = h, w
     for _ in range(levels):
@@ -46,11 +46,11 @@ def motion_fp16_halfacc(vid_path: str, **params):
     total = sum(s * n * 3 for s in lvl_sizes)
     d_clip = DeviceBuffer.from_array(clip_u8)
     d_ntsc = DeviceBuffer(ntsc_n * 2)
-    _evm_cuda.batched_bgr_u8_to_ntsc_f16(d_clip.ptr, d_ntsc.ptr, n, h, w)
+    _vidmag_cuda.batched_bgr_u8_to_ntsc_f16(d_clip.ptr, d_ntsc.ptr, n, h, w)
     d_planar = DeviceBuffer(planar_n * 2)
-    _evm_cuda.batched_to_planar_3ch_chan_outer_f16(d_ntsc.ptr, d_planar.ptr, n, h, w)
+    _vidmag_cuda.batched_to_planar_3ch_chan_outer_f16(d_ntsc.ptr, d_planar.ptr, n, h, w)
     d_bands = DeviceBuffer(total * 2)
-    _evm_cuda.batched_lpyr_build_f16_halfacc(
+    _vidmag_cuda.batched_lpyr_build_f16_halfacc(
         d_planar.ptr, d_bands.ptr, n, h, w, levels, _d_binom5(), 5)
     level_offsets = []
     off = 0
@@ -61,14 +61,14 @@ def motion_fp16_halfacc(vid_path: str, **params):
         sz = lvl_sizes[l]; a = float(alpha_sched[l])
         for c in range(3):
             sig = level_offsets[l] + c * n * sz
-            _evm_cuda.batched_iir_bandpass_tn_f16(
+            _vidmag_cuda.batched_iir_bandpass_tn_f16(
                 d_bands.ptr_at_half(sig), d_filt.ptr_at_half(sig),
                 n, sz, params["r1"], params["r2"], a)
     d_delta = DeviceBuffer(n * 3 * h * w * 2)
-    _evm_cuda.batched_lpyr_recon_f16_halfacc(
+    _vidmag_cuda.batched_lpyr_recon_f16_halfacc(
         d_filt.ptr, d_delta.ptr, n, h, w, levels, _d_binom5(), 5)
     d_out = DeviceBuffer(n * h * w * 3)
-    _evm_cuda.batched_add_planar_quantize_f16(
+    _vidmag_cuda.batched_add_planar_quantize_f16(
         d_ntsc.ptr, d_delta.ptr, d_out.ptr, n, h, w, params.get("chrom_attenuation", 0.1))
     out = d_out.download_u8(n * h * w * 3).reshape(n, h, w, 3)
     return out.astype(np.float32) / 255.0
@@ -139,20 +139,20 @@ def main():
         for _ in range(iters):
             sync(); t0=time.perf_counter(); fn(); sync(); ts.append((time.perf_counter()-t0)*1e3)
         ts.sort(); return ts[len(ts)//2]
-    t_fa = time_k(lambda: _evm_cuda.batched_lpyr_build_f16(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5))
-    t_ha = time_k(lambda: _evm_cuda.batched_lpyr_build_f16_halfacc(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5))
+    t_fa = time_k(lambda: _vidmag_cuda.batched_lpyr_build_f16(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5))
+    t_ha = time_k(lambda: _vidmag_cuda.batched_lpyr_build_f16_halfacc(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5))
     # accuracy of halfacc build vs float build
     d_ref = DeviceBuffer(total * 4)
     imgs_f32 = imgs.astype(np.float32)
     d_in32 = DeviceBuffer.from_array(imgs_f32)
-    _evm_cuda.batched_lpyr_build(d_in32.ptr, d_ref.ptr, n, h, w, levels, _d_binom5(), 5)
+    _vidmag_cuda.batched_lpyr_build(d_in32.ptr, d_ref.ptr, n, h, w, levels, _d_binom5(), 5)
     ref = d_ref.download_f32(total)
     d_tmp = DeviceBuffer(total * 4)
-    _evm_cuda.batched_lpyr_build_f16(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5)
-    _evm_cuda.f16_to_f32(d_out.ptr, d_tmp.ptr, total)
+    _vidmag_cuda.batched_lpyr_build_f16(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5)
+    _vidmag_cuda.f16_to_f32(d_out.ptr, d_tmp.ptr, total)
     fa = d_tmp.download_f32(total)
-    _evm_cuda.batched_lpyr_build_f16_halfacc(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5)
-    _evm_cuda.f16_to_f32(d_out.ptr, d_tmp.ptr, total)
+    _vidmag_cuda.batched_lpyr_build_f16_halfacc(d_in.ptr, d_out.ptr, n, h, w, levels, _d_binom5(), 5)
+    _vidmag_cuda.f16_to_f32(d_out.ptr, d_tmp.ptr, total)
     ha = d_tmp.download_f32(total)
     def stats(a,b):
         d=np.abs(a.astype(np.float64)-b.astype(np.float64))

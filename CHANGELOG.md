@@ -9,9 +9,9 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
 
 ### Added
 
-- `evm.magnify()`: one entry point taking a file path, an array of frames, or
-  any iterable of frames, with named presets for common jobs and an
-  `evm-magnify` command that does the same from a terminal.
+- `vidmag.magnify()`: one entry point taking a file path, an array of frames, or
+  any iterable of frames, with named presets for common jobs and a
+  `vidmag` command that does the same from a terminal.
 - A portable backend written in OpenCL, running on Apple, AMD and Intel
   graphics processors as well as NVIDIA. On an Apple M2 Max, which previously
   had no acceleration at all, the colour pipeline runs 28 times faster than on
@@ -31,7 +31,7 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
 - The building blocks as public API on every backend: pyramids, the three
   temporal filters, colour conversion and gain, under the same names
   everywhere.
-- `evm.cuda.DeviceArray`: a GPU array that knows its own shape and dtype and
+- `vidmag.cuda.DeviceArray`: a GPU array that knows its own shape and dtype and
   can hand its memory to PyTorch or CuPy without copying.
 - A documentation site organised by task, with every example executed by the
   test suite.
@@ -80,8 +80,9 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   is unchanged by all three, as it has no image pyramid.
 - Agreement between 16-bit and 32-bit output improved as a side effect, since
   the intermediate result is no longer rounded to half precision and read back:
-  motion RMSE falls from 0.00232 to 0.00199, with the largest single-level
-  difference unchanged at 5.
+  motion RMSE falls from 0.00232 to 0.00140 of full scale, and the largest
+  single-level difference from 5 to 2. The colour pipeline is unchanged at
+  0.00071 and 1 level.
 - The OpenCL, Apple and Vulkan backends no longer evaluate the filter taps that
   cannot contribute when enlarging an image. Enlarging inserts a gap between
   every pair of samples, so only taps landing on a real sample carry data —
@@ -91,14 +92,17 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   about 8% faster on Vulkan and about 3% faster on Apple's graphics interface,
   with no measurable change on OpenCL. Pyramid construction is unaffected on all
   three, being dominated by the shrinking step, which this does not touch.
-- The distribution installs as `evm-magnify`, not `evm-cuda`. It computes on five
-  backends, only one of which is NVIDIA, and the old name said otherwise. Nothing
-  breaks: the name had never been published, so no existing install refers to it,
-  and the import is unchanged — `import evm` as before. The optional extras move
-  with it, so `pip install "evm-magnify[opencl]"` replaces the old spelling. Plain
-  `evm` was not available on PyPI; it belongs to an unrelated project.
-- The package moved to a `src/` layout under one root package, with `evm.cpu`,
-  `evm.io`, `evm.cuda` and the other backends as subpackages. A compatibility
+- One word names all three surfaces: `pip install vidmag`, `import vidmag`,
+  and a `vidmag` command. The project was called `evm-cuda`, and briefly
+  `evm-magnify`, while this branch was in progress; neither was ever published,
+  so no install anywhere refers to them. The optional extras move with the name,
+  so `pip install "vidmag[opencl]"` is the current spelling. The import root
+  could not stay `evm` even if the distribution name had: `evm` on PyPI is the
+  Extreme Value Machine, and it installs a top-level module spelled `EVM`, which
+  collides with `import evm` on macOS and Windows because their filesystems
+  ignore case.
+- The package moved to a `src/` layout under one root package, with `vidmag.cpu`,
+  `vidmag.io`, `vidmag.cuda` and the other backends as subpackages. A compatibility
   alias named `evm_cuda` existed briefly during that move and has been removed:
   the old name was only ever reachable inside this repository through a
   `PYTHONPATH` setting, the distribution was never published under it, so there

@@ -20,9 +20,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from evm.cpu.csp import SteerablePyramid
-from evm.cpu.filters import butter_bandpass
-from evm.cpu.phase_magnify import phase_magnify
+from vidmag.cpu.csp import SteerablePyramid
+from vidmag.cpu.filters import butter_bandpass
+from vidmag.cpu.phase_magnify import phase_magnify
 
 FPS = 30.0
 MOTION_HZ = 1.0

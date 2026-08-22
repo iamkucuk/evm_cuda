@@ -1,4 +1,7 @@
-# Eulerian Video Magnification
+# vidmag
+
+**Eulerian Video Magnification. Hand-written CUDA at the core, five more
+backends so it runs anywhere.**
 
 [![Documentation](https://img.shields.io/badge/documentation-read-blue)](https://iamkucuk.github.io/eulerian-video-magnification-cuda/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)](#)
@@ -14,18 +17,20 @@
 through a face with each heartbeat, the millimetre rise of a sleeping child's
 chest, the vibration of a guitar string.** An implementation of
 [Eulerian Video Magnification](http://people.csail.mit.edu/mrub/vidmag/),
-checked against the original authors' published output, running on the
-processor, on NVIDIA hardware through hand-written CUDA, and on Apple, AMD and
-Intel hardware through OpenCL.
+checked against the original authors' published output. The NVIDIA path is
+hand-written CUDA and is what this project exists to make fast. Five more
+backends — OpenCL, Vulkan, Apple's Metal, PyTorch, and the NumPy baseline —
+mean it still runs when there is no NVIDIA card, and every one of them is
+checked against that baseline.
 
 ```bash
-pip install evm-magnify
+pip install vidmag
 ```
 
 ```python
-import evm
+import vidmag
 
-evm.magnify("face.mp4", preset="pulse", out="pulse.mp4")
+vidmag.magnify("face.mp4", preset="pulse", out="pulse.mp4")
 ```
 
 **[Documentation](https://iamkucuk.github.io/eulerian-video-magnification-cuda/)**
@@ -33,9 +38,10 @@ evm.magnify("face.mp4", preset="pulse", out="pulse.mp4")
 parameter does, and what to do when the output looks identical to the input.
 
 This project ports the MIT SIGGRAPH 2012 reference (Wu, Rubinstein, Freeman,
-Durand, Guttag) from MATLAB to raw CUDA C++, and adds a portable OpenCL
-implementation for hardware CUDA cannot reach. Both are compared against the
-NumPy implementation, which is itself compared against the original authors'
+Durand, Guttag) from MATLAB to raw CUDA C++ — no PyTorch, no CuPy, no Numba —
+and adds four further implementations for hardware CUDA cannot reach: OpenCL,
+Vulkan, Apple's Metal, and PyTorch. All five are compared against the NumPy
+implementation, which is itself compared against the original authors'
 published output.
 
 ---
@@ -64,30 +70,31 @@ from breathing are amplified to be clearly visible, enabling non-contact vital s
 
 Measured on a consumer RTX 3090 24GB against the NumPy implementation. Each
 stage, including every H2D/D2H transfer, is timed with `cudaDeviceSynchronize`
-(harness: `evm.cuda.benchmark`, 1 warmup, median of 7). We report the speedup
-at three inclusion levels because they answer different questions.
+(harness: `vidmag.cuda.benchmark`, 1 warmup, median of 7, a fresh process per
+configuration). We report the speedup at three inclusion levels because they
+answer different questions.
 
-The two motion rows were re-measured after three rounds of work on that path:
-an FP32 IIR state, the band combine folded into the up_conv store, and shared
-memory taken out of the two enlargement kernels. They are the median of three
-such runs. Everything else is from the original session. Colour re-measured at
-9.9 ms against the 9.7 ms below, so the two sessions agree to about 2% —
-colour is the control here, since none of the three changes touches a pipeline
-without a Laplacian pyramid.
+**Every figure in this section comes from one measurement session on
+2026-08-18** and is stored in `benches/bench_rtx3090.json`, which
+`scripts/dev/record_gpu_bench.py` regenerates in full. That matters because
+these numbers previously accumulated across sessions months apart, and two of
+them stopped being true: the processor column below read 11,194 ms for colour,
+which is within 9% of the figure for `baby.mp4` rather than the `face.mp4` this
+row is measured on, and it inflated every colour ratio by about 1.7 times.
 
-**Read the ratios with the reference in mind.** The "Python CPU" column below
-was measured on the machine that produced these numbers, and every ratio is
-relative to it. The same GPU timings against an Apple M2 Max — 6,347 ms colour
-and 28,303 ms motion for the same clips — give roughly 835x and 1,050x for
-FP16 compute rather than 1,470x and 1,635x. The GPU side does not change; the
-comparison does.
+**Read the ratios with the reference in mind.** The "Python CPU" column is the
+NumPy implementation on the same machine, median of three runs, and every ratio
+divides by it. It is not a stable quantity: successive runs of it on an idle
+machine varied by about 14%, so treat the ratios as approximate and the
+millisecond figures as the real result. Against a different processor the same
+GPU timings give completely different ratios; the GPU side does not change.
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
 |----------|-----------:|---------------:|--------------------:|---------------------:|
-| Color FP32 (`face.mp4`) | 11,194 ms | 9.7 ms (~1,150x) | 29.1 ms (~385x) | 72.9 ms (~155x) |
-| Color FP16 (`face.mp4`) | 11,194 ms | 7.6 ms (~1,470x) | 26.7 ms (~420x) | 71.0 ms (~160x) |
-| Motion FP32 (`baby.mp4`) | 44,190 ms | 40.5 ms (~1,090x) | 74.1 ms (~595x) | 151.1 ms (~290x) |
-| Motion FP16 (`baby.mp4`) | 44,190 ms | 27.0 ms (~1,635x) | 61.1 ms (~725x) | 138.7 ms (~320x) |
+| Color FP32 (`face.mp4`) | 5,585 ms | 9.8 ms (~570x) | 29.7 ms (~190x) | 77.1 ms (~72x) |
+| Color FP16 (`face.mp4`) | 5,585 ms | 7.6 ms (~730x) | 27.9 ms (~200x) | 79.6 ms (~70x) |
+| Motion FP32 (`baby.mp4`) | 31,981 ms | 40.3 ms (~790x) | 74.7 ms (~430x) | 154.1 ms (~210x) |
+| Motion FP16 (`baby.mp4`) | 31,981 ms | 26.8 ms (~1,190x) | 61.2 ms (~520x) | 140.0 ms (~230x) |
 
 - **① Compute only** is pure kernel time (data already on the GPU), e.g. as one
   stage inside a larger device-resident graph.
@@ -101,8 +108,8 @@ comparison does.
   when you must materialize a viewable video on the host.
 
 All three are sums of per-stage timings, and none of them is what a caller
-waits for. On an RTX 3090 the motion clip measures 39.1 ms at ①, 143.5 ms at ③,
-and **228.7 ms** as wall-clock time through `evm.magnify()` — the extra 85 ms is
+waits for. On an RTX 3090 the motion clip measures 40.3 ms at ①, 154.1 ms at ③,
+and **232.2 ms** as wall-clock time through `vidmag.magnify()` — the extra 78 ms is
 preparing the input array, the entry point's own checks, and allocating the
 output, none of which a stage timer counts. Quote ① against another
 implementation's kernel time and ③ against another implementation's stage sum;
@@ -110,15 +117,19 @@ comparing a stage sum against somebody's wall clock overstates this project by
 about six times, and comparing across backends here needs wall clock for both,
 because only the NVIDIA backend has per-stage timing.
 
-For motion, the inference speedup (②, ~605x FP16) is within about 2x of the
-compute speedup (①, ~1,200x). The upload is a tax, but the GPU is still doing the
+For motion, the inference speedup (②, ~520x FP16) is within about 2.3x of the
+compute speedup (①, ~1,190x). The upload is a tax, but the GPU is still doing the
 work. For color, D2H alone is most of ③, so ② is the honest headline for any
 real invocation that keeps the result on device. Motion FP16 uses the same
-spatial templates as FP32 (dense half smem, float MAC); half storage, same
-algorithm.
+spatial kernel templates as FP32, with half-precision storage and
+single-precision accumulation — the same algorithm. The shrinking kernel still
+stages tiles in on-chip memory; the two enlargement kernels no longer do, which
+was the third of the three changes below.
 
-Color on `baby.mp4` (same clip as motion): FP32 15.3 / 48.2 / 120.5 ms and
-FP16 11.4 / 44.3 / 117.2 ms for ① / ② / ③.
+Color on `baby.mp4` (same clip as motion): FP32 15.4 / 54.7 / 133.8 ms and
+FP16 11.4 / 47.9 / 135.6 ms for ① / ② / ③. The NumPy implementation does that
+same colour job on `baby.mp4` in 10,280 ms, against 5,585 ms on `face.mp4` —
+the two clips are not interchangeable, which is what the old figure got wrong.
 
 ### Throughput and real-time capacity
 
@@ -127,11 +138,11 @@ GPU), pixel rates scale from the measured clips as:
 
 | Pipeline (FP16) | Throughput (②) | ~ 1080p @ 30 fps |
 |-----------------|---------------:|-----------------:|
-| Color (face) | ~3.4 Gpx/s | ~55 streams |
-| Motion (baby) | ~1.6 Gpx/s | ~26 streams |
+| Color (face) | ~3.3 Gpx/s | ~52 streams |
+| Motion (baby) | ~2.5 Gpx/s | ~40 streams |
 
 The compute-only ceiling (①, data already on the GPU) is higher: about
-~12 Gpx/s color (~190 streams) or ~2.5 Gpx/s motion (~40 streams). The full
+~12 Gpx/s color (~190 streams) or ~5.7 Gpx/s motion (~90 streams). The full
 decode→magnify→encode path (③) drops further and is usually PCIe-bound on the
 download. 1080p@30 needs about 62.2 Mpx/s; stream counts are pixel-scaled
 capacity, not a measured multi-stream harness.
@@ -149,35 +160,46 @@ processor cores. This hardware previously had no acceleration at all.
 
 | Pipeline | Clip | Processor | Apple GPU | Ratio |
 |---|---|---:|---:|---:|
-| Colour | `face.mp4`, 301 frames | 6,347 ms | 222 ms | 28.6x |
-| Motion | `baby.mp4`, 301 frames | 28,303 ms | 1,504 ms | 18.8x |
+| Colour | `face.mp4` | 7,014 ms | 217 ms | 32x |
+| Motion | `baby.mp4` | 23,634 ms | 1,020 ms | 23x |
 
-Details in `benches/apple_m2_max_opencl_2026-08-10.md`. AMD and Intel hardware
-should work through the same kernels, but nobody has run it there, so no result
-is claimed.
+From the all-backends session of 2026-08-11, which is the one the documentation
+site uses; see [Performance](docs/performance.md) for the other four backends on
+the same machine. A single-backend session the day before gave different figures
+(222 ms and 1,504 ms against a 6,347 ms and 28,303 ms processor baseline) and is
+kept, superseded, in `benches/apple_m2_max_opencl_2026-08-10.md`.
+
+**These Apple figures have not been re-verified since.** An attempt on
+2026-08-18 could not reproduce them: the machine's graphics processor was at
+100% utilisation from unrelated software, so every graphics backend measured
+five to seven times slower while the processor baseline was only 18% slower.
+That measurement proves nothing either way, and none of it was published.
+`scripts/dev/record_backend_bench.py` regenerates this table on an idle machine.
+
+AMD and Intel hardware should work through the same kernels, but nobody has run
+it there, so no result is claimed.
 
 ### Other NVIDIA GPUs (compute only)
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
-| RTX 3090 24GB | 40.5 / 27.0 ms | 9.7 / 7.6 ms |
+| RTX 3090 24GB | 40.3 / 26.8 ms | 9.8 / 7.6 ms |
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
 | P100 16GB | OOM / 139.7 ms | 26.3 / 21.8 ms |
 | T4 16GB ‡ | OOM / 228.8 ms | 48.9 / 39.7 ms |
 
-† Measured before two later rounds of work on the motion path and not yet
-re-run: the up_conv change (smaller tiles, divide-free `reflect1`, even-tap
-loop), then an FP32 IIR state and the band combine folded into the up_conv
-store. The 3090 is the only row re-measured. Building the same tree with just
-those last two changes reverted, and running both builds back to back on that
-card, gives 76.67 ms against 47.92 ms FP32 (1.60x) and 60.91 ms against
-36.83 ms FP16 (1.65x); the reverted build lands within 1.7% of the stored
-`bench_rtx3090.json`, so that file is a fair record of the older code. None of
-this is architecture specific, so the other motion figures are pessimistic by
-roughly that much. Colour came out unchanged across the same back-to-back pair
-(9.90 against 9.85 ms), which is the check that the numbers are comparable. Cross-GPU ratios below are left from
-the pre-change measurement and will shift once the others are re-run.
+† Measured before three rounds of work on the motion path, and not re-run
+since: the up_conv change (smaller tiles, divide-free `reflect1`, even-tap
+loop), then an FP32 IIR state with the band combine folded into the up_conv
+store, then shared memory taken out of the two enlargement kernels. The RTX 3090
+row is the only one measured on current code. On that card the three rounds
+together took motion from 76.7 ms to 40.3 ms in FP32 and 60.9 ms to 26.8 ms in
+FP16, and left colour unchanged, which is the check that the comparison is
+sound — colour has no Laplacian pyramid, so none of the three changes touches
+it. None of this is specific to one architecture, so treat the A100 and H100
+motion figures as pessimistic by roughly that much. Cross-GPU ratios are from
+the pre-change measurement and will shift once those cards are re-run.
 
 ‡ One run of `scripts/cloud/colab_benchmark.ipynb` on Colab's shared hardware, with
 no stored JSON. Indicative only: repeated runs on that class of machine moved
@@ -186,15 +208,15 @@ by tens of percent.
 P100 and T4 were measured on main. Motion FP32 needs 16.3 GB and does not fit a
 16 GB card. Motion FP16 peaks at 8.4 GB and now runs on both; it used to fail
 there only because the device pool held on to every earlier config's memory.
-Raw JSON:
-`benches/bench_rtx3090.json`, `bench_a100.json`, `bench_h100.json`,
-`bench_p100.json`.
+Raw JSON: `benches/bench_rtx3090.json` (regenerated 2026-08-18 on current code
+by `scripts/dev/record_gpu_bench.py`), `bench_a100.json`, `bench_h100.json`,
+`bench_p100.json` (all three still from the pre-change measurement).
 
 ### Accuracy
 
 | Compare | RMSE | max LSB |
 |---------|-----:|--------:|
-| Motion FP16 vs CUDA FP32 (baby) | 0.00199 | 5 |
+| Motion FP16 vs CUDA FP32 (baby) | 0.00140 | 2 |
 | Color FP16 vs CUDA FP32 (face) | 0.00071 | 1 |
 
 End-to-end vs Python stays under RMSE < 0.01.
@@ -216,13 +238,13 @@ output video (magnified)
 
 The CUDA port implements each stage as one or more kernels, with the entire
 pipeline running device-resident (zero per-frame host-device transfers).
-See [`src/evm/cuda/DESIGN.md`](src/evm/cuda/DESIGN.md) for the kernel-by-kernel mapping and
+See [`src/vidmag/cuda/DESIGN.md`](src/vidmag/cuda/DESIGN.md) for the kernel-by-kernel mapping and
 [how it was made fast](docs/internals/making-it-fast.md) for the full optimisation story.
 
 ## Quick start
 
 ```bash
-# Setup — installs evm-cuda and its dev/build tooling into the venv.
+# Setup — installs vidmag and its dev/build tooling into the venv.
 # Works with or without nvcc; without it you get the CPU-only package.
 python3 -m venv .venv && source .venv/bin/activate
 make install-dev
@@ -274,9 +296,9 @@ No PyTorch, no CuPy, no Numba. Every kernel is hand-written CUDA C++.
 
 ```
 .
-├── src/evm/              # the installed package (`import evm`)
+├── src/vidmag/              # the installed package (`import vidmag`)
 │   ├── api.py            # magnify() — the one entry point
-│   ├── presets.py        # named parameter sets;  _cli.py — evm-magnify
+│   ├── presets.py        # named parameter sets;  _cli.py — vidmag
 │   ├── stream.py         # live magnification over a running capture
 │   ├── backend/          # the backend interface, registry, generic pipelines
 │   ├── cpu/              # NumPy baseline (the correctness oracle for the rest)

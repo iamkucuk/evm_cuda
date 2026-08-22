@@ -15,8 +15,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from evm.cuda import _evm_cuda  # noqa: E402
-from evm.cuda.batched import DeviceBuffer, _d_binom5_sum1  # noqa: E402
+from vidmag.cuda import _vidmag_cuda  # noqa: E402
+from vidmag.cuda.batched import DeviceBuffer, _d_binom5_sum1  # noqa: E402
 
 # Force device completion via tiny D2H.
 _SYNC = DeviceBuffer(4)
@@ -67,7 +67,7 @@ def main() -> None:
     N_fine = H * W
     T = n
 
-    print(f"GPU bindings: iir={hasattr(_evm_cuda, 'batched_iir_bandpass')}")
+    print(f"GPU bindings: iir={hasattr(_vidmag_cuda, 'batched_iir_bandpass')}")
     print(f"Geometry: {H}x{W}, n={T}, levels={levels}, N_fine={N_fine}")
     print(f"H100 nominal peak BW={peak_bw} GB/s, ridge≈{ridge} FLOP/B")
     print()
@@ -83,8 +83,8 @@ def main() -> None:
     ref_bytes = 3 * nfloat * 4
 
     def roundtrip():
-        _evm_cuda.f32_to_f16(d_a.ptr, d_h.ptr, nfloat)
-        _evm_cuda.f16_to_f32(d_h.ptr, d_b.ptr, nfloat)
+        _vidmag_cuda.f32_to_f16(d_a.ptr, d_h.ptr, nfloat)
+        _vidmag_cuda.f16_to_f32(d_h.ptr, d_b.ptr, nfloat)
 
     med, lo, hi = time_ms(roundtrip)
     print(
@@ -103,7 +103,7 @@ def main() -> None:
     d_thwc.upload(np.random.randn(N_fine * T).astype(np.float32))
 
     med, _, _ = time_ms(
-        lambda: _evm_cuda.batched_thwc_to_nt(d_thwc.ptr, d_nt.ptr, T, N_fine)
+        lambda: _vidmag_cuda.batched_thwc_to_nt(d_thwc.ptr, d_nt.ptr, T, N_fine)
     )
     tr = 2 * N_fine * T * 4
     print(
@@ -112,7 +112,7 @@ def main() -> None:
     )
 
     med, _, _ = time_ms(
-        lambda: _evm_cuda.batched_iir_bandpass(
+        lambda: _vidmag_cuda.batched_iir_bandpass(
             d_nt.ptr, d_out.ptr, T, N_fine, 0.4, 0.05
         )
     )
@@ -127,7 +127,7 @@ def main() -> None:
     )
 
     med, _, _ = time_ms(
-        lambda: _evm_cuda.batched_nt_to_thwc_scaled(
+        lambda: _vidmag_cuda.batched_nt_to_thwc_scaled(
             d_out.ptr, d_thwc.ptr, T, N_fine, 1.0
         )
     )
@@ -138,9 +138,9 @@ def main() -> None:
     )
 
     def sandwich():
-        _evm_cuda.batched_thwc_to_nt(d_thwc.ptr, d_nt.ptr, T, N_fine)
-        _evm_cuda.batched_iir_bandpass(d_nt.ptr, d_out.ptr, T, N_fine, 0.4, 0.05)
-        _evm_cuda.batched_nt_to_thwc_scaled(d_out.ptr, d_thwc.ptr, T, N_fine, 1.0)
+        _vidmag_cuda.batched_thwc_to_nt(d_thwc.ptr, d_nt.ptr, T, N_fine)
+        _vidmag_cuda.batched_iir_bandpass(d_nt.ptr, d_out.ptr, T, N_fine, 0.4, 0.05)
+        _vidmag_cuda.batched_nt_to_thwc_scaled(d_out.ptr, d_thwc.ptr, T, N_fine, 1.0)
 
     med, _, _ = time_ms(sandwich)
     tr = 6 * N_fine * T * 4
@@ -158,7 +158,7 @@ def main() -> None:
     d_planar.upload(np.random.randn(M * H * W).astype(np.float32))
     filt = _d_binom5_sum1()
     med, _, _ = time_ms(
-        lambda: _evm_cuda.batched_blur_dn_color(
+        lambda: _vidmag_cuda.batched_blur_dn_color(
             d_planar.ptr, d_g.ptr, M, H, W, 1, filt, 5
         )
     )
@@ -189,13 +189,13 @@ def main() -> None:
         for l, sz in enumerate(level_sizes):
             for c in range(3):
                 sig_off = level_offsets[l] + c * n * sz
-                _evm_cuda.batched_thwc_to_nt(
+                _vidmag_cuda.batched_thwc_to_nt(
                     d_bands.ptr_at(sig_off), d_nt2.ptr, n, sz
                 )
-                _evm_cuda.batched_iir_bandpass(
+                _vidmag_cuda.batched_iir_bandpass(
                     d_nt2.ptr, d_f2.ptr, n, sz, 0.4, 0.05
                 )
-                _evm_cuda.batched_nt_to_thwc_scaled(
+                _vidmag_cuda.batched_nt_to_thwc_scaled(
                     d_f2.ptr, d_filtered.ptr_at(sig_off), n, sz, 1.0
                 )
 
@@ -210,7 +210,7 @@ def main() -> None:
     def full_iir_only():
         for sz in level_sizes:
             for _c in range(3):
-                _evm_cuda.batched_iir_bandpass(
+                _vidmag_cuda.batched_iir_bandpass(
                     d_nt2.ptr, d_f2.ptr, n, sz, 0.4, 0.05
                 )
 

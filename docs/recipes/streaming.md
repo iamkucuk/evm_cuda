@@ -5,7 +5,7 @@ each frame as it arrives, using only what has already been seen, so it works on
 a camera.
 
 ```bash
-evm-magnify stream 0 --display
+vidmag stream 0 --display
 ```
 
 That opens the first camera, amplifies motion, and shows the result. Press `q`
@@ -15,7 +15,7 @@ From Python:
 
 ```python
 import numpy as np
-from evm.stream import MotionStream
+from vidmag.stream import MotionStream
 
 stream = MotionStream(height=240, width=320, alpha=10, lambda_c=16)
 for _ in range(3):  # your camera loop here
@@ -83,7 +83,7 @@ least cost to quality:
 ```python
 import cv2
 import numpy as np
-from evm.stream import MotionStream
+from vidmag.stream import MotionStream
 
 small = (320, 240)
 stream = MotionStream(height=small[1], width=small[0])
@@ -98,7 +98,7 @@ band you are actually selecting.
 ## Writing the result to a file
 
 ```bash
-evm-magnify stream 0 --out session.mp4 --max-frames 300
+vidmag stream 0 --out session.mp4 --max-frames 300
 ```
 
 ## Choosing the amount
