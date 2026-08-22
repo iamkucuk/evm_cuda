@@ -29,12 +29,6 @@ heartbeat, changing the skin's colour by less than one step in 255, far too
 little for an eye to catch. The command prints which backend it used before it
 starts.
 
-!!! note "On Apple, AMD or Intel graphics"
-    The `vidmag` command currently runs only on the processor and on NVIDIA
-    cards. On other graphics hardware it stops with an error naming the
-    backend; add `--backend cpu`, or use the Python API below, which runs on
-    every backend.
-
 ## Make a small movement visible
 
 ```bash
@@ -45,8 +39,6 @@ The sleeping child's chest now visibly rises and falls. The real movement is
 under a millimetre.
 
 ## The same thing from Python
-
-This runs on every backend, graphics hardware included:
 
 ```python
 import vidmag

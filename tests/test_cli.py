@@ -198,3 +198,81 @@ def test_the_shim_warns_and_forwards_its_arguments_untouched(recorder):
     assert paths == ("in.mp4", "out.mp4")
     assert kwargs == dict(alpha=50.0, level=4, fl=0.8333, fh=1.0,
                           chrom_attenuation=1.0)
+
+
+# ---------------------------------------------------------------------------
+# A backend that implements only the array-in/array-out core
+#
+# The portable backends (metal, vulkan, opencl, torch) implement `<stem>_core`
+# but not the file-in/file-out `magnify_<stem>`. Before the fallback below
+# existed, `vidmag magnify` selected one of them and then died with
+# "backend 'metal' has no color_gdown_ideal pipeline" — so the command failed
+# on every machine whose fastest backend was one of those (every Mac). The CLI
+# must instead read the file, run the core, and write the file itself.
+# ---------------------------------------------------------------------------
+
+
+class CoreOnlyRecorder:
+    """A backend with only the array core, like metal/vulkan/opencl/torch."""
+
+    def __init__(self) -> None:
+        self.core_calls: list[tuple[str, float, dict]] = []
+
+    def __getattr__(self, name: str):
+        if name.startswith("magnify_"):
+            # The whole point: no path function on this backend.
+            raise AttributeError(name)
+        if not name.endswith("_core"):
+            raise AttributeError(name)
+
+        def core(frames, fps, **kwargs):
+            self.core_calls.append((name, fps, kwargs))
+            return np.zeros((3, 4, 5, 3), np.uint8)
+
+        import inspect
+
+        from vidmag.backend import generic
+
+        core.__signature__ = inspect.signature(getattr(generic, name))
+        return core
+
+
+def test_a_core_only_backend_reads_runs_the_core_and_writes(monkeypatch, tmp_path, capsys):
+    """A backend with only `<stem>_core` still produces a file from the CLI.
+
+    The CLI does the decode and encode itself, using the same reader and the
+    same encoder the path-function backends use, so the container is identical.
+    """
+    import vidmag.backend
+    import vidmag.cpu.magnify as cpu
+
+    rec = CoreOnlyRecorder()
+    monkeypatch.setattr(vidmag.backend, "select", lambda name: ("metal", rec))
+
+    # No real video is decoded or encoded: stand in for the shared reader and
+    # writer, and assert they were driven with the core's output.
+    monkeypatch.setattr(
+        cpu, "_read_frames",
+        lambda path, **k: ([np.zeros((4, 5, 3), np.uint8)] * 3, 30.0),
+    )
+    written: dict = {}
+    monkeypatch.setattr(
+        cpu, "_write",
+        lambda out_path, frames, fps: written.update(
+            out=str(out_path), n=int(frames.shape[0]), fps=fps
+        ),
+    )
+
+    inp, out = tmp_path / "in.mp4", tmp_path / "out.mp4"
+    inp.write_bytes(b"")
+    rc = run(["magnify", str(inp), str(out), "--preset", "pulse"])
+
+    assert rc == 0
+    assert rec.core_calls, "the core was never called"
+    name, fps, kwargs = rec.core_calls[0]
+    assert name == "color_gdown_ideal_core"
+    assert fps == 30.0
+    # The core is handed exactly the preset's own numbers, nothing invented.
+    assert kwargs == dict(PRESETS["pulse"].params)
+    assert written["out"] == str(out), "the shared encoder was not driven with the output path"
+    assert "backend=metal" in capsys.readouterr().err

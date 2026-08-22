@@ -25,14 +25,13 @@ required, not both.
 | `--mode {color,motion,butter,iir}` | A pipeline by name; needs `--alpha` and the values it uses |
 | `--backend NAME` | Force a backend instead of choosing automatically |
 | `--alpha`, `--level`, `--lambda-c`, `--fl`, `--fh`, `--r1`, `--r2`, `--chromatt` | Override individual values |
-| `--fps` | Override the frame rate read from the file |
+| `--sampling-rate` | Override the sampling rate in Hz; defaults to the input's frame rate |
 
-The selected backend is printed before the work starts.
-
-!!! note "On Apple, AMD or Intel graphics"
-    `magnify` runs only on the processor and on NVIDIA cards. On other graphics
-    hardware it stops with an error naming the backend; add `--backend cpu`, or
-    use the Python API `vidmag.magnify(...)`, which runs on every backend.
+The selected backend is printed before the work starts. A backend that has no
+file-in/file-out pipeline of its own — the Metal, Vulkan, OpenCL and PyTorch
+backends — has the reading and writing done for it, so `magnify` works on those
+backends too, for the four pipelines they implement. The `motion_phase` preset
+is the processor-only exception, and asking another backend for it raises.
 
 ## `stream`
 

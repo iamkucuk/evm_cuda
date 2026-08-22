@@ -353,24 +353,35 @@ def _cmd_magnify(args: argparse.Namespace) -> int:
             args.parser.error(f"--alpha is required with --mode {args.mode}")
 
     name, impl = _backend.select(args.backend)
+    # Two ways a backend can offer a pipeline. `magnify_<stem>` reads the file
+    # and writes the file (the processor and NVIDIA backends). `<stem>_core`
+    # takes an array and returns an array (every backend, via the generic
+    # binder); the portable backends — metal, vulkan, opencl, torch — have only
+    # this one. Prefer the path function where it exists; otherwise do the file
+    # I/O here so the command still runs on those backends instead of dying.
     fn = getattr(impl, "magnify_" + stem, None)
-    if fn is None:
+    core = getattr(impl, stem + "_core", None)
+    if fn is None and core is None:
         raise SystemExit(
             f"error: backend {name!r} has no {stem} pipeline "
-            f"(no 'magnify_{stem}'). Pick another --backend, or run the "
-            "pipeline it does implement."
+            f"(no 'magnify_{stem}' and no '{stem}_core'). Pick another "
+            "--backend, or run a pipeline it does implement."
         )
 
     # The pipeline's own signature decides which parameters apply — no second
     # table here to fall out of step with it. Defaults may be dropped silently
-    # (level means nothing to a motion pipeline); a typed flag never is.
-    accepted = set(inspect.signature(fn).parameters)
+    # (level means nothing to a motion pipeline); a typed flag never is. The
+    # path function and the core name their parameters the same way, minus the
+    # frames and sampling rate the core reads from the file, so either answers
+    # "which parameters does this pipeline take".
+    accepted = set(inspect.signature(fn if fn is not None else core).parameters)
     refused = sorted(k for k in must_apply if k not in accepted)
     if refused:
+        internal = {"vid_path", "out_path", "frames_bgr_u8", "fps", "on_stage"}
         raise SystemExit(
             f"error: the {stem} pipeline takes no "
             f"{', '.join(repr(k) for k in refused)}; it takes "
-            f"{', '.join(sorted(accepted - {'vid_path', 'out_path', 'on_stage'}))}."
+            f"{', '.join(sorted(accepted - internal))}."
         )
     params = {k: v for k, v in params.items() if k in accepted}
 
@@ -380,7 +391,20 @@ def _cmd_magnify(args: argparse.Namespace) -> int:
         f"{'preset' if args.preset else 'mode'}={chosen}",
         file=sys.stderr,
     )
-    out = fn(args.input, args.output, **params)
+    if fn is not None:
+        out = fn(args.input, args.output, **params)
+    else:
+        # Array-core-only backend: read the clip and write the result here,
+        # with the same reader (which drops the reference's trailing frames)
+        # and the same H.264 encoder the path functions use, so the container
+        # is byte-identical to a path-function backend's output.
+        import numpy as np
+
+        from .cpu.magnify import _read_frames, _write
+
+        frame_list, fps = _read_frames(args.input)
+        out = core(np.stack(frame_list, axis=0), fps, **params)
+        _write(args.output, out, fps)
     print(
         f"[vidmag] wrote {out.shape[0]} frames @ {out.shape[1]}x{out.shape[2]} "
         f"-> {args.output}",
