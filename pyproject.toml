@@ -13,7 +13,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "vidmag"
-version = "0.1.0"
+version = "0.2.0"
 description = "Eulerian Video Magnification: reveal colour and motion changes in video too small to see. Hand-written CUDA at the core, five more backends so it runs anywhere."
 readme = "README.md"
 requires-python = ">=3.9"

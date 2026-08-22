@@ -25,7 +25,8 @@ keywords:
   - video processing
   - computer vision
 license: LicenseRef-BSD-3-Clause-NonCommercial
-version: 0.1.0
+version: 0.2.0
+date-released: 2026-08-22
 references:
   - type: article
     title: >-

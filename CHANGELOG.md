@@ -5,7 +5,7 @@ Notable changes to this project. The format follows
 numbers follow [semantic versioning](https://semver.org/) under the policy in
 [what this project promises not to break](https://iamkucuk.github.io/eulerian-video-magnification-cuda/stability/).
 
-## Unreleased
+## 0.2.0 — 2026-08-22
 
 ### Added
 
@@ -36,8 +36,11 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
 - A documentation site organised by task, with every example executed by the
   test suite.
 - Continuous integration across operating systems and Python versions, a
-  linter, a type checker, and a graphics-processor suite that runs before a
-  release.
+  linter, and a type checker, all running on every commit. A graphics-processor
+  test suite is written and every one of its commands has been run by hand on an
+  RTX 3090, but the workflow itself has never executed: it needs a self-hosted
+  runner, and none is registered. Treat the NVIDIA backend as tested by hand
+  rather than automatically.
 
 ### Fixed
 
@@ -125,6 +128,9 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   unchanged.
 
 ## 0.1.0
+
+*Never published to the package index; this section records what existed in the
+repository before the work above. The first release on the index is 0.2.0.*
 
 The original research implementation: a NumPy version of the method checked
 against the original authors' published output, and a CUDA port of the same
