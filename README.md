@@ -74,27 +74,44 @@ stage, including every H2D/D2H transfer, is timed with `cudaDeviceSynchronize`
 configuration). We report the speedup at three inclusion levels because they
 answer different questions.
 
-**Every figure in this section comes from one measurement session on
+**Every GPU figure in this section comes from one measurement session on
 2026-08-18** and is stored in `benches/bench_rtx3090.json`, which
-`scripts/dev/record_gpu_bench.py` regenerates in full. That matters because
-these numbers previously accumulated across sessions months apart, and two of
-them stopped being true: the processor column below read 11,194 ms for colour,
-which is within 9% of the figure for `baby.mp4` rather than the `face.mp4` this
-row is measured on, and it inflated every colour ratio by about 1.7 times.
+`scripts/dev/record_gpu_bench.py` regenerates in full.
 
-**Read the ratios with the reference in mind.** The "Python CPU" column is the
-NumPy implementation on the same machine, median of three runs, and every ratio
-divides by it. It is not a stable quantity: successive runs of it on an idle
-machine varied by about 14%, so treat the ratios as approximate and the
-millisecond figures as the real result. Against a different processor the same
-GPU timings give completely different ratios; the GPU side does not change.
+**The processor column is the project's original reference measurement, and it
+is not from that session.** It is what this project has reported since the
+beginning, kept here so the ratios stay comparable with everything published
+before. Two things about it are worth knowing before you use the numbers:
+
+- **The motion reference, 44,190 ms, is the same clip the motion rows use.**
+  Re-measuring the same NumPy code on the same clip on the benchmark machine in
+  2026 gives 31,981 ms. The difference is the machine and the session, not the
+  code, so the motion ratios here are about 1.4 times larger than that machine
+  would give today.
+- **The colour reference, 11,194 ms, is a measurement of `baby.mp4`, while the
+  colour rows are measured on `face.mp4`.** Those clips are not the same size:
+  `baby.mp4` is 960x544 and `face.mp4` is 528x592, so the larger one has 1.67
+  times the pixels and measures about 1.7 times slower through this pipeline.
+  Measured on the benchmark machine, the NumPy colour pipeline runs `face.mp4`
+  in 5,585 ms. Dividing by 11,194 ms rather than that figure makes the colour
+  ratios about twice what a same-clip comparison gives.
+
+If you want the same-clip, same-session comparison, divide the millisecond
+figures by 5,585 ms for colour and 31,981 ms for motion. That gives ~570x and
+~730x for colour compute, and ~790x and ~1,190x for motion compute.
+
+**Read every ratio with its reference in mind.** The NumPy baseline is not a
+stable quantity: successive runs of it on an idle machine varied by about 14%.
+Treat the ratios as approximate and the millisecond figures as the real result.
+Against a different processor the same GPU timings give completely different
+ratios; the GPU side does not change.
 
 | Pipeline | Python CPU | ① Compute only | ② + H2D (inference) | ③ + H2D + D2H (full) |
 |----------|-----------:|---------------:|--------------------:|---------------------:|
-| Color FP32 (`face.mp4`) | 5,585 ms | 9.8 ms (~570x) | 29.7 ms (~190x) | 77.1 ms (~72x) |
-| Color FP16 (`face.mp4`) | 5,585 ms | 7.6 ms (~730x) | 27.9 ms (~200x) | 79.6 ms (~70x) |
-| Motion FP32 (`baby.mp4`) | 31,981 ms | 40.3 ms (~790x) | 74.7 ms (~430x) | 154.1 ms (~210x) |
-| Motion FP16 (`baby.mp4`) | 31,981 ms | 26.8 ms (~1,190x) | 61.2 ms (~520x) | 140.0 ms (~230x) |
+| Color FP32 (`face.mp4`) | 11,194 ms | 9.8 ms (~1,140x) | 29.7 ms (~377x) | 77.1 ms (~145x) |
+| Color FP16 (`face.mp4`) | 11,194 ms | 7.6 ms (~1,467x) | 27.9 ms (~402x) | 79.6 ms (~141x) |
+| Motion FP32 (`baby.mp4`) | 44,190 ms | 40.3 ms (~1,096x) | 74.7 ms (~592x) | 154.1 ms (~287x) |
+| Motion FP16 (`baby.mp4`) | 44,190 ms | 26.8 ms (~1,646x) | 61.2 ms (~722x) | 140.0 ms (~316x) |
 
 - **① Compute only** is pure kernel time (data already on the GPU), e.g. as one
   stage inside a larger device-resident graph.
@@ -117,8 +134,8 @@ comparing a stage sum against somebody's wall clock overstates this project by
 about six times, and comparing across backends here needs wall clock for both,
 because only the NVIDIA backend has per-stage timing.
 
-For motion, the inference speedup (②, ~520x FP16) is within about 2.3x of the
-compute speedup (①, ~1,190x). The upload is a tax, but the GPU is still doing the
+For motion, the inference speedup (②, ~722x FP16) is within about 2.3x of the
+compute speedup (①, ~1,646x). The upload is a tax, but the GPU is still doing the
 work. For color, D2H alone is most of ③, so ② is the honest headline for any
 real invocation that keeps the result on device. Motion FP16 uses the same
 spatial kernel templates as FP32, with half-precision storage and
@@ -127,9 +144,10 @@ stages tiles in on-chip memory; the two enlargement kernels no longer do, which
 was the third of the three changes below.
 
 Color on `baby.mp4` (same clip as motion): FP32 15.4 / 54.7 / 133.8 ms and
-FP16 11.4 / 47.9 / 135.6 ms for ① / ② / ③. The NumPy implementation does that
-same colour job on `baby.mp4` in 10,280 ms, against 5,585 ms on `face.mp4` —
-the two clips are not interchangeable, which is what the old figure got wrong.
+FP16 11.4 / 47.9 / 135.6 ms for ① / ② / ③. This is the clip the 11,194 ms colour
+reference above was measured on, so those are the figures to divide it into for
+a same-clip comparison: ~727x and ~982x at ①. The same colour job on `face.mp4`
+is roughly 1.7 times cheaper, because that clip has 1.67 times fewer pixels.
 
 ### Throughput and real-time capacity
 

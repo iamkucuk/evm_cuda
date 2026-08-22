@@ -9,10 +9,12 @@ the detected GPU arch), runs color+motion × FP32+FP16 via `vidmag.cuda.benchmar
 16 GB).
 
 CPU reference numbers are measured on the Kaggle machine itself, so its speedup
-ratios describe that machine and are not comparable with the ratios in the
-project README, which divide by the NumPy baseline of the RTX 3090 host
-(colour 5,585 ms / motion 31,981 ms, measured 2026-08-18). Compare the
-millisecond figures across machines, not the ratios.
+ratios describe that machine. The ratios in the project README are not
+comparable with them: those divide by the project's original reference
+measurement (colour 11,194 ms, motion 44,190 ms), which was taken on an
+unrecorded machine, and whose colour figure is a `baby.mp4` measurement used
+against `face.mp4` rows. Compare the millisecond figures across machines, not
+the ratios.
 ## Setup (one-time)
 
 1. Create a Kaggle account at [kaggle.com](https://kaggle.com)
