@@ -476,30 +476,78 @@ Phase 0 → Phase 1 (bottleneck)
 
 ## 7. Definition of done
 
-- [ ] `pip install evm-cuda` works everywhere without CUDA (CPU pipeline) and compiles with CUDA (GPU pipeline).
-- [ ] `evm.magnify(array, preset="pulse")` with zero file I/O; `evm-magnify` on PATH.
-- [ ] GPU components chain with zero host copies; DLPack interop verified by pointer identity.
+> **This section was brought up to date on 2026-08-22 and uses the current
+> names; the rest of this document is left as written, per the note at the top.**
+> Until that date every box below was unticked while the header said phases 0
+> through 9 were done, so the document contradicted itself. Each tick now names
+> the command or file that proves it, and the three that remain unticked say
+> what is actually missing.
+
+- [x] `pip install .` works everywhere without CUDA (processor pipeline) and
+  compiles the extension where a CUDA compiler is present. Both halves checked
+  2026-08-22: `scripts/dev/verify_install.sh` passes on a Mac with no compiler
+  (throwaway venv, plain `pip install .`, imports from a neutral directory, 232
+  passed / 170 skipped), and the same command built and ran the extension on
+  three cloud and cluster machines the same day.
+- [x] `vidmag.magnify(array, preset="pulse")` with zero file input or output;
+  `vidmag` on PATH. Both checked 2026-08-22.
+- [x] GPU components chain with zero host copies; DLPack interop verified by
+  pointer identity — `tests/cuda/test_device_array.py`. That file runs only on a
+  machine with the extension built; it last passed on the RTX 3090 host on
+  2026-08-18 (345 passed, 57 skipped) and skips everywhere else.
 - [x] 30 fps at 720p: **met on three backends.** Measured 2026-08-11 on an Apple M2 Max, 720p frames pushed one at
-  a time through `evm.stream.MotionStream`, magnification only: Apple's
+  a time through `vidmag.stream.MotionStream`, magnification only: Apple's
   interface 58.8 fps, PyTorch 44.6 fps, Vulkan 20.5 fps, the processor baseline
   8.1 fps, OpenCL 3.9 fps. **On an RTX 3090 the PyTorch backend reaches 107.6
   fps**, 3.6 times the target and the fastest streaming measured anywhere here.
   The hand-written NVIDIA backend cannot stream at all — it has no
   implementation of the primitive operations — so PyTorch is the only way to
   stream on NVIDIA hardware today. It now refuses in one sentence instead of
-  failing partway through the first frame. `evm-magnify stream` **does** exist,
-  taking the source as a positional argument (`evm-magnify stream 0`); an
+  failing partway through the first frame. `vidmag stream` **does** exist,
+  taking the source as a positional argument (`vidmag stream 0`); an
   earlier note here said otherwise, from reading only argparse's truncated
   usage line rather than the full subcommand list.
-- [ ] `PYTHONPATH` appears nowhere in the repo.
-- [ ] CI green on every commit; GPU suite required on every release.
-- [ ] Docs build `--strict`; every snippet executes in CI; three task recipes.
-- [ ] `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md`, semver policy, PyPI releases in place.
-- [ ] MIT-reference tests and `TOL` unchanged from the Phase 0 lock; golden fixtures pass on every commit.
+- [x] `PYTHONPATH` appears nowhere in the repository. Checked 2026-08-22: the
+  only occurrence is a comment in the `Makefile` saying there is none.
+- [ ] CI green on every commit; **GPU suite required on every release**. The
+  first half holds — the `CI` and `Lint` workflows are green on every commit to
+  this branch. The second does not: `.github/workflows/gpu.yml` has never
+  executed, because no self-hosted runner is registered. Registering one needs a
+  token only the repository's settings page can mint, so it needs the operator.
+  See `docs/dev/gpu-runner.md`.
+- [x] Docs build `--strict`; every snippet executes in the test suite; task
+  recipes written. Checked 2026-08-22: `mkdocs build --strict` clean,
+  `tests/test_documentation.py` runs the snippets, and there are five recipes,
+  not three.
+- [ ] `CHANGELOG.md`, `CITATION.cff`, `CONTRIBUTING.md`, semver policy,
+  **PyPI releases** in place. Everything but the last: all four files exist and
+  the version policy is `docs/stability.md`. Nothing has been published to PyPI,
+  so `pip install vidmag` does not work for anyone yet. That is an action only
+  the operator can take.
+- [x] MIT-reference tests and `TOL` unchanged from the Phase 0 lock; golden
+  fixtures pass on every commit. Checked 2026-08-22 against the git history:
+  exactly one commit has ever changed the content of `tests/cuda/conftest.py`'s
+  tolerance table, the original one. `tests/test_reference_lock.py` and
+  `tests/test_golden.py` both pass.
 - [x] `backend="opencl"`, `backend="vulkan"` and `backend="metal"` (native tier, no PyTorch involved) pass the parity suite on CPU drivers (PoCL, lavapipe) in hosted CI on every commit — the `backends` job in `.github/workflows/ci.yml`, added 2026-08-11, which also covers PyTorch and fails rather than skipping if a backend it targets cannot run, and on real GPUs (Mac natively via Metal and via MoltenVK, RTX 3090 on `osiris`'s Windows side) at release; a new device with a standard driver runs the library with zero new code.
-- [ ] PyTorch appears only in the optional `[torch]` extra; `import evm` and every native backend work on a machine where torch was never installed. (The torch backend itself is an optional deliverable, allowed to land after 1.0.)
-- [ ] Adding a backend requires implementing only the Ops protocol (section 3c); the generic default pipelines plus the shared conformance suite then run against it with no further wiring. Verified by the conformance suite discovering backends through the registry alone.
-- [ ] The execution methodology (section 3d) lives in the repository (`CLAUDE.md`, `.claude/rules/development-practices.md`, `docs/dev/PLAN.md`); the git history maps one-to-one onto plan steps with a green suite at every commit.
+- [x] PyTorch appears only in the optional `[torch]` extra; `import vidmag` and
+  every native backend work on a machine where torch was never installed. Proved
+  2026-08-22 by `scripts/dev/verify_install.sh`, whose throwaway venv installs no
+  extras at all and passes.
+- [x] Adding a backend requires implementing only the Ops protocol (section 3c);
+  the generic default pipelines plus the shared conformance suite then run
+  against it with no further wiring. Verified by the conformance suite
+  discovering backends through the registry alone —
+  `tests/test_portable_backends.py` parametrises over `registry.list_backends()`
+  rather than over a hard-coded list of names.
+- [ ] The execution methodology (section 3d) lives in the repository
+  (`CLAUDE.md`, `.claude/rules/development-practices.md`, `docs/dev/PLAN.md`);
+  **the git history maps one-to-one onto plan steps** with a green suite at every
+  commit. The three files exist and are loaded by every session. The history does
+  not map one-to-one any more: the commits after the plan finished are rename,
+  measurement and documentation work, which correspond to no plan step. That is
+  expected once a plan is complete, and it means this criterion cannot be met as
+  written rather than that something is wrong.
 
 ## Files touched most
 
