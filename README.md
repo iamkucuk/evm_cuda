@@ -183,34 +183,53 @@ it there, so no result is claimed.
 
 | GPU | Motion FP32 / FP16 | Color face FP32 / FP16 |
 |-----|-------------------:|-----------------------:|
-| RTX 3090 24GB | 40.3 / 26.8 ms | 9.8 / 7.6 ms |
+| RTX 3090 24GB (Ampere) | 40.3 / 26.8 ms | 9.8 / 7.6 ms |
+| P100 16GB (Pascal) | does not fit / 82.8 ms | 26.4 / 21.9 ms |
 | A100 80GB † | 54.4 / 48.2 ms | 8.8 / 8.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms | 4.9 / 4.4 ms |
-| P100 16GB | OOM / 139.7 ms | 26.3 / 21.8 ms |
-| T4 16GB ‡ | OOM / 228.8 ms | 48.9 / 39.7 ms |
+| T4 16GB †‡ | does not fit / 228.8 ms | 48.9 / 39.7 ms |
 
-† Measured before three rounds of work on the motion path, and not re-run
-since: the up_conv change (smaller tiles, divide-free `reflect1`, even-tap
-loop), then an FP32 IIR state with the band combine folded into the up_conv
-store, then shared memory taken out of the two enlargement kernels. The RTX 3090
-row is the only one measured on current code. On that card the three rounds
-together took motion from 76.7 ms to 40.3 ms in FP32 and 60.9 ms to 26.8 ms in
-FP16, and left colour unchanged, which is the check that the comparison is
-sound — colour has no Laplacian pyramid, so none of the three changes touches
-it. None of this is specific to one architecture, so treat the A100 and H100
-motion figures as pessimistic by roughly that much. Cross-GPU ratios are from
-the pre-change measurement and will shift once those cards are re-run.
+**The RTX 3090 and P100 rows are on current code, and they are two different
+architectures.** That matters, because three rounds of work on the motion path
+sit between the current code and the rows marked †: the up_conv change (smaller
+tiles, divide-free `reflect1`, even-tap loop), then an FP32 IIR state with the
+band combine folded into the up_conv store, then shared memory taken out of the
+two enlargement kernels.
+
+Both cards were measured before and after those three rounds, on the same
+hardware and the same harness each time, and both improve:
+
+| | Motion FP16, before | after | Colour FP16, before | after |
+|---|---:|---:|---:|---:|
+| RTX 3090 (Ampere, sm_86) | 60.9 ms | 26.8 ms (2.3x) | 7.6 ms | 7.6 ms |
+| P100 (Pascal, sm_60) | 139.7 ms | 82.8 ms (1.7x) | 21.8 ms | 21.9 ms |
+
+Colour is the control, and it is flat on both: colour has no Laplacian pyramid,
+so none of the three changes can touch it. The gain is smaller on the older
+card and it is real there, which is the evidence that this is not an
+Ampere-specific result — so treat the A100, H100 and T4 motion figures as
+pessimistic, though by how much is not known for those cards.
+
+† Measured before those three rounds and not re-run since, so the cross-GPU
+ratios in this table mix two versions of the code and will shift once these
+cards are re-run.
 
 ‡ One run of `scripts/cloud/colab_benchmark.ipynb` on Colab's shared hardware, with
 no stored JSON. Indicative only: repeated runs on that class of machine moved
 by tens of percent.
 
-P100 and T4 were measured on main. Motion FP32 needs 16.3 GB and does not fit a
-16 GB card. Motion FP16 peaks at 8.4 GB and now runs on both; it used to fail
-there only because the device pool held on to every earlier config's memory.
-Raw JSON: `benches/bench_rtx3090.json` (regenerated 2026-08-18 on current code
-by `scripts/dev/record_gpu_bench.py`), `bench_a100.json`, `bench_h100.json`,
-`bench_p100.json` (all three still from the pre-change measurement).
+Motion FP32 needs 16.3 GB and does not fit a 16 GB card — the P100 skips it and
+says so rather than failing partway. Motion FP16 peaks at 8.4 GB and runs on
+both 16 GB cards; it used to fail there only because the device pool held on to
+every earlier config's memory.
+
+Raw JSON in `benches/`. The two current ones record the date and commit they
+were taken at: `bench_rtx3090.json` (2026-08-18, by
+`scripts/dev/record_gpu_bench.py`) and `bench_p100.json` (2026-08-22, by
+`scripts/cloud/kaggle/run_gpu_comparison.py`, with its console log in
+`benches/kaggle_runs/`). `bench_a100.json` and `bench_h100.json` are the
+pre-change measurement and record neither, which is why the marker on those two
+rows says only that they are older.
 
 ### Accuracy
 

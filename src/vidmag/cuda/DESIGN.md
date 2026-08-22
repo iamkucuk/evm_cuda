@@ -116,10 +116,13 @@ FP32, so FP16 motion fits a 16 GB card and FP32 motion does not. Fresh remeasure
 
 Accuracy vs CUDA FP32 (baby): RMSE **0.00140**, max **2** LSB (re-measured 2026-08-18).
 
-The three timing rows above predate two later rounds of work on the motion path — the
-up_conv retune, then the FP32 IIR state and the band combine folded into the up_conv
-store. They are kept as the record of that measurement; `README.md` carries the current
-RTX 3090 figures, and the other two GPUs have not been re-run.
+The three timing rows above predate three later rounds of work on the motion path — the
+up_conv retune, then the FP32 IIR state with the band combine folded into the up_conv
+store, then shared memory taken out of the two enlargement kernels. They are kept as the
+record of that measurement. Current figures, both re-measured on the branch and stored
+with the commit they were taken at: RTX 3090 **40.3 / 26.8 ms**
+(`benches/bench_rtx3090.json`, 2026-08-18) and P100 **does not fit / 82.8 ms**
+(`benches/bench_p100.json`, 2026-08-22). The A100 and H100 have not been re-run.
 
 **Color FP16:** NTSC + planar blur scratch are `__half`. Final Gaussian gdown
 converts to FP32 for cuFFT; `filt` stays FP32. First blur level reads the
@@ -137,8 +140,12 @@ remeasure:
 Accuracy vs CUDA FP32 (face): RMSE **0.00071**, max **1** LSB.
 Source: `benches/bench_rtx3090.json`, `benches/bench_a100.json`,
 `benches/bench_h100.json`, `benches/bench_p100.json`.
-P100 motion FP16 now measures **139.7 ms** compute in the multi-config
-harness; motion FP32 needs 16.3 GB and still does not fit a 16 GB card.
+Re-measured on the P100 on 2026-08-22, on current code: color **26.4 / 21.9 ms**,
+against **26.3 / 21.8 ms** in the row above. Colour is unchanged, as it must be —
+it builds no Laplacian pyramid, so none of the three motion-path changes reaches
+it, which is what makes the pre- and post-change rows in this table comparable.
+Motion FP16 on the same run is **82.8 ms**, down from 139.7 ms; motion FP32 needs
+16.3 GB and still does not fit a 16 GB card, and the harness reports the skip.
 
 The device pool holds released blocks until process exit and reuses one only on
 an exact byte-size match, so several differently sized configs in one process

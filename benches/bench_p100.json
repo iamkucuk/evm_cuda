@@ -2,11 +2,14 @@
   "gpu": "Tesla P100-PCIE-16GB",
   "arch": "6.0",
   "vram": "16384 MiB",
-  "branch": "main",
+  "date": "2026-08-22",
+  "branch": "library-restructure",
+  "commit": "c9ba2dcf1af1b27c6cd929181ee7d804e9cf4246",
   "n_iter": 7,
+  "method": "Kaggle P100 instance, scripts/cloud/kaggle/run_gpu_comparison.py; 1 warmup + median of 7; device synchronised after every stage; cpu_ref_ms measured on the same machine by that script, not carried over from another host. Console log: benches/kaggle_runs/evm-cuda-gpu-comparison_2026-08-22_p100.log.",
   "cpu_ref_ms": {
-    "color": 11194.0,
-    "motion": 44190.0
+    "color": 15607.124440000007,
+    "motion": 67220.95250200004
   },
   "params": {
     "color": {
@@ -29,94 +32,94 @@
     {
       "pipeline": "color",
       "precision": "fp32",
-      "compute_ms": 26.27656500004605,
-      "transfer_ms": 190.28352299994822,
-      "total_ms": 216.56008799999427,
+      "compute_ms": 26.35954600009427,
+      "transfer_ms": 190.87615400007962,
+      "total_ms": 217.2357000001739,
       "gpu": "Tesla P100-PCIE-16GB",
       "notes": "",
       "stages": [
         {
           "name": "0) H2D: clip",
-          "median_ms": 88.95312699996794,
-          "min_ms": 87.01066700001547,
-          "max_ms": 92.24346700000297
+          "median_ms": 88.66115099999661,
+          "min_ms": 88.02779199993438,
+          "max_ms": 92.79105699999946
         },
         {
           "name": "1) color_cvt",
-          "median_ms": 6.1324669999862635,
-          "min_ms": 6.1208330000113165,
-          "max_ms": 6.845075999990513
+          "median_ms": 6.152061999955549,
+          "min_ms": 6.118657999991228,
+          "max_ms": 6.768265999994583
         },
         {
           "name": "2) blur_dn",
-          "median_ms": 13.506556000038472,
-          "min_ms": 13.468645000045854,
-          "max_ms": 14.606313999991016
+          "median_ms": 13.53782500007128,
+          "min_ms": 13.472136000018509,
+          "max_ms": 14.504752999982884
         },
         {
           "name": "2b) bandpass (device-resident)",
-          "median_ms": 1.4537280000013197,
-          "min_ms": 1.4451549999989766,
-          "max_ms": 1.5326050000226132
+          "median_ms": 1.4815360000284272,
+          "min_ms": 1.4677229999051633,
+          "max_ms": 1.5812850000429535
         },
         {
           "name": "4b) render",
-          "median_ms": 5.183814000019993,
-          "min_ms": 5.178182000008746,
-          "max_ms": 5.45957700001054
+          "median_ms": 5.188123000039013,
+          "min_ms": 5.179585999940173,
+          "max_ms": 5.441306000079749
         },
         {
           "name": "4c) D2H: output",
-          "median_ms": 101.33039599998028,
-          "min_ms": 99.08199699998477,
-          "max_ms": 111.4084199999752
+          "median_ms": 102.21500300008302,
+          "min_ms": 100.72758600006182,
+          "max_ms": 105.52615599999626
         }
       ]
     },
     {
       "pipeline": "color",
       "precision": "fp16",
-      "compute_ms": 21.818092999978944,
-      "transfer_ms": 188.13568100000566,
-      "total_ms": 209.9537739999846,
+      "compute_ms": 21.891687999868736,
+      "transfer_ms": 190.2170110000725,
+      "total_ms": 212.10869899994123,
       "gpu": "Tesla P100-PCIE-16GB",
       "notes": "",
       "stages": [
         {
           "name": "0) H2D: clip",
-          "median_ms": 88.39854699999705,
-          "min_ms": 87.56417199998623,
-          "max_ms": 88.88212499999781
+          "median_ms": 88.7461350000649,
+          "min_ms": 88.30241400005434,
+          "max_ms": 89.24561699996048
         },
         {
           "name": "1) color_cvt",
-          "median_ms": 3.245053000000553,
-          "min_ms": 3.2410770000410594,
-          "max_ms": 3.2562239999833764
+          "median_ms": 3.24741700001141,
+          "min_ms": 3.2440700000506695,
+          "max_ms": 3.249446999916472
         },
         {
           "name": "2) blur_dn",
-          "median_ms": 12.3871619999818,
-          "min_ms": 12.37693300004139,
-          "max_ms": 12.397695000004205
+          "median_ms": 12.373748999948475,
+          "min_ms": 12.372012000014365,
+          "max_ms": 12.381381000068359
         },
         {
           "name": "2b) bandpass (device-resident)",
-          "median_ms": 1.4253279999820734,
-          "min_ms": 1.4163890000418178,
-          "max_ms": 1.6161700000338897
+          "median_ms": 1.508188999991944,
+          "min_ms": 1.4703489999874364,
+          "max_ms": 1.5145690000508694
         },
         {
           "name": "4b) render",
-          "median_ms": 4.7605500000145184,
-          "min_ms": 4.759534000015719,
-          "max_ms": 4.765030999976716
+          "median_ms": 4.762332999916907,
+          "min_ms": 4.7573269999929835,
+          "max_ms": 4.768324999986362
         },
         {
           "name": "4c) D2H: output",
-          "median_ms": 99.73713400000861,
-          "min_ms": 98.29492000000073,
-          "max_ms": 102.55293300002677
+          "median_ms": 101.47087600000759,
+          "min_ms": 99.71237500008101,
+          "max_ms": 102.56328800005576
         }
       ]
     },
@@ -133,53 +136,53 @@
     {
       "pipeline": "motion",
       "precision": "fp16",
-      "compute_ms": 139.73094799996488,
-      "transfer_ms": 353.80065499998636,
-      "total_ms": 493.53160299995125,
+      "compute_ms": 82.83896000000368,
+      "transfer_ms": 358.01321100007044,
+      "total_ms": 440.8521710000741,
       "gpu": "Tesla P100-PCIE-16GB",
       "notes": "",
       "stages": [
         {
           "name": "0) H2D: clip",
-          "median_ms": 188.03267099997356,
-          "min_ms": 186.76548600001297,
-          "max_ms": 196.27828699998418
+          "median_ms": 189.062540000009,
+          "min_ms": 188.01069100004497,
+          "max_ms": 189.73540899992258
         },
         {
           "name": "A) NTSC",
-          "median_ms": 4.786593000005723,
-          "min_ms": 4.778382999973019,
-          "max_ms": 4.798467000000528
+          "median_ms": 4.784846999996262,
+          "min_ms": 4.779012000085459,
+          "max_ms": 4.800972999987607
         },
         {
           "name": "B) lpyr_build",
-          "median_ms": 70.61431699997911,
-          "min_ms": 70.60090499999205,
-          "max_ms": 70.64062099999546
+          "median_ms": 42.14902000001075,
+          "min_ms": 42.1358500000224,
+          "max_ms": 42.158922999988135
         },
         {
           "name": "C) IIR",
-          "median_ms": 7.532687999969312,
-          "min_ms": 7.510356000011598,
-          "max_ms": 7.561959999975443
+          "median_ms": 7.447340999988228,
+          "min_ms": 7.391632999997455,
+          "max_ms": 7.466943000054016
         },
         {
           "name": "D1) recon",
-          "median_ms": 51.495176000003084,
-          "min_ms": 51.27624800002195,
-          "max_ms": 51.513446000001295
+          "median_ms": 23.161567999977706,
+          "min_ms": 23.152351000021554,
+          "max_ms": 23.175308000077166
         },
         {
           "name": "D2) render",
-          "median_ms": 5.302174000007653,
-          "min_ms": 5.296579000003021,
-          "max_ms": 5.319147999955476
+          "median_ms": 5.296184000030735,
+          "min_ms": 5.293659000017215,
+          "max_ms": 5.311099999971702
         },
         {
           "name": "D2H) output",
-          "median_ms": 165.7679840000128,
-          "min_ms": 164.29769500001612,
-          "max_ms": 169.72171500003697
+          "median_ms": 168.95067100006145,
+          "min_ms": 165.67056899998533,
+          "max_ms": 169.62704799993844
         }
       ]
     }

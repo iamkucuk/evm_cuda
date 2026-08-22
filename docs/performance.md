@@ -137,18 +137,37 @@ times slower for no reason other than the measurement setup.
 
 | Card | Motion, kernels, single / half precision |
 |---|---:|
-| RTX 3090 | 40.3 / 26.8 ms |
+| RTX 3090 (Ampere) | 40.3 / 26.8 ms |
+| P100 16GB (Pascal) | does not fit / 82.8 ms |
 | A100 80GB † | 54.4 / 48.2 ms |
 | H100 80GB † | 35.8 / 34.5 ms |
-| P100 16GB † | does not fit / 139.7 ms |
 
 † Measured before the three motion-path changes described above, and not
-re-run. Those are worth about 1.9 times on the RTX 3090 and none of it is
-specific to one card, so treat these three rows as pessimistic by roughly that
-much. The RTX 3090 row was re-measured on 2026-08-18 and is current.
+re-run, so this table mixes two versions of the code.
+
+The other two rows are current, and they are two different architectures — which
+is what tells you the three changes are not an Ampere trick. Each card was
+measured before and after, on its own hardware:
+
+| | Motion, half precision, before | after | Colour, half precision, before | after |
+|---|---:|---:|---:|---:|
+| RTX 3090 (Ampere, sm_86) | 60.9 ms | 26.8 ms (2.3x) | 7.6 ms | 7.6 ms |
+| P100 (Pascal, sm_60) | 139.7 ms | 82.8 ms (1.7x) | 21.8 ms | 21.9 ms |
+
+Colour is the control and is flat on both, as it must be: colour builds no
+Laplacian pyramid, so none of the three changes reaches it. The older card gains
+less and does gain, so the A100 and H100 rows are pessimistic — by an unknown
+amount, not by the RTX 3090's factor.
 
 Motion in single precision needs 16.3 GB and does not fit a 16 GB card; in half
-precision it peaks at 8.4 GB and does.
+precision it peaks at 8.4 GB and does. The P100 run reports the skip rather than
+failing partway.
+
+The RTX 3090 figures come from `benches/bench_rtx3090.json` (2026-08-18,
+`scripts/dev/record_gpu_bench.py`) and the P100 figures from
+`benches/bench_p100.json` (2026-08-22, `scripts/cloud/kaggle/run_gpu_comparison.py`,
+with its console log in `benches/kaggle_runs/`). Both files record the commit
+they were taken at.
 
 ## Reading these numbers honestly
 

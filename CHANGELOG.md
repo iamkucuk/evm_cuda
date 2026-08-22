@@ -78,6 +78,10 @@ numbers follow [semantic versioning](https://semver.org/) under the policy in
   output pixels took those two kernels from 55% of what the card's memory can
   sustain to between 92% and 96%, with bit-identical output. The colour pipeline
   is unchanged by all three, as it has no image pyramid.
+  Confirmed on a second architecture rather than assumed to generalise: a Tesla
+  P100 (Pascal, 2016) measured on the same harness before and after runs the
+  16-bit motion pipeline in 82.8 ms against 139.7 ms, 1.7 times faster, with
+  colour flat at 26.4 and 21.9 ms. The older card gains less and does gain.
 - Agreement between 16-bit and 32-bit output improved as a side effect, since
   the intermediate result is no longer rounded to half precision and read back:
   motion RMSE falls from 0.00232 to 0.00140 of full scale, and the largest

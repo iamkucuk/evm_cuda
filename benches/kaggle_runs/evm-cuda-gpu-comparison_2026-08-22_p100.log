@@ -1,0 +1,105 @@
+[{"stream_name":"stdout","time":0.783937618,"data":"GPU: Tesla P100-PCIE-16GB, sm_6.0, VRAM: 16384 MiB\n"}
+,{"stream_name":"stdout","time":0.783998818,"data":"\n"}
+,{"stream_name":"stdout","time":0.784003161,"data":"$ git clone --depth 1 -b library-restructure https://github.com/iamkucuk/eulerian-video-magnification-cuda.git evm_cuda\n"}
+,{"stream_name":"stderr","time":0.815068303,"data":"Cloning into 'evm_cuda'...\n"}
+,{"stream_name":"stdout","time":2.141671417,"data":"$ /usr/bin/python3 -m pip install -q .\n"}
+,{"stream_name":"stdout","time":15.267511645,"data":"   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.8/35.8 MB 54.4 MB/s eta 0:00:00\n"}
+,{"stream_name":"stdout","time":53.39371501,"data":"Build complete.\n"}
+,{"stream_name":"stdout","time":53.39375896,"data":"\n"}
+,{"stream_name":"stdout","time":53.393766078,"data":"$ /usr/bin/python3 scripts/download_samples.py face baby\n"}
+,{"stream_name":"stderr","time":53.771001042,"data":"[samples] face: fetching https://people.csail.mit.edu/mrub/evm/video/face.mp4\n"}
+,{"stream_name":"stderr","time":54.139345845,"data":"[samples] face: wrote 1639646 bytes to /kaggle/working/evm_cuda/data/face.mp4\n"}
+,{"stream_name":"stderr","time":54.139898455,"data":"[samples] baby: fetching https://people.csail.mit.edu/mrub/evm/video/baby.mp4\n"}
+,{"stream_name":"stderr","time":54.5040705,"data":"[samples] baby: wrote 1839450 bytes to /kaggle/working/evm_cuda/data/baby.mp4\n"}
+,{"stream_name":"stdout","time":56.518727527,"data":"\n"}
+,{"stream_name":"stdout","time":56.518760797,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":56.518765551,"data":"COLOR — FP32\n"}
+,{"stream_name":"stdout","time":56.518769677,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":68.589888902,"data":"color FP32 on Tesla P100-PCIE-16GB\n"}
+,{"stream_name":"stdout","time":68.589933689,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":68.589939667,"data":"  0) H2D: clip               88.7 ms  (88.0-92.8)   40.8%\n"}
+,{"stream_name":"stdout","time":68.589944361,"data":"  1) color_cvt                6.2 ms  (6.1-6.8)    2.8%\n"}
+,{"stream_name":"stdout","time":68.589949535,"data":"  2) blur_dn                 13.5 ms  (13.5-14.5)    6.2%\n"}
+,{"stream_name":"stdout","time":68.589954319,"data":"  2b) bandpass (device-resident)      1.5 ms  (1.5-1.6)    0.7%\n"}
+,{"stream_name":"stdout","time":68.589959132,"data":"  4b) render                  5.2 ms  (5.2-5.4)    2.4%\n"}
+,{"stream_name":"stdout","time":68.589963697,"data":"  4c) D2H: output           102.2 ms  (100.7-105.5)   47.1%\n"}
+,{"stream_name":"stdout","time":68.589968521,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":68.589973202,"data":"  compute total              26.4 ms\n"}
+,{"stream_name":"stdout","time":68.589977973,"data":"  transfer total            190.9 ms\n"}
+,{"stream_name":"stdout","time":68.589982769,"data":"  TOTAL                     217.2 ms\n"}
+,{"stream_name":"stdout","time":68.609096187,"data":"\n"}
+,{"stream_name":"stdout","time":68.609130199,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":68.609135687,"data":"COLOR — FP16\n"}
+,{"stream_name":"stdout","time":68.609141445,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":80.285041359,"data":"color FP16 on Tesla P100-PCIE-16GB\n"}
+,{"stream_name":"stdout","time":80.285090979,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":80.285124438,"data":"  0) H2D: clip               88.7 ms  (88.3-89.2)   41.8%\n"}
+,{"stream_name":"stdout","time":80.285127667,"data":"  1) color_cvt                3.2 ms  (3.2-3.2)    1.5%\n"}
+,{"stream_name":"stdout","time":80.285129991,"data":"  2) blur_dn                 12.4 ms  (12.4-12.4)    5.8%\n"}
+,{"stream_name":"stdout","time":80.285132412,"data":"  2b) bandpass (device-resident)      1.5 ms  (1.5-1.5)    0.7%\n"}
+,{"stream_name":"stdout","time":80.285134831,"data":"  4b) render                  4.8 ms  (4.8-4.8)    2.2%\n"}
+,{"stream_name":"stdout","time":80.285137157,"data":"  4c) D2H: output           101.5 ms  (99.7-102.6)   47.8%\n"}
+,{"stream_name":"stdout","time":80.285140039,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":80.285162408,"data":"  compute total              21.9 ms\n"}
+,{"stream_name":"stdout","time":80.285166375,"data":"  transfer total            190.2 ms\n"}
+,{"stream_name":"stdout","time":80.28517041,"data":"  TOTAL                     212.1 ms\n"}
+,{"stream_name":"stdout","time":80.305890982,"data":"\n"}
+,{"stream_name":"stdout","time":80.305925143,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":80.305930832,"data":"MOTION — FP32\n"}
+,{"stream_name":"stdout","time":80.305935065,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":83.557926933,"data":"motion FP32 on Tesla P100-PCIE-16GB: skipped (out of memory)\n"}
+,{"stream_name":"stdout","time":83.581651227,"data":"\n"}
+,{"stream_name":"stdout","time":83.581693606,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":83.581699607,"data":"MOTION — FP16\n"}
+,{"stream_name":"stdout","time":83.581704307,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":102.724261206,"data":"motion FP16 on Tesla P100-PCIE-16GB\n"}
+,{"stream_name":"stdout","time":102.724325848,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":102.724333593,"data":"  0) H2D: clip              189.1 ms  (188.0-189.7)   42.9%\n"}
+,{"stream_name":"stdout","time":102.724338945,"data":"  A) NTSC                     4.8 ms  (4.8-4.8)    1.1%\n"}
+,{"stream_name":"stdout","time":102.724343404,"data":"  B) lpyr_build              42.1 ms  (42.1-42.2)    9.6%\n"}
+,{"stream_name":"stdout","time":102.724348254,"data":"  C) IIR                      7.4 ms  (7.4-7.5)    1.7%\n"}
+,{"stream_name":"stdout","time":102.724352684,"data":"  D1) recon                  23.2 ms  (23.2-23.2)    5.3%\n"}
+,{"stream_name":"stdout","time":102.724357176,"data":"  D2) render                  5.3 ms  (5.3-5.3)    1.2%\n"}
+,{"stream_name":"stdout","time":102.724363201,"data":"  D2H) output               169.0 ms  (165.7-169.6)   38.3%\n"}
+,{"stream_name":"stdout","time":102.724370511,"data":"------------------------------------------------------------\n"}
+,{"stream_name":"stdout","time":102.724373571,"data":"  compute total              82.8 ms\n"}
+,{"stream_name":"stdout","time":102.724376518,"data":"  transfer total            358.0 ms\n"}
+,{"stream_name":"stdout","time":102.724379466,"data":"  TOTAL                     440.9 ms\n"}
+,{"stream_name":"stdout","time":102.747574912,"data":"\n"}
+,{"stream_name":"stdout","time":102.747609961,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":102.747655768,"data":"SUMMARY\n"}
+,{"stream_name":"stdout","time":102.747659072,"data":"============================================================\n"}
+,{"stream_name":"stdout","time":102.747661642,"data":"GPU: Tesla P100-PCIE-16GB\n"}
+,{"stream_name":"stdout","time":102.747663987,"data":"\n"}
+,{"stream_name":"stdout","time":102.747666175,"data":"Pipeline     FP32 (comp+xf)   FP16 (comp+xf)\n"}
+,{"stream_name":"stdout","time":102.747668787,"data":"----------------------------------------------\n"}
+,{"stream_name":"stdout","time":102.747671135,"data":"color              26+191ms         22+190ms\n"}
+,{"stream_name":"stdout","time":102.747673442,"data":"  (compute speedup)                             0.83x\n"}
+,{"stream_name":"stdout","time":102.747675708,"data":"motion     skipped (out of memory)         83+358ms\n"}
+,{"stream_name":"stdout","time":102.74767796,"data":"  (compute speedup)                                 -\n"}
+,{"stream_name":"stdout","time":102.747681172,"data":"\n"}
+,{"stream_name":"stdout","time":102.747701099,"data":"comp+xf = GPU compute + H2D/D2H PCIe transfers; video decode/encode excluded.\n"}
+,{"stream_name":"stdout","time":102.747704972,"data":"Methodology: 1 warmup + median of 7 timed runs; cudaDeviceSynchronize after every stage.\n"}
+,{"stream_name":"stdout","time":118.771387568,"data":"  processor baseline, color: 15,607 ms\n"}
+,{"stream_name":"stdout","time":186.715876084,"data":"  processor baseline, motion: 67,221 ms\n"}
+,{"stream_name":"stdout","time":186.717372728,"data":"\n"}
+,{"stream_name":"stdout","time":186.717411926,"data":"Speedup against this machine's own processor baseline:\n"}
+,{"stream_name":"stdout","time":186.717417743,"data":"  color fp32: compute 592x (26.4 ms vs 15607.124440000007 ms CPU); full 72x (217.2 ms)\n"}
+,{"stream_name":"stdout","time":186.717422445,"data":"  color fp16: compute 713x (21.9 ms vs 15607.124440000007 ms CPU); full 74x (212.1 ms)\n"}
+,{"stream_name":"stdout","time":186.71742811,"data":"  motion fp32: skipped (skipped (out of memory))\n"}
+,{"stream_name":"stdout","time":186.717441543,"data":"  motion fp16: compute 811x (82.8 ms vs 67220.95250200004 ms CPU); full 152x (440.9 ms)\n"}
+,{"stream_name":"stdout","time":186.717620336,"data":"\n"}
+,{"stream_name":"stdout","time":186.717643281,"data":"Output videos:\n"}
+,{"stream_name":"stdout","time":186.71833368,"data":"  baby_fp16.mp4: 2.4 MB\n"}
+,{"stream_name":"stdout","time":186.718344633,"data":"  face_fp16.mp4: 1.3 MB\n"}
+,{"stream_name":"stdout","time":186.718349374,"data":"  face_fp32.mp4: 1.3 MB\n"}
+,{"stream_name":"stdout","time":186.718936588,"data":"\n"}
+,{"stream_name":"stdout","time":186.71894978,"data":"Results saved to gpu_comparison_results.json\n"}
+,{"stream_name":"stdout","time":186.718954616,"data":"============================================================\n"}
+,{"stream_name":"stderr","time":189.326726798,"data":"/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":189.326779263,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":189.589966709,"data":"/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":189.58999851,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":190.332406019,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":191.609222399,"data":"[NbConvertApp] Writing 307322 bytes to __results__.html\n"}
+]

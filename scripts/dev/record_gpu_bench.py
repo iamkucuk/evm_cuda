@@ -110,6 +110,28 @@ def cpu_baseline_ms(pipeline: str, clip: str, repeats: int = 3) -> float:
     return sorted(times)[len(times) // 2]
 
 
+def git_commit() -> str:
+    """The commit these numbers were measured at, so the file can be re-run.
+
+    The A100 and H100 records predate this and carry no commit, which is exactly
+    why nobody can now say which version of the kernels they describe. Fail loud
+    rather than record a wrong hash: an unknown commit is recorded as unknown,
+    and a dirty tree says so.
+    """
+    p = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT
+    )
+    if p.returncode != 0:
+        return "unknown (not a git checkout)"
+    head = p.stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain"], capture_output=True, text=True, cwd=ROOT
+    )
+    if dirty.returncode == 0 and dirty.stdout.strip():
+        return f"{head} (working tree dirty)"
+    return head
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--gpu", required=True, help='Card name, e.g. "RTX 3090".')
@@ -177,6 +199,7 @@ def main() -> int:
     doc = {
         "gpu": args.gpu,
         "date": args.date,
+        "commit": git_commit(),
         "n_iter": args.iters,
         "method": (
             "fresh process per config; 1 warmup + median of "

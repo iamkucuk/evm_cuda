@@ -139,6 +139,14 @@ def main():
     )
     os.chdir(REPO_DIR)
 
+    # Which commit these numbers describe. A shallow clone of a moving branch
+    # is not enough to identify it later, and the A100 and H100 records in
+    # benches/ are unusable for exactly that reason.
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    print(f"Commit: {commit or 'unknown'}\n", flush=True)
+
     # One command installs the runtime dependencies and compiles the CUDA
     # extension for this GPU: the build defaults to
     # CMAKE_CUDA_ARCHITECTURES=native, and pip fetches the build backend plus
@@ -218,6 +226,7 @@ def main():
         "arch": cuda_arch,
         "vram": vram,
         "branch": BRANCH,
+        "commit": commit or "unknown",
         "n_iter": N_ITER,
         "cpu_ref_ms": cpu_ref_ms,
         "params": {"color": COLOR, "motion": MOTION},

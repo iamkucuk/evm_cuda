@@ -279,6 +279,15 @@ here are deliberately not restated from it: the value of a before-and-after pair
 is that both halves were measured on the same machine in the same session, and
 swapping one half for a number from a different day would destroy that.*
 
+*Added 2026-08-22: this held on a second architecture. Round 3 was designed
+against an RTX 3090, and one card cannot tell you whether a result is a property
+of the algorithm or of Ampere. A Tesla P100 (Pascal, sm_60) had been measured on
+the same harness before Round 3 and was re-run on it after: motion in half
+precision went from 139.7 ms to 82.8 ms, 1.7x, against 2.25x here. Colour went
+26.3 → 26.4 ms and 21.8 → 21.9 ms, unchanged, the same control as above. Less
+gain on the older card and still a real one — the two runs are
+`benches/bench_p100.json` and its predecessor in that file's history.*
+
 Pyramid build is the one row still short of the others at 74%, and the number
 probably understates it: the shrinking kernel inside it stages overlapping
 tiles, so it genuinely re-reads data the model does not count. Timed on its
