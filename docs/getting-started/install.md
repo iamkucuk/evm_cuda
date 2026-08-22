@@ -5,28 +5,27 @@ pip install vidmag
 ```
 
 That is the whole thing on any machine. It always gives you a working library
-running on the processor cores; whether it also builds graphics acceleration
-depends on what the machine has, and the next two sections say how to get it.
+on the processor cores; whether it also builds graphics acceleration depends on
+the hardware. The two sections below say how to get each kind.
 
-## Using an NVIDIA graphics processor
+## NVIDIA graphics processor
 
-The fastest path in this project is hand-written CUDA. It is compiled during
-installation, which needs the CUDA toolkit — specifically `nvcc` — already on
-the machine.
+The fastest path is hand-written CUDA, compiled during installation. It needs
+the CUDA toolkit — specifically `nvcc` — already on the machine.
 
 ```bash
-nvcc --version          # if this prints a version, the extension will be built
+nvcc --version          # prints a version => the extension will be built
 pip install vidmag
 ```
 
-If `nvcc` is absent the install still succeeds and prints a message saying the
-extension was skipped. That is deliberate: a missing compiler should not stop
-you installing a library that works without it. To turn the absence into an
-error instead, set `VIDMAG_CUDA_REQUIRE=1` before installing.
+If `nvcc` is absent the install still succeeds and prints that the extension
+was skipped — a missing compiler should not stop you installing a library that
+works without it. Two environment variables change the defaults:
 
-By default the extension is compiled for the graphics processor in the machine
-doing the compiling. To build one that runs on a range of NVIDIA hardware, set
-`VIDMAG_CUDA_ARCHS=all`.
+| Variable | Effect |
+|---|---|
+| `VIDMAG_CUDA_REQUIRE=1` | Turn a missing `nvcc` into a build error instead of a skip |
+| `VIDMAG_CUDA_ARCHS=all` | Build for a range of NVIDIA cards, not just the one compiling |
 
 Check what you got:
 
@@ -36,17 +35,18 @@ import vidmag.cuda
 print(vidmag.cuda.have_cuda)
 ```
 
-## Using an Apple, AMD or Intel graphics processor
+## Apple, AMD or Intel graphics processor
 
-These are reached through OpenCL, which needs one extra Python package:
+These are reached through OpenCL, which needs one extra package:
 
 ```bash
 pip install "vidmag[opencl]"
 ```
 
-The driver itself comes from your operating system or your graphics vendor, not
-from this project. macOS ships one. On Linux it comes from the vendor's driver
-package. To find out whether both halves are present:
+The driver comes from your operating system or graphics vendor, not from this
+project. macOS ships one; on Linux it comes from the vendor's driver package.
+Installing a Python package and installing a driver are different jobs, so ask
+which half is missing:
 
 ```python
 from vidmag.opencl import runtime
@@ -54,15 +54,15 @@ from vidmag.opencl import runtime
 print(runtime.unavailable_reason() or f"ready: {runtime.device_name()}")
 ```
 
-That prints the device name if it works, and otherwise says which of the two
-things is missing, because installing a Python package and installing a driver
-are different jobs.
+That prints the device name if it works, and otherwise says what is missing.
+Metal and Vulkan are alternatives on the same hardware — see
+[backends and hardware](../concepts/backends.md).
 
 ## Which one gets used
 
-By default, the fastest that will run: hand-written CUDA, then OpenCL, then the
-processor cores. The choice is reported through the `vidmag` logger, and you can
-ask before running:
+By default, the fastest that will run: NVIDIA, then Metal, Vulkan, OpenCL,
+PyTorch, then the processor cores. The choice is reported through the `vidmag`
+logger, and you can ask before running:
 
 ```python
 from vidmag import backend
@@ -71,11 +71,10 @@ name, _ = backend.select("auto")
 print(name)
 ```
 
-Naming one explicitly is honoured exactly, and fails loudly if it cannot run —
-it is never quietly swapped for a slower one. See
-[backends and hardware](../concepts/backends.md).
+Naming one explicitly is honoured exactly and fails loudly if it cannot run — it
+is never quietly swapped for a slower one.
 
-## Installing from a checkout
+## From a checkout
 
 ```bash
 git clone https://github.com/iamkucuk/eulerian-video-magnification-cuda
@@ -84,7 +83,6 @@ pip install -e ".[dev]"
 python -m pytest tests/ -q
 ```
 
-The test suite reports how many tests it skipped as well as how many passed.
-The skips are real information: on a machine with no graphics processor, the
-whole hardware-comparison suite skips, and a green run there says nothing about
-that hardware.
+The suite reports skips as well as passes. On a machine with no graphics
+processor the whole hardware-comparison suite skips, so a green run there says
+nothing about that hardware — read the skip count, not just the pass count.

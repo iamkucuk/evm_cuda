@@ -1,23 +1,21 @@
 # Your first result
 
-This takes about five minutes and ends with two video files you can play side
-by side.
+About five minutes, ending in two video files you can play side by side.
 
 ## Get the sample clips
 
-The clips used by the original authors are `face.mp4` and `baby.mp4` from the
-[project page at MIT](http://people.csail.mit.edu/mrub/vidmag/). Download them
-into a `data/` directory next to where you are working.
-
-From a checkout of this repository there is a command for it:
+The clips the original authors used are `face.mp4` and `baby.mp4` from the
+[MIT project page](http://people.csail.mit.edu/mrub/vidmag/). From a checkout of
+this repository:
 
 ```bash
 vidmag download face baby
 ```
 
-That one needs the repository, not just the installed package: it wraps
-`scripts/download_samples.py`, which holds the addresses and is not part of the
-wheel. With only the library installed, fetch the two files yourself.
+That needs the repository, not just the installed package: it wraps
+`scripts/download_samples.py`, which holds the addresses and is not in the
+wheel. With only the library installed, fetch the two files yourself into a
+`data/` directory.
 
 ## Make a pulse visible
 
@@ -26,12 +24,16 @@ vidmag magnify data/face.mp4 pulse.mp4 --preset pulse
 ```
 
 Play `pulse.mp4` next to the original. The face takes on a green flush that
-appears and fades a little over once a second. That is blood arriving with each
-heartbeat: it was in the original clip all along, changing the colour of the
-skin by less than one step in 255, which is far too little for an eye to catch.
+appears and fades a little more than once a second — blood arriving with each
+heartbeat, changing the skin's colour by less than one step in 255, far too
+little for an eye to catch. The command prints which backend it used before it
+starts.
 
-The command prints which backend it used before it starts, so you know whether
-the graphics processor did the work.
+!!! note "On Apple, AMD or Intel graphics"
+    The `vidmag` command currently runs only on the processor and on NVIDIA
+    cards. On other graphics hardware it stops with an error naming the
+    backend; add `--backend cpu`, or use the Python API below, which runs on
+    every backend.
 
 ## Make a small movement visible
 
@@ -44,13 +46,15 @@ under a millimetre.
 
 ## The same thing from Python
 
+This runs on every backend, graphics hardware included:
+
 ```python
 import vidmag
 
 vidmag.magnify("data/face.mp4", preset="pulse", out="pulse.mp4")
 ```
 
-Or on frames you already have, with no file involved:
+Or on frames you already have, with no file:
 
 ```python
 import numpy as np
@@ -63,11 +67,8 @@ print(amplified.shape, amplified.dtype)
 
 ## If the result looks identical to the input
 
-That is a real and common outcome, and it usually means the thing you are
-looking for is not inside the frequency band the preset selects. The `pulse`
-preset keeps 0.83 to 1.0 cycles per second, which is a resting heart rate, and
-a clip shorter than about six seconds at 30 frames per second cannot resolve
-that band at all — the library warns when that happens and says how many frames
-it would need.
-
+Common, and usually the frequency band. The `pulse` preset keeps 0.83 to 1.0
+cycles per second — a resting heart rate — and a clip shorter than about six
+seconds at 30 frames per second cannot resolve that band at all. The library
+warns when that happens and says how many frames it needs.
 [What can go wrong](../concepts/pitfalls.md) covers the rest.

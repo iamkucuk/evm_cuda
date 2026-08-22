@@ -7,16 +7,15 @@ Free to use for:
 - research, including research inside a company
 - teaching and education
 - personal, hobby and evaluation use
-- including in open-source software that is given away at no charge, under a
-  licence permitting these same uses
+- inclusion in open-source software given away at no charge, under a licence
+  permitting these same uses
 
 ## What needs permission
 
-Selling this software, or building it into a product or service that is sold or
-run for commercial advantage, requires written permission from the copyright
-holder. That applies whether or not the software itself reaches the end user.
-
-The full text is in [LICENSE](https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/LICENSE).
+Selling this software, or building it into a product or service sold or run for
+commercial advantage, requires written permission from the copyright holder —
+whether or not the software itself reaches the end user. The full text is in
+[LICENSE](https://github.com/iamkucuk/eulerian-video-magnification-cuda/blob/main/LICENSE).
 
 ## Why it is not a standard open-source licence
 
