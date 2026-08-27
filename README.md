@@ -61,12 +61,17 @@ vidmag.magnify("face.mp4", preset="pulse", out="pulse.mp4")
 import numpy as np, vidmag
 
 # Or arrays: (T, H, W, 3) uint8 in, the same shape out.
-frames = np.stack([...])                       # your own decode
+frames = np.stack([...])  # your own decode
 out = vidmag.magnify(frames, preset="motion", fps=30)
 
 # Force a backend, or trade precision for speed.
-out = vidmag.magnify(frames, preset="motion", fps=30,
-                     backend="cuda", precision="fp16")
+out = vidmag.magnify(
+    frames,
+    preset="motion",
+    fps=30,
+    backend="cuda",
+    precision="fp16",
+)
 
 # Override any preset parameter by name.
 out = vidmag.magnify(frames, preset="pulse", fps=30, alpha=100)
@@ -84,7 +89,7 @@ And on a live camera, one frame at a time:
 from vidmag.stream import MotionStream
 
 stream = MotionStream(height=480, width=640, alpha=10, lambda_c=16)
-for frame in camera:                 # any (H, W, 3) uint8 source
+for frame in camera:  # any (H, W, 3) uint8 source
     display(stream.push(frame))
 ```
 
@@ -127,6 +132,7 @@ see what is available on your machine:
 
 ```python
 from vidmag.backend import list_backends
+
 for b in list_backends():
     print(b.name, b.unavailable_reason or "available")
 ```
