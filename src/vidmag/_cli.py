@@ -361,7 +361,11 @@ def _cmd_magnify(args: argparse.Namespace) -> int:
     # I/O here so the command still runs on those backends instead of dying.
     fn = getattr(impl, "magnify_" + stem, None)
     core = getattr(impl, stem + "_core", None)
-    if fn is None and core is None:
+    # Whichever of the two this backend has, preferring the path function. One
+    # variable rather than two, so that refusing None here is what tells a type
+    # checker the rest of this function has something callable.
+    pipeline = fn if fn is not None else core
+    if pipeline is None:
         raise SystemExit(
             f"error: backend {name!r} has no {stem} pipeline "
             f"(no 'magnify_{stem}' and no '{stem}_core'). Pick another "
@@ -374,7 +378,7 @@ def _cmd_magnify(args: argparse.Namespace) -> int:
     # path function and the core name their parameters the same way, minus the
     # frames and sampling rate the core reads from the file, so either answers
     # "which parameters does this pipeline take".
-    accepted = set(inspect.signature(fn if fn is not None else core).parameters)
+    accepted = set(inspect.signature(pipeline).parameters)
     refused = sorted(k for k in must_apply if k not in accepted)
     if refused:
         internal = {"vid_path", "out_path", "frames_bgr_u8", "fps", "on_stage"}
@@ -403,7 +407,9 @@ def _cmd_magnify(args: argparse.Namespace) -> int:
         from .cpu.magnify import _read_frames, _write
 
         frame_list, fps = _read_frames(args.input)
-        out = core(np.stack(frame_list, axis=0), fps, **params)
+        # `pipeline` is the core here: this branch runs only when there is no
+        # path function, which is the case that made it the core above.
+        out = pipeline(np.stack(frame_list, axis=0), fps, **params)
         _write(args.output, out, fps)
     print(
         f"[vidmag] wrote {out.shape[0]} frames @ {out.shape[1]}x{out.shape[2]} "

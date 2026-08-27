@@ -233,7 +233,11 @@ class CoreOnlyRecorder:
 
         from vidmag.backend import generic
 
-        core.__signature__ = inspect.signature(getattr(generic, name))
+        # Setting __signature__ is how inspect.signature is redirected at run
+        # time; the type system has no way to express it. Same as Recorder.
+        core.__signature__ = inspect.signature(  # type: ignore[attr-defined]
+            getattr(generic, name)
+        )
         return core
 
 
