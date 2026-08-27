@@ -1,27 +1,69 @@
 # Making it fast: three rounds on one pipeline
 
-A correct CUDA port of Eulerian Video Magnification ran the motion pipeline in
-about 934 ms of computation on an RTX 3090. It now runs in 40.5 ms. This is what
-the three rounds in between changed, what each measured, and — twice — what each
-got wrong.
+On the processor, the motion pipeline takes about 44,190 ms. That is the slow
+starting point this work came from, and the slowest of the four pipelines. A
+first correct CUDA port was far faster, but it spent over 95% of its time copying
+data to and from the card, so its own compute time was never the figure that
+mattered. Once the whole clip stayed on the card, computation was about 934 ms.
+It now runs in 40.5 ms. The rest of this page is what the three rounds in between
+changed, what each measured, and the two places they got it wrong.
+
+That 44,190 ms is this project's original reference measurement, taken on a
+different machine from the one the rest of this page uses. Running the same NumPy
+code on the same clip on the benchmark machine gives 31,981 ms instead. Only two
+commits have touched that NumPy path since, one adding a warning and one renaming
+a lambda, so the difference is machine and session rather than code. Both figures
+are recorded here so either comparison can be made.
 
 Everything below is the motion pipeline on `baby.mp4`, 301 frames at 960x544, on
 an NVIDIA RTX 3090, unless another machine is named. "Computation" means the
-kernels and the work between them, with the clip already on the card; transfers
+kernels and the work between them, with the clip already on the card. Transfers
 are counted separately at the end, because they matter more than any of this.
 
-## The three rounds in one table
+## Every optimization in one table
 
-| | Motion computation | What the round was about |
-|---|---:|---|
-| A correct port, per-kernel transfers | over 95% transfer | Nothing was wrong except the architecture |
-| **Round 1** — keep the data on the card | ~934 ms | Stop copying between every kernel |
-| **Round 2** — layout and allocation | ~76 ms | Where the data sits, and not freeing it constantly |
-| **Round 3** — measure against the hardware | **40.5 ms** | Compare each stage to what the card can sustain |
+The starting point was the processor pipeline at about 44,190 ms. The work that
+followed was not three changes but about fifteen numbered optimizations across
+three rounds: the first got a correct GPU port running and its data resident on
+the card, the second attacked memory layout and allocation, the third measured
+each stage against the card's bandwidth. Motion pipeline, `baby.mp4`, on an
+RTX 3090.
 
-Round 2 is the large one, twelve times over. Round 3 is the interesting one: two
-of its three changes reverse decisions from Round 2 that were themselves
-measured, and correct against what they were measured against.
+**Round 1: architecture.** These made the pipeline device-resident and
+established the ~934 ms compute baseline the next round starts from. Their
+original absolute timings were taken on other cards and have since been
+superseded, so each is given by what it removed rather than by a cumulative time.
+
+| Level | Change | What it removed |
+|---|---|---|
+| 1 | Eliminate the per-kernel host transfers (device-resident) | ~95% of the run time, which was transfer, not compute |
+| 2 | Cache the cuFFT plans | A plan rebuild on every channel |
+| 3 | Batch the spatial kernels | ~35,000 kernel launches, about 175 ms of dispatch overhead |
+| 4 | Register and thread-level tuning | 22% of the two render kernels' time |
+| 5 | FP16 storage option | Half the memory, so motion fits a 16 GB card |
+
+**Round 2: allocation and layout.** The quantified arc, single-precision motion
+computation, each figure measured on the same card:
+
+| Level | Change | Compute | Cumulative |
+|---|---|---:|---:|
+| | Start of the round | ~934 ms | 1.0x |
+| 1 | Coalesce the temporal filter (time-contiguous) | ~718 ms | ~1.3x |
+| 2 | Keep the pyramid scratch across calls | ~377-407 ms | ~2.4x |
+| 3 | Pool device buffers instead of freeing them | ~113-133 ms | ~7-8x |
+| 4 | Channel-outer layout, contiguous bands | ~106-110 ms | ~8.5x |
+| 5 | Shared memory in the shrinking kernel | ~98-102 ms | ~9x |
+| (6) | Shared memory in the enlarging kernel | 127-189 ms | reverted |
+| 7 | Retune the enlargement kernels | ~76 ms | ~12x |
+
+**Round 3: the bandwidth ceiling.** Three more changes took computation to
+**~40.5 ms**, about **23x** from the start of Round 2, and to 88% of the card's
+863 GB/s sustained bandwidth: a 32-bit filter state, folding the band combine
+into the enlargement store, and removing shared memory from the enlargement
+kernels. That is the ceiling, and the point at which the kernels stop being the
+thing to fix. Two of those three changes reverse decisions made in Round 2,
+decisions that were themselves measured and correct against what they were
+compared with at the time.
 
 ---
 
@@ -44,8 +86,8 @@ follows:
   the colour pipeline's frequency filter does not rebuild it every call.
 - **Half precision as a storage option.** Storing bands, filtered bands and the
   amplified result as 16-bit halves the memory and lets the motion pipeline fit a
-  16 GB card, which single precision does not — it needs 16.3 GB and peaks at
-  8.4 GB in half.
+  16 GB card, which single precision does not: single precision needs 16.3 GB,
+  while half precision peaks at 8.4 GB.
 
 The lesson is the least surprising of the three and the most often needed:
 **measure where the time goes before optimising anything.** The kernels were
@@ -63,11 +105,11 @@ the same clip and card:
 |---|---:|---|
 | Start of the round | ~934 ms | |
 | Filter where the data already lies | ~718 ms | |
-| Stop discarding pyramid scratch each call | ~377–407 ms | |
-| Reuse device buffers instead of freeing them | ~113–133 ms | |
-| Channel-outer layout, contiguous bands | ~106–110 ms | no measurable win on its own |
-| Shared memory in the shrinking kernel | ~98–102 ms | |
-| Shared memory in the enlarging kernel | 127–189 ms | **worse; reverted** |
+| Stop discarding pyramid scratch each call | ~377-407 ms | |
+| Reuse device buffers instead of freeing them | ~113-133 ms | |
+| Channel-outer layout, contiguous bands | ~106-110 ms | no measurable win on its own |
+| Shared memory in the shrinking kernel | ~98-102 ms | |
+| Shared memory in the enlarging kernel | 127-189 ms | **worse; reverted** |
 | Retune the enlargement kernels | ~76 ms | smaller tiles, no integer divide, skip dead taps |
 
 Four things there are worth more than the numbers.
@@ -75,11 +117,11 @@ Four things there are worth more than the numbers.
 **The temporal filter was not slow at arithmetic; it read memory in the wrong
 order.** It ran on data laid out with time as the slowest-varying axis, so
 consecutive threads read addresses far apart. Filtering where the bands already
-lie — time contiguous — made the same arithmetic match the speed of a plain copy.
+lie, time contiguous, made the same arithmetic match the speed of a plain copy.
 No algorithm changed.
 
 **Allocation was the largest single cost, twice.** After the filter was fixed,
-the next slow stages were not slow at computing — they were rebuilding
+the next slow stages were not slow at computing. They were rebuilding
 multi-gigabyte scratch buffers on every pyramid call, and freeing device memory
 on the hot path. Keeping the scratch and pooling the buffers took the pipeline
 from about 407 ms to about 120 ms without touching a kernel.
@@ -92,7 +134,7 @@ not because it paid for itself.
 
 **Shared memory helped the shrinking kernel and hurt the enlarging one.** Adding
 it to the shrink was a small real win. Adding it to the enlargement made things
-worse — twice, on two attempts — and was reverted. The conclusion drawn at the
+worse (twice, on two attempts) and was reverted. The conclusion drawn at the
 time was that enlargement has "weak access patterns" and is not worth fusing.
 That was half right, and the wrong half survived into Round 3.
 
@@ -108,7 +150,7 @@ previous version.
 
 ## First, find the ceiling
 
-The card's specification says 936 GB/s — what the memory achieves under
+The card's specification says 936 GB/s, which is what the memory achieves under
 conditions no real kernel meets. So measure what the card actually sustains, with
 a program that does nothing but move memory:
 
@@ -125,7 +167,7 @@ stage reads and writes.
 
 Given the sizes of the arrays a stage touches, how many bytes must it move?
 Divide by the measured time and there is a number to compare against 863. That
-count is a floor, not a measurement — a kernel can move more than it must — so a
+count is a floor, not a measurement (a kernel can move more than it must), so a
 stage at 50% might be moving twice the necessary bytes efficiently, or the
 necessary bytes at half speed. It says *look here*, not *here is the fault*. The
 hardware counters that would settle it need administrator rights this machine
@@ -142,9 +184,9 @@ Where the pipeline stood at the start of Round 3:
 | Amplify and render | 4.10 | 4.59 ms | 894 GB/s | 104% |
 
 Two rows need explaining before the two that look bad. Render reads two 32-bit
-arrays and writes a smaller 8-bit one; read-heavy work has a higher ceiling —
-910 GB/s measured — so 104% of the read-and-write figure means it is at its own
-limit. And the temporal filter at 92% had been at 28% a week earlier.
+arrays and writes a smaller 8-bit one, and read-heavy work has a higher ceiling
+of 910 GB/s measured, so 104% of the read-and-write figure means it is at its own
+limit. The temporal filter at 92% had been at 28% a week earlier.
 
 ## The temporal filter was doing arithmetic, not moving memory
 
@@ -177,7 +219,7 @@ output, the square-root argument does apply, and it is not on the hot path.
 
 Building one pyramid level: shrink the image, enlarge it back, subtract the
 result from the original. Reconstruction is the same with an addition. Both did
-that last step as a separate pass — the enlargement wrote a full-resolution
+that last step as a separate pass: the enlargement wrote a full-resolution
 intermediate, and a second kernel immediately read it back to combine it with a
 band. At the finest level that intermediate is 1.8 GB. Writing and re-reading it
 is 3.6 GB of traffic for no arithmetic reason, on stages whose whole cost is
@@ -192,9 +234,9 @@ inside the store that was already occurring, removed both:
 ## The shared memory was the problem, not the solution
 
 Both pyramid stages were still near 60% of the ceiling. The enlargement kernels
-staged their input in shared memory — fast on-chip storage — as the shrinking
-kernel beside them did and still does. **Round 2 put that shared memory there
-deliberately.** Its attempt at *fusing* the enlargement lost twice, and the
+staged their input in shared memory, which is fast on-chip storage, as the
+shrinking kernel beside them did and still does. **Round 2 put that shared memory
+there deliberately.** Its attempt at *fusing* the enlargement lost twice, and the
 conclusion drawn was that enlargement has weak access patterns. The staging
 itself was never questioned.
 
@@ -204,7 +246,7 @@ Testing it four ways, all producing bit-identical output:
 |---|---:|---:|
 | Shared memory, one output per thread (what shipped) | 474 GB/s (55%) | 471 GB/s (55%) |
 | **No shared memory**, one output per thread | 720 GB/s (83%) | 671 GB/s (78%) |
-| Shared memory, four outputs per thread | — | 683 GB/s (79%) |
+| Shared memory, four outputs per thread | n/a | 683 GB/s (79%) |
 | **No shared memory**, four outputs per thread | 862 GB/s (100%) | 864 GB/s (100%) |
 
 Removing the staging alone recovered most of it. The reason is in what an
@@ -213,7 +255,7 @@ filter taps only two or three land on real data, and each output reads only thos
 two or three inputs. Neighbouring threads read overlapping inputs, and the
 ordinary cache already serves that overlap. Staging bought nothing and cost a
 synchronisation barrier plus a loading loop shaped by the tile rather than by the
-hardware — in the column kernel, 96 of 256 threads sat idle during the load, and
+hardware. In the column kernel, 96 of 256 threads sat idle during the load, and
 each group of 32 threads had its reads split across two short misaligned pieces.
 
 The shrinking kernel keeps its shared memory, and should: it reads a 2x2
@@ -252,13 +294,13 @@ removed and rebuilt on the same machine in the same session:
 | Motion, single precision | 76.7 ms | 40.5 ms | 1.89x |
 | Motion, half precision | 60.9 ms | 27.0 ms | 2.25x |
 
-The colour pipeline is untouched by all three and measured unchanged — the
+The colour pipeline is untouched by all three and measured unchanged. It is the
 control that makes those figures a comparison rather than a difference between
 sessions.
 
 *Both sides of that comparison, and every stage figure on this page, come from
 one session. A fresh measurement on 2026-08-18 put the same motion pipeline at
-40.3 ms and 26.8 ms — within about half a percent — and is what
+40.3 ms and 26.8 ms, within about half a percent, and is what
 `docs/performance.md` and `benches/bench_rtx3090.json` now carry. The figures
 here are deliberately not restated from it: the value of a before-and-after pair
 is that both halves were measured on the same machine in the same session, and
@@ -276,17 +318,17 @@ it after, each on its own hardware:*
 | H100 80GB (Hopper, sm_90) | 34.5 ms | 13.8 ms | 2.5x | moved 15% |
 
 *against 2.25x here. Colour is the control in all three, and only the P100 holds
-it still (26.3 → 26.4 ms and 21.8 → 21.9 ms), which makes that pair as controlled
-as the one above. The T4 pair is two single runs on Colab's shared machines, so
-its 12% is the noise floor there. The H100 pair is stranger: its colour kernels
-are byte-identical between the two runs, the only change to those files being
-comment text, so the 15% is the machine and the toolkit — and the older H100 run
-stores no date or commit, so it cannot be narrowed further. In every case the
-motion change is far outside the card's own control movement, so the direction
-holds on all three while the exact factor holds only on the P100. The current
-runs are `benches/bench_p100.json`, `benches/bench_t4.json` and
+it still (26.3 to 26.4 ms and 21.8 to 21.9 ms), which makes that pair as
+controlled as the one above. The T4 pair is two single runs on Colab's shared
+machines, so its 12% is the noise floor there. The H100 pair is stranger: its
+colour kernels are byte-identical between the two runs, the only change to those
+files being comment text, so the 15% is the machine and the toolkit. The older
+H100 run stores no date or commit, so it cannot be narrowed further. In every
+case the motion change is far outside the card's own control movement, so the
+direction holds on all three while the exact factor holds only on the P100. The
+current runs are `benches/bench_p100.json`, `benches/bench_t4.json` and
 `benches/bench_h100.json`; the P100's and H100's earlier runs are in those files'
-own history, and the T4's was never stored as JSON — it is in the README as of
+own history, and the T4's was never stored as JSON. It is in the README as of
 commit e9c1ccf, 2026-08-02.*
 
 Pyramid build is the one row still short of the others at 74%, and the number
@@ -302,7 +344,7 @@ kernel measures 94%.
 | Copying the clip to the card and the result back | 104.5 ms |
 | Everything else `vidmag.magnify()` does | 85.2 ms |
 
-Reading the result back costs 72.3 ms on its own — more than every kernel put
+Reading the result back costs 72.3 ms on its own, more than every kernel put
 together. That is not bandwidth: a plain copy into a freshly allocated host array
 runs at 3.0 GB/s against 12 GB/s into a reused one, because every page of a new
 456 MB array is touched for the first time as the copy fills it. Making the
@@ -321,7 +363,7 @@ kernel, and it has not been made.
 came from noticing that 95% of the time was transfer. No kernel needed touching.
 
 **Allocation is a cost, and it hides.** Twice in Round 2 the slow stage was not
-slow at computing — it was rebuilding scratch or freeing device memory on the hot
+slow at computing. It was rebuilding scratch or freeing device memory on the hot
 path. A kernel at 93% of bandwidth inside a stage taking 60 ms means the stage is
 not the kernel.
 
@@ -338,7 +380,7 @@ and it survived for months as the largest single inefficiency in the pipeline.
 **Good defaults are still defaults.** Use 64-bit accumulators in long recursions;
 stage reused data in shared memory. Both are correct advice. Both were wrong
 here, and the second was wrong *in this project's own earlier work*, which
-measured — but measured against itself.
+measured, but measured against itself.
 
 ---
 
