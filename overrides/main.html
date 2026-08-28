@@ -1,0 +1,28 @@
+{#-
+  The one theme override: link-preview metadata. Without these, a page from
+  this site shared on X, Slack, Discord or LinkedIn renders as bare text; with
+  them it shows the demo card. og:image must be an absolute URL, so it is
+  built from site_url rather than written relative.
+-#}
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {%- set image = config.site_url ~ "img/social_preview.png" -%}
+  {%- if page and page.title and not page.is_homepage -%}
+    {%- set og_title = page.title ~ " - " ~ config.site_name -%}
+  {%- else -%}
+    {%- set og_title = config.site_name -%}
+  {%- endif -%}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{{ og_title }}">
+  <meta property="og:description" content="{{ config.site_description }}">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+  <meta property="og:image" content="{{ image }}">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ og_title }}">
+  <meta name="twitter:description" content="{{ config.site_description }}">
+  <meta name="twitter:image" content="{{ image }}">
+{% endblock %}
