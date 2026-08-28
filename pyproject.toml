@@ -125,7 +125,7 @@ dev = [
 # .pre-commit-config.yaml pins the same ruff version; bump both together.
 lint = [
     "ruff==0.16.2",
-    "mypy==2.3.0",
+    "mypy==2.3.1",
 ]
 
 # The console command. `evm` was rejected as the command name (plan decision
