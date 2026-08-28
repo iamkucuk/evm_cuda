@@ -42,7 +42,7 @@ keywords = [
 # Deliberately no Windows classifier: never tested there (the RTX 3090 host runs
 # the suite inside WSL2, which is Linux).
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: GPU :: NVIDIA CUDA",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
